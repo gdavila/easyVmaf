@@ -1,0 +1,6 @@
+*.log
+*.code-workspace
+Vmaf.md
+__pycache__
+.vscode/
+
