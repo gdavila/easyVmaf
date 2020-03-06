@@ -325,7 +325,8 @@ def get_args():
             \n\n \t Autoscale: Reference and Distorted samples are scaled automatically to 1920x1080 or 3840x2160 depending on the VMAF model to use\
             \n\n \t Autosync: The first frames of the distorted video are used as reference to a sync look up with the Reference video. \
             \n \t \t The sync is doing by a frame-by-frame look up of the best PSNR\
-            \n \t \t See [-reverse] for more options of syncing", formatter_class=argparse.RawTextHelpFormatter)
+            \n \t \t See [-reverse] for more options of syncing\
+            \n As output, a json file with VMAF score is created", formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('-d' , dest='d', type = str, help = 'Distorted video')
     parser.add_argument('-r' , dest='r', type = str, help = 'Reference video ')
     parser.add_argument('-sw', dest='sw', type = int, default = 0, help='Sync Window: window size in seconds to get a subsample of the Reference video. The sync look up will be done between the first frames of the Distorted input and this Subsample. (default=0. No sync).')
