@@ -326,9 +326,10 @@ def get_args():
             \n\n \t Autosync: The first frames of the distorted video are used as reference to a sync look up with the Reference video. \
             \n \t \t The sync is doing by a frame-by-frame look up of the best PSNR\
             \n \t \t See [-reverse] for more options of syncing\
-            \n As output, a json file with VMAF score is created", formatter_class=argparse.RawTextHelpFormatter)
-    parser.add_argument('-d' , dest='d', type = str, help = 'Distorted video')
-    parser.add_argument('-r' , dest='r', type = str, help = 'Reference video ')
+            \n\n As output, a json file with VMAF score is created", formatter_class=argparse.RawTextHelpFormatter)
+    requiredgroup = parser.add_argument_group('required arguments')
+    requiredgroup.add_argument('-d' , dest='d', type = str, help = 'Distorted video', required=True)
+    requiredgroup.add_argument('-r' , dest='r', type = str, help = 'Reference video ', required=True)
     parser.add_argument('-sw', dest='sw', type = int, default = 0, help='Sync Window: window size in seconds to get a subsample of the Reference video. The sync look up will be done between the first frames of the Distorted input and this Subsample. (default=0. No sync).')
     parser.add_argument('-ss',dest='ss', type = int, default = 0, help="Sync Start Time. Time in seconds from the beginning of the Reference video from which the Sync Window will be applied. (default=0)." )
     parser.add_argument('-reverse', help="If enable, it Changes the default Autosync behaviour: The first frames of the Reference video are used as reference to sync with the Distorted one. (Default = Disable).", action = 'store_true' )
