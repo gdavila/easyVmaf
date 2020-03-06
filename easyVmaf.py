@@ -1,9 +1,39 @@
+"""
+MIT License
+
+Copyright (c) 2020 Gabriel Davila - gdavila.revelo@gmail.com
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+"""
+
+
+
+
+
 
 from FFmpeg import FFprobe
 from FFmpeg import FFmpegQos
 import  argparse
 from statistics import mean
 import json
+import sys
+
 
 class video():
     """
@@ -213,11 +243,14 @@ class vmaf():
     def syncOffset(self, syncWindow = 3, start=0, reverse = False):
         """
         Method to get the offset needed to sync REF and MAIN (if any)
-            syncWindow -->  Window Size in seconds to try of syncing videos. i.e., if the video to sync
-                            last 60 seconds, the sync will be done just within the syncWindow interval
-            start -->  start time in seconds where the syncWindow begin.
-            revere --> By default, it suppused that the REF is delayed regarding the MAIN. If this option
-                        is set to TRUE. It is considered that MAIN is delayed regarding REF.
+            syncWindow -->  Window Size in seconds to try to sync REF and MAIN videos. i.e., if the video to sync
+                            last 600 seconds, the sync look up will be done just within a subsample of syncWindow size.
+                            By default, the syncWindow is applied to REF.
+            start -->  start time in seconds from the begining of the video where the syncWindow begin. 
+                        By default, the syncWindow it applies to REF.
+            reverse --> By default, it is supposed that the REF video is delayed in comparition with the MAIN video. If this option
+                        is set to TRUE. It is considered that MAIN is delayed regarding REF: 'syncWindow' and 'start' variables will be 
+                        applied to MAIN.
         """
         print ("INVERTED IN: ",self.ffmpegQos.invertedSrc, flush= True)
         if reverse: self.ffmpegQos.invertSrcs()
@@ -287,22 +320,35 @@ def getFrameRate(avg_frame_rate):
 
 def get_args():
     '''This function parses and return arguments passed in'''
-    parser = argparse.ArgumentParser(prog = 'eVmaf', description = 'script to easy compute VMAF using FFmpeg. It allows to deinterlace, scale and sync Ref and Distorted videos')
-    parser.add_argument('-i' , dest='i', type = str, help = 'main  video sample to compute VMAF (distorted)')
-    parser.add_argument('-r' , dest='r', type = str, help = 'Reference video sample to compute VMAF')
-    parser.add_argument('-sw', dest='sw', type = int, default = 0, help='synchronisation windows in seconds(default=0)')
-    parser.add_argument('-ss',dest='ss', type = int, default = 0, help="start time to sync(default=0).It specifies in seconds where the sync Windows begin. If [-r] is dissabled [ss] it is for reference video, otherwise it is for main video" )
-    parser.add_argument('-reverse', help="Vmaf Model. Options: HD, 4K. Default: HD", action = 'store_true' )
-    parser.add_argument('-model', dest='model', type = str, default = "HD", help="Vmaf Model. Options: HD, 4K. Default: HD" )
-    parser.add_argument('-phone' , help =  'Activate phone vmaf (HD only)', action = 'store_true')
-    parser.add_argument('-verbose' , help =  'Activate verbose loglevel. Default: info', action = 'store_true')
-
+    parser = MyParser(prog = 'eVmaf', description = "Script to easy compute VMAF using FFmpeg. It allows to deinterlace, scale and sync Ref and Distorted video samples automatically: \
+            \n\n \t Autodeinterlace: If the Reference or Distorted samples are interlaced, deinterlacing is applied\
+            \n\n \t Autoscale: Reference and Distorted samples are scaled automatically to 1920x1080 or 3840x2160 depending on the VMAF model to use\
+            \n\n \t Autosync: The first frames of the distorted video are used as reference to a sync look up with the Reference video. \
+            \n \t \t The sync is doing by a frame-by-frame look up of the best PSNR\
+            \n \t \t See [-reverse] for more options of syncing", formatter_class=argparse.RawTextHelpFormatter)
+    parser.add_argument('-d' , dest='d', type = str, help = 'Distorted video')
+    parser.add_argument('-r' , dest='r', type = str, help = 'Reference video ')
+    parser.add_argument('-sw', dest='sw', type = int, default = 0, help='Sync Window: window size in seconds to get a subsample of the Reference video. The sync look up will be done between the first frames of the Distorted input and this Subsample. (default=0. No sync).')
+    parser.add_argument('-ss',dest='ss', type = int, default = 0, help="Sync Start Time. Time in seconds from the beginning of the Reference video from which the Sync Window will be applied. (default=0)." )
+    parser.add_argument('-reverse', help="If enable, it Changes the default Autosync behaviour: The first frames of the Reference video are used as reference to sync with the Distorted one. (Default = Disable).", action = 'store_true' )
+    parser.add_argument('-model', dest='model', type = str, default = "HD", help="Vmaf Model. Options: HD, 4K. (Default: HD)." )
+    parser.add_argument('-phone' , help =  'It enables vmaf phone model (HD only). (Default=disable).', action = 'store_true')
+    parser.add_argument('-verbose' , help =  'Activate verbose loglevel. (Default: info).', action = 'store_true')
+    if len(sys.argv)==1:
+        parser.print_help(sys.stderr)
+        sys.exit(1)
     return parser.parse_args()
+
+class MyParser(argparse.ArgumentParser):
+    def error(self, message):
+        sys.stderr.write('error: %s\n' % message)
+        self.print_help()
+        sys.exit(2)
 
 
 if __name__ == '__main__':
     cmdParser=get_args()
-    main = cmdParser.i
+    main = cmdParser.d
     reference = cmdParser.r
     syncWin = cmdParser.sw
     ss = cmdParser.ss

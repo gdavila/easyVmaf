@@ -8,7 +8,7 @@ Python tool based on ffmpeg and ffprobe to deal with the video preprocesing requ
 
 Details about **How it Works** can be found [here](https://gdavila.github.io/broadcast/Vmaf/Vmaf/).
 
-# Requirements
+## Requirements
 
 * `Linux`/`OSX`
 
@@ -16,7 +16,7 @@ Details about **How it Works** can be found [here](https://gdavila.github.io/bro
 
 * FFmpeg build with `libvmaf`. More details [here](http://underpop.online.fr/f/ffmpeg/help/libvmaf.htm.gz)
 
-# Installation
+## Installation
 
 Just clone the repo and run it from the source folder.
 
@@ -25,37 +25,12 @@ $ git clone https://github.com/gdavila/easyVmaf.git
 $ cd easyVmaf
 ```
 
-# Examples
+## Examples
 
-* Help
-  
-    ```
-    $ python3 eVmaf.py -h
-    usage: eVmaf [-h] [-i I] [-r R] [-sw SW] [-ss SS] [-reverse] [-model MODEL]
-                [-phone] [-verbose]
-
-    script to easy compute VMAF using FFmpeg. It allows to deinterlace, scale and
-    sync Ref and Distorted videos
-
-    optional arguments:
-    -h, --help    show this help message and exit
-    -i I          main video sample to compute VMAF (distorted)
-    -r R          Reference video sample to compute VMAF
-    -sw SW        synchronisation windows in seconds(default=0)
-    -ss SS        start time to sync(default=0).It specifies in seconds where
-                    the sync Windows begin. If [-r] is dissabled [ss] it is for
-                    reference video, otherwise it is for main video
-    -reverse      Vmaf Model. Options: HD, 4K. Default: HD
-    -model MODEL  Vmaf Model. Options: HD, 4K. Default: HD
-    -phone        Activate phone vmaf (HD only)
-    -verbose      Activate verbose loglevel. Default: info
-
-    ```
-
-* VMAF computation for two video samples (ref.ts and main.ts) with a synchronisation windows of 2 seconds. The ref video is interlaced (1920x1080@29.97i)  and the main video is progressive (960x540@29.97p)
+1. VMAF computation for two video samples (`reference.ts` and `distorted.ts`). Both videos are not synced: `reference.ts` is delayed in comparition with `distorted.ts`, i.e.,  The first frame of `distorted.ts` matchs with the frame located at 0.7007 seconds since the begining of `reference.ts` video. To sync the videos automatically, a synchronisation windows of *2 seconds* is applied, this means that the sync lookup will be done betwwen the first frames in `distorted.ts` and a subsample of `reference.ts` of *2 seconds* lenght since it begins. Additionally, `reference.ts` is interlaced (1920x1080@29.97i)  and `distorted.ts` is progressive (960x540@29.97p) with diferent resolutions.
 
     ```bash
-    $ python3 eVmaf.py -i main.mp4 -r ref.ts' -sw 2 
+    $ python3 easyVmaf.py -d distorted.ts -r reference.ts -sw 2
 
 
     ...
@@ -64,8 +39,26 @@ $ cd easyVmaf
     ...
     ...
 
-    Sync Info: 
+    Sync Info:
     offset:  0.7007000000000001 psnr:  48.863779
     VMAF score:  89.37913542219542
+    VMAF json File Path:  main_vmaf.json
+    ```
+
+2. VMAF computation for two video samples (`reference.ts` and `distorted.ts`). Both videos are not synced but this time,  `distorted.ts` is delayed in comparition with `reference.ts`, i.e.,  The first frame of `reference.ts` matchs with the frame located at 8.3003 seconds since the begining of `distorted.ts` video. To sync the videos automatically, a synchronisation windows of *3 seconds* and a *sync start time* of 6 seconds is applied, this means that the sync lookup will be done between the first frames in  `reference.ts` and a `distorted.ts` subsample of *3 seconds* lenght taken from 6 seconds of its begin.
+
+    ```bash
+    $ python3 easyVmaf.py -d distorted.ts -r reference.ts -sw 3 -ss 6.
+
+
+    ...
+    ...
+    [Ignored FFmpeg outputs]
+    ...
+    ...
+
+    Sync Info:
+    offset:  8.300300000000000 psnr:  34.897866
+    VMAF score:  92.34452778643345
     VMAF json File Path:  main_vmaf.json
     ```
