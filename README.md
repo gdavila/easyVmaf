@@ -45,10 +45,10 @@ $ cd easyVmaf
     VMAF json File Path:  main_vmaf.json
     ```
 
-2. VMAF computation for two video samples (`reference.ts` and `distorted.ts`). Both videos are not synced but this time,  `distorted.ts` is delayed in comparition with `reference.ts`, i.e.,  The first frame of `reference.ts` matchs with the frame located at 8.3003 seconds since the begining of `distorted.ts` video. To sync the videos automatically, a synchronisation windows of *3 seconds* and a *sync start time* of 6 seconds is applied, this means that the sync lookup will be done between the first frames in  `reference.ts` and a `distorted.ts` subsample of *3 seconds* lenght taken from 6 seconds of its begin.
+2. VMAF computation for two video samples (`reference.ts` and `distorted.ts`). Both videos are not synced but this time,  `distorted.ts` is delayed in comparition with `reference.ts`, i.e.,  The first frame of `reference.ts` matchs with the frame located at 8.3003 seconds since the begining of `distorted.ts` video. To sync the videos automatically, a synchronisation windows of *3 seconds*, a *sync start time* of 6 seconds and *reverse* flag is applied, this means that the sync lookup will be done between the first frames in  `reference.ts` and a `distorted.ts` subsample of *3 seconds* lenght taken from 6 seconds of its begin.
 
     ```bash
-    $ python3 easyVmaf.py -d distorted.ts -r reference.ts -sw 3 -ss 6.
+    $ python3 easyVmaf.py -d distorted.ts -r reference.ts -sw 3 -ss 6 -reverse
 
 
     ...
