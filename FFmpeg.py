@@ -108,7 +108,6 @@ class FFmpegQos:
         self.psnrFilter = [f'[{main}][{ref}]psnr=stats_file=psnr.log']
 
     def getPsnr(self):
-        self.addPsnrFilter()
         self._commit()
         if self.loglevel == "verbose": print(self.cmd, flush=True)
 
@@ -117,7 +116,7 @@ class FFmpegQos:
         psnr = [s for s in stdout if "average" in s][0].split(":")[1]
         return float(psnr)
 
-    def addVmafFilter(self, log_path= None, model= 'HD', phone = False):
+    def addVmafFilter(self, log_path= None, model= 'HD', phone = False, subsample = 1):
         """ add vmaf filter """
         main = self.main.lastOutputID
         ref = self.ref.lastOutputID
@@ -134,10 +133,9 @@ class FFmpegQos:
         else: 
             print('invalid vmaf model', flush = True)
             return
-        self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model_path={model_path}:phone_model={phone_model}:log_path={log_path}']
+        self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model_path={model_path}:phone_model={phone_model}:n_subsample={subsample}:log_path={log_path}']
 
     def getVmaf(self):
-        self.addVmafFilter()
         self._commit()
         if self.loglevel == "verbose": print(self.cmd, flush=True)
         process = subprocess.Popen(self.cmd, stdout=subprocess.PIPE, shell=True)

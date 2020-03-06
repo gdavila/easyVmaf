@@ -96,12 +96,13 @@ class vmaf():
         - To SYNC the MAIN and REF videos using psnr computation 
         - TO DO: frame rate conversion 
     """
-    def __init__(self, mainSrc, refSrc, model = "HD", phone = False, loglevel = "info"):
+    def __init__(self, mainSrc, refSrc, model = "HD", phone = False, loglevel = "info", subsample = 1):
         self.main = video(mainSrc)
         self.ref = video(refSrc)
         self.model = model
         self.phone = phone
         self.loglevel = loglevel
+        self.subsample = subsample
         self.ffmpegQos = FFmpegQos(self.main.videoSrc, self.ref.videoSrc, self.loglevel)
         self.target_resolution = None
         self.offset = 0
@@ -277,6 +278,7 @@ class vmaf():
             """
             self._autoScale()
             self._autoDeinterlace()
+            self.ffmpegQos.addPsnrFilter()
             psnr['value'].append(self.ffmpegQos.getPsnr())
             psnr['time'].append(offset)
             print ("offset: ", psnr['time'][i], "psnr[dB]: ", psnr['value'][i], flush= True)
@@ -311,6 +313,7 @@ class vmaf():
 
         """Apply Offset filters, if offset =0 nothing happens """
         self.setOffset()
+        self.ffmpegQos.addVmafFilter(model = self.model, phone = self.phone, subsample= self.subsample )
         self.ffmpegQos.getVmaf()
 
 
@@ -332,6 +335,7 @@ def get_args():
     requiredgroup.add_argument('-r' , dest='r', type = str, help = 'Reference video ', required=True)
     parser.add_argument('-sw', dest='sw', type = int, default = 0, help='Sync Window: window size in seconds to get a subsample of the Reference video. The sync look up will be done between the first frames of the Distorted input and this Subsample. (default=0. No sync).')
     parser.add_argument('-ss',dest='ss', type = int, default = 0, help="Sync Start Time. Time in seconds from the beginning of the Reference video from which the Sync Window will be applied. (default=0)." )
+    parser.add_argument('-subsample',dest='n', type = int, default = 1, help="Specifies the subsampling of frames to speed up calculation. (default=1, None)." )
     parser.add_argument('-reverse', help="If enable, it Changes the default Autosync behaviour: The first frames of the Reference video are used as reference to sync with the Distorted one. (Default = Disable).", action = 'store_true' )
     parser.add_argument('-model', dest='model', type = str, default = "HD", help="Vmaf Model. Options: HD, 4K. (Default: HD)." )
     parser.add_argument('-phone' , help =  'It enables vmaf phone model (HD only). (Default=disable).', action = 'store_true')
@@ -354,6 +358,7 @@ if __name__ == '__main__':
     reference = cmdParser.r
     syncWin = cmdParser.sw
     ss = cmdParser.ss
+    n_subsample = cmdParser.n
     reverse = cmdParser.reverse
     model = cmdParser.model
     phone = cmdParser.phone
@@ -363,7 +368,7 @@ if __name__ == '__main__':
     else:
         loglevel = "info"
 
-    myVmaf = vmaf(main, reference, loglevel=loglevel)
+    myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample)
     print("SYNCING")
     offset, psnr = myVmaf.syncOffset(syncWin, ss, reverse)
     myVmaf.getVmaf()
