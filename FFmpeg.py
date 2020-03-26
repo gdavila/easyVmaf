@@ -133,7 +133,7 @@ class FFmpegQos:
         else: 
             print('invalid vmaf model', flush = True)
             return
-        self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model_path={model_path}:phone_model={phone_model}:n_subsample={subsample}:log_path={log_path}']
+        self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model_path={model_path}:phone_model={phone_model}:n_subsample={subsample}:log_path={log_path}:psnr=1']
 
     def getVmaf(self):
         self._commit()

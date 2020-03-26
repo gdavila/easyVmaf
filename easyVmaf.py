@@ -33,6 +33,8 @@ import  argparse
 from statistics import mean
 import json
 import sys
+import os.path
+import glob
 
 
 class video():
@@ -229,16 +231,18 @@ class vmaf():
 
         if value != None:
             self.offset = value
-        duration = min(self.main.duration, self.ref.duration)
+        #duration = min(self.main.duration, self.ref.duration)
         if self.offset > 0:
             offset = self.offset
-            self.ffmpegQos.ref.setTrimFilter(offset, duration-offset )
-            self.ffmpegQos.main.setTrimFilter(0, duration-offset )
+            duration = min(self.main.duration, self.ref.duration-offset)
+            self.ffmpegQos.ref.setTrimFilter(offset, duration )
+            self.ffmpegQos.main.setTrimFilter(0, duration )
 
         elif self.offset < 0:
             offset = abs(self.offset)
-            self.ffmpegQos.main.setTrimFilter(offset, duration-offset )
-            self.ffmpegQos.ref.setTrimFilter(0, duration-offset )
+            duration = min(self.main.duration - offset, self.ref.duration)
+            self.ffmpegQos.main.setTrimFilter(offset, duration )
+            self.ffmpegQos.ref.setTrimFilter(0, duration)
         
 
     def syncOffset(self, syncWindow = 3, start=0, reverse = False):
@@ -333,8 +337,8 @@ def get_args():
     requiredgroup = parser.add_argument_group('required arguments')
     requiredgroup.add_argument('-d' , dest='d', type = str, help = 'Distorted video', required=True)
     requiredgroup.add_argument('-r' , dest='r', type = str, help = 'Reference video ', required=True)
-    parser.add_argument('-sw', dest='sw', type = int, default = 0, help='Sync Window: window size in seconds to get a subsample of the Reference video. The sync look up will be done between the first frames of the Distorted input and this Subsample. (default=0. No sync).')
-    parser.add_argument('-ss',dest='ss', type = int, default = 0, help="Sync Start Time. Time in seconds from the beginning of the Reference video from which the Sync Window will be applied. (default=0)." )
+    parser.add_argument('-sw', dest='sw', type = float, default = 0, help='Sync Window: window size in seconds to get a subsample of the Reference video. The sync look up will be done between the first frames of the Distorted input and this Subsample. (default=0. No sync).')
+    parser.add_argument('-ss',dest='ss', type = float, default = 0, help="Sync Start Time. Time in seconds from the beginning of the Reference video from which the Sync Window will be applied. (default=0)." )
     parser.add_argument('-subsample',dest='n', type = int, default = 1, help="Specifies the subsampling of frames to speed up calculation. (default=1, None)." )
     parser.add_argument('-reverse', help="If enable, it Changes the default Autosync behaviour: The first frames of the Reference video are used as reference to sync with the Distorted one. (Default = Disable).", action = 'store_true' )
     parser.add_argument('-model', dest='model', type = str, default = "HD", help="Vmaf Model. Options: HD, 4K. (Default: HD)." )
@@ -354,7 +358,7 @@ class MyParser(argparse.ArgumentParser):
 
 if __name__ == '__main__':
     cmdParser=get_args()
-    main = cmdParser.d
+    main_pattern = cmdParser.d
     reference = cmdParser.r
     syncWin = cmdParser.sw
     ss = cmdParser.ss
@@ -368,19 +372,27 @@ if __name__ == '__main__':
     else:
         loglevel = "info"
 
-    myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample)
-    print("SYNCING")
-    offset, psnr = myVmaf.syncOffset(syncWin, ss, reverse)
-    myVmaf.getVmaf()
-    vmafpath = myVmaf.ffmpegQos.vmafpath
-    vmafScore = []
-    with open (vmafpath) as jsonFile:
-        jsonData = json.load(jsonFile)
-        for frame in jsonData['frames']:
-            vmafScore.append(frame["metrics"]["vmaf"])
-    
-    print("\n \n \n \n \n ")
-    print("Sync Info: ")
-    print("offset: ", offset, "psnr: ", psnr)
-    print("VMAF score: ", mean(vmafScore))
-    print("VMAF json File Path: ", myVmaf.ffmpegQos.vmafpath )
+    main_pattern = os.path.expanduser(main_pattern)
+    mainFiles = glob.glob(main_pattern)
+    for main in mainFiles:
+        myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample)
+        print("SYNCING")
+        if syncWin > 0:
+            offset, psnr = myVmaf.syncOffset(syncWin, ss, reverse)
+        else:
+            offset = ss
+            psnr = None
+            myVmaf.offset = offset
+        myVmaf.getVmaf()
+        vmafpath = myVmaf.ffmpegQos.vmafpath
+        vmafScore = []
+        with open (vmafpath) as jsonFile:
+            jsonData = json.load(jsonFile)
+            for frame in jsonData['frames']:
+                vmafScore.append(frame["metrics"]["vmaf"])
+        
+        print("\n \n \n \n \n ")
+        print("Sync Info: ")
+        print("offset: ", offset, "psnr: ", psnr)
+        print("VMAF score: ", mean(vmafScore))
+        print("VMAF json File Path: ", myVmaf.ffmpegQos.vmafpath )
