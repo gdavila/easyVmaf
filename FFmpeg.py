@@ -40,7 +40,7 @@ class FFprobe:
         self.packetsInfo = None
 
     def _commit(self, opt):
-        self.cmd =  f'{FFprobe.cmd} -hide_banner -loglevel {self.loglevel} -print_format json {opt} -select_streams v -i \"{self.videoSrc}\"'
+        self.cmd =  f'{FFprobe.cmd} -hide_banner -loglevel {self.loglevel} -print_format json {opt} -select_streams v -i \"{self.videoSrc}\" -read_intervals %+5'
     
     def _run(self):
         if self.loglevel == "verbose": pass
