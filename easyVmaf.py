@@ -375,7 +375,7 @@ if __name__ == '__main__':
     main_pattern = os.path.expanduser(main_pattern)
     mainFiles = glob.glob(main_pattern)
     for main in mainFiles:
-        myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample)
+        myVmaf = vmaf(main, reference, phone=phone, loglevel=loglevel, subsample=n_subsample)
         print("SYNCING")
         if syncWin > 0:
             offset, psnr = myVmaf.syncOffset(syncWin, ss, reverse)
