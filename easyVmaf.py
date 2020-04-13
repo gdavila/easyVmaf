@@ -92,6 +92,7 @@ if __name__ == '__main__':
     for main in mainFiles:
         myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample)
         '''check if syncWin was set. If true offset is computed automatically, otherwise manual values are used  '''
+
         if syncWin > 0:
             offset, psnr = myVmaf.syncOffset(syncWin, ss, reverse)
         else:
