@@ -31,6 +31,17 @@ import varname
 
 
 class FFprobe:
+    '''
+    Class to interact with FFprobe. 
+    It gets info about stream, frames and mpeg packets
+
+    Inputs:
+        - videoSrc: path to video
+    Outputs: 
+        - getStreamInfo()
+        - getFramesInfo()
+        - getPacketsInfo()
+    '''
     cmd = config.ffprobe
     def __init__ (self, videoSrc, loglevel = "info"):
         self.videoSrc = videoSrc
@@ -39,6 +50,7 @@ class FFprobe:
         self.framesInfo = None
         self.packetsInfo = None
 
+    ''' private methods '''
     def _commit(self, opt):
         self.cmd =  f'{FFprobe.cmd} -hide_banner -loglevel {self.loglevel} -print_format json {opt} -select_streams v -i \"{self.videoSrc}\" -read_intervals %+5'
     
@@ -48,6 +60,7 @@ class FFprobe:
         print(self.cmd, flush=True)
         return json.loads(subprocess.check_output(self.cmd, shell=True))
     
+    ''' public methods '''
     def getStreamInfo(self):
         self._commit('-show_streams')
         self.streamInfo = self._run()['streams'][0]
@@ -65,7 +78,10 @@ class FFprobe:
         
 
 class FFmpegQos:
-    """class to interact with FFmpeg VMAFcommand line"""
+    '''
+    Class to interact with FFmpeg QoS Filters: PSNR and VMAF. 
+    Particullary, it interacts with libvmaf library through lavfi filter
+    '''
     cmd = config.ffmpeg
 
     def __init__ (self,  main, ref , loglevel = "info"):
@@ -79,7 +95,7 @@ class FFmpegQos:
         self.vmafpath = None
 
     def _commit(self):
-        """build the cmd before to run"""
+        """build the final cmd to run"""
         baseCmd = f'{FFmpegQos.cmd} -y -hide_banner -stats -loglevel {self.loglevel} '
         inputsCmd = self._commitInputs()
         filterCmd = self._commitFilters()
@@ -99,25 +115,28 @@ class FFmpegQos:
         filterCmd = f'-{filterName} \"{";".join(self.main.filtersList + self.ref.filtersList + self.psnrFilter + self.vmafFilter)}\"'
         return filterCmd
 
-    def addPsnrFilter(self, stats_file = None):
-        """ add PSNR filter """
+    def getPsnr(self, stats_file = False):
+        """ 
+        It adds PSNR filter to lavfi chain and run the ffmpeg cmd.
+        The output is returned and saved as stats_file_psnr.log
+        """
         main = self.main.lastOutputID
         ref = self.ref.lastOutputID
-        if stats_file == None:
+        if stats_file == True:
             stats_file = os.path.splitext(self.main.videoSrc)[0]+ '_psnr.log'
-        self.psnrFilter = [f'[{main}][{ref}]psnr=stats_file=psnr.log']
+        else: stats_file = 'stats_file_psnr.log'
 
-    def getPsnr(self):
+        self.psnrFilter = [f'[{main}][{ref}]psnr=stats_file={stats_file}']       
         self._commit()
-        if self.loglevel == "verbose": print(self.cmd, flush=True)
 
+        if self.loglevel == "verbose": print(self.cmd, flush=True)
         stdout = (subprocess.check_output(self.cmd,stderr=subprocess.STDOUT, shell=True)).decode('utf-8')
         stdout = stdout.split(" ")
         psnr = [s for s in stdout if "average" in s][0].split(":")[1]
         return float(psnr)
 
-    def addVmafFilter(self, log_path= None, model= 'HD', phone = False, subsample = 1):
-        """ add vmaf filter """
+
+    def getVmaf(self, log_path= None, model= 'HD', phone = False, subsample = 1):
         main = self.main.lastOutputID
         ref = self.ref.lastOutputID
         log_fmt = "json"
@@ -135,7 +154,6 @@ class FFmpegQos:
             return
         self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model_path={model_path}:phone_model={phone_model}:n_subsample={subsample}:log_path={log_path}:psnr=1']
 
-    def getVmaf(self):
         self._commit()
         if self.loglevel == "verbose": print(self.cmd, flush=True)
         process = subprocess.Popen(self.cmd, stdout=subprocess.PIPE, shell=True)
@@ -154,6 +172,18 @@ class FFmpegQos:
 
 
 class inputFFmpeg:
+    '''
+    Class to interact with FFmpeg inputs. 
+    It allows to manage Filter chains to each input. i.e., main and ref. Each
+    Supported Methods:
+    - setScaleFilter()
+    - setOffsetFilter()
+    - setDeintFrameFilter()
+    - setDeintFieldFilter()
+    - setTrimFilter()
+    - setFpsFilter()
+    - clearFilters()
+    '''
     def __init__(self, videoSrc, input_id ):
         self.name = varname.varname()
         self.id = input_id
