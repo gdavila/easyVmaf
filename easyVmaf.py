@@ -90,7 +90,7 @@ if __name__ == '__main__':
     main_pattern = os.path.expanduser(main_pattern)
     mainFiles = glob.glob(main_pattern)
     for main in mainFiles:
-        myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample)
+        myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample, model=model)
         '''check if syncWin was set. If true offset is computed automatically, otherwise manual values are used  '''
 
         if syncWin > 0:
