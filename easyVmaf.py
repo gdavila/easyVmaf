@@ -72,9 +72,12 @@ class MyParser(argparse.ArgumentParser):
 if __name__ == '__main__':
     signal(SIGINT, handler)
 
+    '''reading values from cmdParser'''
     cmdParser=get_args()
     main_pattern = cmdParser.d
     reference = cmdParser.r
+
+    ''' to avoid error negative numbers are not allowed'''
     syncWin = abs(cmdParser.sw)
     ss = abs(cmdParser.ss)
     n_subsample = abs(cmdParser.n)
@@ -82,13 +85,23 @@ if __name__ == '__main__':
     model = cmdParser.model
     phone = cmdParser.phone
     verbose = cmdParser.verbose
+
+    #Setting verbosity
     if verbose: 
         loglevel = "verbose"
     else:
         loglevel = "info"
 
+
+
+    '''
+    Distorted video path could be loaded as patterns i.e., "myFolder/video-sample-*.mp4"
+    In this way, many computations could be done with just one command line.
+    '''
     main_pattern = os.path.expanduser(main_pattern)
     mainFiles = glob.glob(main_pattern)
+
+
     for main in mainFiles:
         myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample, model=model)
         '''check if syncWin was set. If true offset is computed automatically, otherwise manual values are used  '''

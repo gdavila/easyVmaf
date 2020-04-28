@@ -27,8 +27,6 @@ import config
 import subprocess
 import json
 import os
-import varname
-
 
 class FFprobe:
     '''
@@ -55,9 +53,8 @@ class FFprobe:
         self.cmd =  f'{FFprobe.cmd} -hide_banner -loglevel {self.loglevel} -print_format json {opt} -select_streams v -i \"{self.videoSrc}\" -read_intervals %+5'
     
     def _run(self):
-        if self.loglevel == "verbose": pass
-        print (self.loglevel)
-        print(self.cmd, flush=True)
+        if self.loglevel == "verbose":
+            print(self.cmd, flush=True)
         return json.loads(subprocess.check_output(self.cmd, shell=True))
     
     ''' public methods '''
@@ -185,7 +182,7 @@ class inputFFmpeg:
     - clearFilters()
     '''
     def __init__(self, videoSrc, input_id ):
-        self.name = varname.varname()
+        self.name = f'input{input_id}_'
         self.id = input_id
         self.videoSrc = videoSrc
         self.filtersList =[]

@@ -12,7 +12,7 @@ Details about **How it Works** can be found [here](https://gdavila.github.io/bro
 
 * `Linux`/`OSX`
 
-* Python `>= v3.0`. Libraries: `json`, `varname`:
+* Python `>= v3.0`. Libraries: `json`:
   
 ```py
 pip3 install json
