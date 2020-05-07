@@ -16,7 +16,6 @@ Details about **How it Works** can be found [here](https://gdavila.github.io/bro
   
 ```py
 pip3 install json
-pip3 install python-varname
 ```
 
 * FFmpeg build with `libvmaf`. More details [here](http://underpop.online.fr/f/ffmpeg/help/libvmaf.htm.gz)
