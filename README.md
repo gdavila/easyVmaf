@@ -12,11 +12,7 @@ Details about **How it Works** can be found [here](https://gdavila.github.io/bro
 
 * `Linux`/`OSX`
 
-* Python `>= v3.0`. Libraries: `json`:
-  
-```py
-pip3 install json
-```
+* Python `>= v3.0`
 
 * FFmpeg build with `libvmaf`. More details [here](http://underpop.online.fr/f/ffmpeg/help/libvmaf.htm.gz)
 
