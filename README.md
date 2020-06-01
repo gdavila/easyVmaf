@@ -23,6 +23,7 @@ Just clone the repo and run it from the source folder.
 ```bash
 $ git clone https://github.com/gdavila/easyVmaf.git
 $ cd easyVmaf
+
 ```
 
 ## Examples
@@ -88,3 +89,48 @@ This time,  `distorted-B.ts` is delayed in comparition with `reference.ts`, i.e.
  The previous command line applies a syncronization window `sw` of *3 seconds*,  a *sync start time* `ss` *of 6 seconds* and the `reverse` flag.  
  
 Note the use of the  `reverse`  flag (that was not used on the first example). This flag allows to interchange to which video the `syncWindow` will be applied (reference or distorted).
+
+
+## Docker Image usage
+
+A [docker image](https://hub.docker.com/repository/docker/gfdavila/easyvmaf) is available on docker hub to run easyVmaf in a straightforward way.
+
+The Docker Image is basically an ubuntu image with `ffmpeg` and `libvmaf` already installed. You can check the [Dockerfile](https://hub.docker.com/r/gfdavila/easyvmaf/dockerfile) for more details.
+
+The easiest way to run easyVmaf through Docker is mounting a shared volume between your host machine and the container. This volume should have inside it all the video files you want to analyze. The outputs (vmaf information files) will be putting in this shared folder also. Example:
+
+Some video samples to start:
+
+```bash
+NAME                        TIME
+
+                           t=0
+                            |
+BBB_reference_10s.mp4       */-----------------------------*/
+BBB_sampleA_distorted.mp4           */---------------------*/
+BBB_sampleB_distorted.mp4       */-------------------------*/
+
+```
+
+Getting the samples and save it in `~/video-samples` folder. You can change the folder name:
+
+```bash
+:~$ mkdir ~/video-samples
+:~$ wget \
+https://github.com/gdavila/easyVmaf-DockerImage/raw/video-samples/Video-Samples/BBB_reference_10s.mp4 \
+https://github.com/gdavila/easyVmaf-DockerImage/raw/video-samples/Video-Samples/BBB_sampleA_distorted.mp4 \
+https://github.com/gdavila/easyVmaf-DockerImage/raw/video-samples/Video-Samples/BBB_sampleB_distorted.mp4 \
+-P ~/video-samples/
+```
+
+Run docker container to get VMAF between `BBB_reference_10s.mp4` and `BBB_sampleA_distorted.mp4`:
+
+```bash
+:~$ docker run -v ~/video-samples:/video-samples gfdavila/easyvmaf -r /video-samples/BBB_reference_10s.mp4 -d /video-samples/BBB_sampleA_distorted.mp4 -sw 1 -ss 1
+```
+
+Run docker container to get VMAF between `BBB_sampleA_distorted.mp4` and `BBB_sampleB_distorted.mp4`:
+
+```bash
+:~$ docker run -v ~/video-samples:/video-samples gfdavila/easyvmaf -r /video-samples/BBB_sampleA_distorted.mp4 -d /video-samples/BBB_sampleB_distorted.mp4 -sw 2 -ss 0 -reverse
+```
