@@ -18,13 +18,14 @@ Details about **How it Works** can be found [here](https://gdavila.github.io/bro
 
 ## Installation
 
-Just clone the repo and run it from the source folder.
+* Just clone the repo and run it from the source folder.
 
 ```bash
 $ git clone https://github.com/gdavila/easyVmaf.git
 $ cd easyVmaf
-
 ```
+
+* Run from [docker image](https://hub.docker.com/repository/docker/gfdavila/easyvmaf). More info at the [end of this document](#Docker-Image-usage).
 
 ## Examples
 
@@ -89,6 +90,7 @@ This time,  `distorted-B.ts` is delayed in comparition with `reference.ts`, i.e.
  The previous command line applies a syncronization window `sw` of *3 seconds*,  a *sync start time* `ss` *of 6 seconds* and the `reverse` flag.  
  
 Note the use of the  `reverse`  flag (that was not used on the first example). This flag allows to interchange to which video the `syncWindow` will be applied (reference or distorted).
+
 
 
 ## Docker Image usage
