@@ -162,10 +162,10 @@ class vmaf():
                 """
                 if not self.ffmpegQos.invertedSrc:
                     self.ffmpegQos.ref.setDeintFrameFilter()
-                    self.ffmpegQos.main.setFpsFilter(round(getFrameRate(self.ref.streamInfo['avg_frame_rate']),5))
+                    self.ffmpegQos.main.setFpsFilter(getFrameRate(self.ref.streamInfo['avg_frame_rate']),5)
                 if self.ffmpegQos.invertedSrc:
                     self.ffmpegQos.main.setDeintFrameFilter()
-                    self.ffmpegQos.ref.setFpsFilter(round(getFrameRate(self.ref.streamInfo['avg_frame_rate']),5))
+                    self.ffmpegQos.ref.setFpsFilter(getFrameRate(self.ref.streamInfo['avg_frame_rate']),5)
 
 
             elif round(getFrameRate(self.ref.streamInfo['avg_frame_rate'])) == round(getFrameRate(self.main.streamInfo['avg_frame_rate'])):
@@ -176,8 +176,12 @@ class vmaf():
                 """
                 if not self.ffmpegQos.invertedSrc: 
                     self.ffmpegQos.ref.setDeintFrameFilter()
+                    self.ffmpegQos.main.setFpsFilter(getFrameRate(self.ref.streamInfo['avg_frame_rate']),5)
+
                 if self.ffmpegQos.invertedSrc: 
                     self.ffmpegQos.main.setDeintFrameFilter()
+                    self.ffmpegQos.ref.setFpsFilter(getFrameRate(self.ref.streamInfo['avg_frame_rate']),5)
+
 
             elif round(getFrameRate(self.ref.streamInfo['avg_frame_rate'])) == round(getFrameRate(self.main.streamInfo['avg_frame_rate'])/2):
                 """
