@@ -139,103 +139,87 @@ class vmaf():
                 self.ffmpegQos.ref.setScaleFilter(self.target_resolution[0], self.target_resolution[1])
 
 
+    def _deinterlaceFrame(self, factor, stream):
+        ref_fps = getFrameRate(self.ref.streamInfo['avg_frame_rate'])
+        main_fps = getFrameRate(self.main.streamInfo['avg_frame_rate'])
+
+        stream.setDeintFrameFilter()
+        if round(ref_fps,2)!=round(factor*main_fps,2):
+            stream.setFpsFilter(round(main_fps,5))
+      
+
+    def _deinterlaceField(self, factor, stream):
+        
+        ref_fps = getFrameRate(self.ref.streamInfo['avg_frame_rate'])
+        main_fps = getFrameRate(self.main.streamInfo['avg_frame_rate'])
+
+        stream.setDeintFieldFilter()            
+        if round(ref_fps,2)!=round(factor*main_fps,2):
+            stream.setFpsFilter(round(main_fps,5))
+        
+
     def _autoDeinterlace(self):
         """ 
-        Deinterlace MAIN and REF if it is requiered
+        Deinterlace function 
+        one Frame at output pero one Field at input: 
+        i. e., 30i ->  60p
+        => Deinterlace input (30i to 60p)
         """
+        ref_fps = getFrameRate(self.ref.streamInfo['avg_frame_rate'])
+        main_fps = getFrameRate(self.main.streamInfo['avg_frame_rate'])
 
-        if self.ref.interlaced and  self.main.interlaced : 
+        if self.ref.interlaced ==  self.main.interlaced : 
             """ 
-            Input interlaced | Output Interlaced
+            REF interlaced | MAIN interlaced
             """
-            pass
+            if round(ref_fps ) < round(main_fps):
+                print("Warning: Frame rate conversion can produce bad vmaf scores", flush=True)
+                self.ffmpegQos.main.setFpsFilter(round(ref_fps,5))
+            elif round(ref_fps ) > round(main_fps):
+                print("Warning: Frame rate conversion can produce bad vmaf scores", flush=True)
+                self.ffmpegQos.ref.setFpsFilter(round(main_fps,5))
+            else:
+                pass
 
         elif self.ref.interlaced and not self.main.interlaced :
             """ 
-            Input interlaced (REF) | Output progressive (MAIN)
+            REF interlaced  | MAIN progressive
             """ 
-            if round(getFrameRate(self.ref.streamInfo['avg_frame_rate'])) == round(getFrameRate(self.main.streamInfo['avg_frame_rate'])*2):
-                """
-                one Frame at output per two fields at input: 
-                i. e., 60i-> 30p
-                => Deinterlace input (60i to 60p) and upscale the fps at output (30p to 60p)
-                """
-                if not self.ffmpegQos.invertedSrc:
-                    self.ffmpegQos.ref.setDeintFrameFilter()
-                    self.ffmpegQos.main.setFpsFilter(round(getFrameRate(self.ref.streamInfo['avg_frame_rate']),5))
-                if self.ffmpegQos.invertedSrc:
-                    self.ffmpegQos.main.setDeintFrameFilter()
-                    self.ffmpegQos.ref.setFpsFilter(round(getFrameRate(self.ref.streamInfo['avg_frame_rate']),5))
+            if round(ref_fps ) == round(main_fps*2): 
+                if not self.ffmpegQos.invertedSrc: self._deinterlaceFrame(2, self.ffmpegQos.ref )
+                else: self._deinterlaceFrame(2, self.ffmpegQos.main )
 
+            elif round(ref_fps) == round(main_fps): 
+                if not self.ffmpegQos.invertedSrc: self._deinterlaceFrame(1, self.ffmpegQos.ref )
+                else: self._deinterlaceFrame(1, self.ffmpegQos.main )
 
-            elif round(getFrameRate(self.ref.streamInfo['avg_frame_rate'])) == round(getFrameRate(self.main.streamInfo['avg_frame_rate'])):
-                """
-                one Frame at output per one Frame at input: 
-                i. e., 30i ->  30p
-                => Deinterlace input (30i to 30p)
-                """
-                if not self.ffmpegQos.invertedSrc: 
-                    self.ffmpegQos.ref.setDeintFrameFilter()
-                    self.ffmpegQos.main.setFpsFilter(round(getFrameRate(self.ref.streamInfo['avg_frame_rate']),5))
-
-                if self.ffmpegQos.invertedSrc: 
-                    self.ffmpegQos.main.setDeintFrameFilter()
-                    self.ffmpegQos.ref.setFpsFilter(round(getFrameRate(self.ref.streamInfo['avg_frame_rate']),5))
-
-
-            elif round(getFrameRate(self.ref.streamInfo['avg_frame_rate'])) == round(getFrameRate(self.main.streamInfo['avg_frame_rate'])/2):
-                """
-                one Frame at output pero one Field at input: 
-                i. e., 30i ->  60p
-                => Deinterlace input (30i to 60p)
-                """
-                if not self.ffmpegQos.invertedSrc: 
-                    self.ffmpegQos.ref.setDeintFieldFilter()
-                if self.ffmpegQos.invertedSrc: 
-                    self.ffmpegQos.main.setDeintFieldFilter()
-            else: 
-                print("Unable to find the deinterlace filter, check fps of MAIN", flush=True)
+            elif round(ref_fps) == round(main_fps/2): 
+                # 30i -> 60p
+                if not self.ffmpegQos.invertedSrc: self._deinterlaceField(0.5, self.ffmpegQos.ref )
+                else: self._deinterlaceField(0.5, self.ffmpegQos.main )
+            
+            else:
+                print("No Filters available for the given FPS", flush=True)
 
         elif not self.ref.interlaced and self.main.interlaced:
             """ 
             Input Progressive (REF) | Output Interlaced (MAIN)
             """
-            if round(getFrameRate(self.ref.streamInfo['avg_frame_rate'])) == round(getFrameRate(self.main.streamInfo['avg_frame_rate'])*2):
-                """
-                i,e,.: 60p -> 30i
-                => Deinterlace output (30i to 60p)
-                """
-                if not self.ffmpegQos.invertedSrc: 
-                    self.ffmpegQos.main.setDeintFieldFilter()
-                if self.ffmpegQos.invertedSrc: 
-                    self.ffmpegQos.ref.setDeintFieldFilter()
-            elif round(getFrameRate(self.ref.streamInfo['avg_frame_rate'])) == round(getFrameRate(self.main.streamInfo['avg_frame_rate'])):
-                """
-                i,e,. 30p -> 30i
-                => Deinterlace output (30i to 30p)
-                """
-                if not self.ffmpegQos.invertedSrc: 
-                    self.ffmpegQos.main.setDeintFrameFilter()
-                if self.ffmpegQos.invertedSrc: 
-                    self.ffmpegQos.ref.setDeintFrameFilter()
-            elif round(getFrameRate(self.ref.streamInfo['avg_frame_rate'])*2) == round(getFrameRate(self.main.streamInfo['avg_frame_rate'])):
-                """
-                i,e,. 30p -> 60i
-                => Deinterlace output (60i to 60p) and downscale the fps (60p to 30p)
-                """
-                if not self.ffmpegQos.invertedSrc: 
-                    self.ffmpegQos.main.setDeintFrameFilter()
-                    self.ffmpegQos.main.setFpsFilter(round(getFrameRate(self.ref.streamInfo['avg_frame_rate']),5))
-                if self.ffmpegQos.invertedSrc: 
-                    self.ffmpegQos.ref.setDeintFrameFilter()
-                    self.ffmpegQos.ref.setFpsFilter(round(getFrameRate(self.ref.streamInfo['avg_frame_rate']),5))
-              
-        elif not self.main.interlaced and not self.ref.interlaced:
-            """ Input Progressive Output Progresive
-                TO DO: Frame Conversion if main_fps != ref_fps
-            """
-            pass
+            if round(ref_fps ) == round(main_fps*2):
+                # 60p -> 30i
+                print("Warning: Frame rate conversion can produce bad vmaf scores", flush=True)
+                if not self.ffmpegQos.invertedSrc: self._deinterlaceField(1, self.ffmpegQos.main)
+                else: self._deinterlaceField(1, self.ffmpegQos.ref)
 
+            elif round(ref_fps ) == round(main_fps):
+                # 30p -> 30i
+                if not self.ffmpegQos.invertedSrc: self._deinterlaceFrame(1, self.ffmpegQos.main)
+                else: self._deinterlaceFrame(1, self.ffmpegQos.ref)
+
+            else:
+                print("No Filters available for the given FPS", flush=True)
+            
+            
         
 
     def syncOffset(self, syncWindow = 3, start=0, reverse = False):
