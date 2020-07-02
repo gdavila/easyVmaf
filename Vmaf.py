@@ -159,12 +159,6 @@ class vmaf():
         
 
     def _autoDeinterlace(self):
-        """ 
-        Deinterlace function 
-        one Frame at output pero one Field at input: 
-        i. e., 30i ->  60p
-        => Deinterlace input (30i to 60p)
-        """
         ref_fps = getFrameRate(self.ref.streamInfo['avg_frame_rate'])
         main_fps = getFrameRate(self.main.streamInfo['avg_frame_rate'])
 
@@ -186,15 +180,20 @@ class vmaf():
             REF interlaced  | MAIN progressive
             """ 
             if round(ref_fps ) == round(main_fps*2): 
+                # REF=60i, MAIN=30p
+                # REF=59.97i, MAIN=30p, etc
                 if not self.ffmpegQos.invertedSrc: self._deinterlaceFrame(2, self.ffmpegQos.ref )
                 else: self._deinterlaceFrame(2, self.ffmpegQos.main )
 
             elif round(ref_fps) == round(main_fps): 
+                # REF=30i, MAIN=30p
+                # REF=29.97i, MAIN=30p, etc
                 if not self.ffmpegQos.invertedSrc: self._deinterlaceFrame(1, self.ffmpegQos.ref )
                 else: self._deinterlaceFrame(1, self.ffmpegQos.main )
 
             elif round(ref_fps) == round(main_fps/2): 
-                # 30i -> 60p
+                # REF=30i, MAIN=60p
+                # REF=29.97i, MAIN=60p, etc
                 if not self.ffmpegQos.invertedSrc: self._deinterlaceField(0.5, self.ffmpegQos.ref )
                 else: self._deinterlaceField(0.5, self.ffmpegQos.main )
             
@@ -206,13 +205,15 @@ class vmaf():
             Input Progressive (REF) | Output Interlaced (MAIN)
             """
             if round(ref_fps ) == round(main_fps*2):
-                # 60p -> 30i
+                # REF=60p, MAIN=30i
+                # REF=60p, MAIN=29.97i, etc
                 print("Warning: Frame rate conversion can produce bad vmaf scores", flush=True)
                 if not self.ffmpegQos.invertedSrc: self._deinterlaceField(1, self.ffmpegQos.main)
                 else: self._deinterlaceField(1, self.ffmpegQos.ref)
 
             elif round(ref_fps ) == round(main_fps):
-                # 30p -> 30i
+                # REF=30p, MAIN=30i
+                # REF=30p, MAIN=29.97i, etc
                 if not self.ffmpegQos.invertedSrc: self._deinterlaceFrame(1, self.ffmpegQos.main)
                 else: self._deinterlaceFrame(1, self.ffmpegQos.ref)
 
