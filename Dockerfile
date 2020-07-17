@@ -6,7 +6,7 @@ ENV TZ=UTC
 # setup dependencies versions
 
 ENV FFMPEG_version=4.2.2 \
-	VMAF_version=1.5.1 \
+	VMAF_version=master \
 	easyVmaf_version=1.1 
 
 # get and install building tools
@@ -42,8 +42,12 @@ WORKDIR     /tmp/workdir
 RUN \
 	export PATH="${HOME}/.local/bin:${PATH}" && \
 	echo $PATH &&\
-	wget https://github.com/Netflix/vmaf/archive/v${VMAF_version}.tar.gz && \
-	tar -xzf  v${VMAF_version}.tar.gz && \
+	if [ "$VMAF_version" = "master" ] ; \
+	 then wget https://github.com/Netflix/vmaf/archive/${VMAF_version}.tar.gz && \
+	 tar -xzf  ${VMAF_version}.tar.gz ; \
+	 else wget https://github.com/Netflix/vmaf/archive/v${VMAF_version}.tar.gz && \
+	 tar -xzf  v${VMAF_version}.tar.gz ; \ 
+	fi
 	cd vmaf-${VMAF_version}/libvmaf/ && \
 	meson build --buildtype release && \
 	ninja -vC build && \
