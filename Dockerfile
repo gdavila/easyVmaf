@@ -47,7 +47,7 @@ RUN \
 	 tar -xzf  ${VMAF_version}.tar.gz ; \
 	 else wget https://github.com/Netflix/vmaf/archive/v${VMAF_version}.tar.gz && \
 	 tar -xzf  v${VMAF_version}.tar.gz ; \ 
-	fi
+	fi &&
 	cd vmaf-${VMAF_version}/libvmaf/ && \
 	meson build --buildtype release && \
 	ninja -vC build && \
