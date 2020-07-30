@@ -71,6 +71,11 @@ class FFprobe:
     def getPacketsInfo(self):
         self._commit('-show_packets')
         self.packetsInfo = self._run()['packets']
+        return self.packetsInfo
+
+    def getFormatInfo(self):
+        self._commit('-show_format')
+        self.packetsInfo = self._run()['format']
         return self.packetsInfo 
         
 

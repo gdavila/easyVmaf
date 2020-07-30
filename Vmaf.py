@@ -35,6 +35,7 @@ class video():
         self.streamInfo = None
         self.framesInfo = None
         self.packetsInfo = None
+        self.formatInfo = None
         self.interlacedFrames = None
         self.totalFrames = None
         self.bytesFramesTotal = None
@@ -65,10 +66,11 @@ class video():
         print("Getting stream info...", self.videoSrc ,flush=True)
         print("=======================================", flush=True)
 
+        
         self.streamInfo = FFprobe(self.videoSrc, self.loglevel).getStreamInfo()
-        self.duration = round(float(self.streamInfo['duration'])-float(self.streamInfo['start_time']))
-        if self.duration < 0:
-            self.duration = round(float(self.streamInfo['duration']))
+        #self.duration = round(float(self.streamInfo['duration'])-float(self.streamInfo['start_time']))
+        #if self.duration < 0:
+        #    self.duration = round(float(self.streamInfo['duration']))
         return self.streamInfo
     
     def getFramesInfo(self):
@@ -86,6 +88,17 @@ class video():
         print("=======================================", flush=True)
         self.packetsInfo = FFprobe(self.videoSrc, self.loglevel).getPacketsInfo()
         return self.packetsInfo
+
+    
+    def getFormatInfo(self):
+        print("\n\n=======================================", flush=True)
+        print("Getting format info...", self.videoSrc ,flush=True)
+        print("=======================================", flush=True)
+        self.formatInfo = FFprobe(self.videoSrc, self.loglevel).getFormatInfo()
+        self.duration = round(float(self.formatInfo['duration'])-float(self.formatInfo['start_time']))
+        if self.duration < 0:
+            self.duration = round(float(self.formatInfo['duration']))
+        return self.formatInfo
 
 
 class vmaf():
