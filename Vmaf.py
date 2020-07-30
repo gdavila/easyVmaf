@@ -39,11 +39,12 @@ class video():
         self.interlacedFrames = None
         self.totalFrames = None
         self.bytesFramesTotal = None
-        self.duration = None
         self.interlaced = None
         self.loglevel = loglevel
         self.getStreamInfo()
+        self.getFormatInfo()
         self.getFramesInfo()
+        self.duration = self.getDuration()
 
     def _updateFramesSummary(self):
         interlacedFrames_count = 0
@@ -61,6 +62,18 @@ class video():
             self.interlaced= False
         return
 
+    def getDuration(self):
+        try:
+            duration = round(float(self.streamInfo['duration'])-float(self.streamInfo['start_time']))
+            if duration < 0:
+                duration = round(float(self.streamInfo['duration']))
+        except KeyError:
+            duration = round(float(self.formatInfo['duration'])-float(self.formatInfo['start_time']))
+            if duration < 0:
+                duration = round(float(self.formatInfo['duration']))
+        return duration
+
+
     def getStreamInfo(self):
         print("\n\n=======================================", flush=True)
         print("Getting stream info...", self.videoSrc ,flush=True)
@@ -68,9 +81,6 @@ class video():
 
         
         self.streamInfo = FFprobe(self.videoSrc, self.loglevel).getStreamInfo()
-        #self.duration = round(float(self.streamInfo['duration'])-float(self.streamInfo['start_time']))
-        #if self.duration < 0:
-        #    self.duration = round(float(self.streamInfo['duration']))
         return self.streamInfo
     
     def getFramesInfo(self):
@@ -95,9 +105,6 @@ class video():
         print("Getting format info...", self.videoSrc ,flush=True)
         print("=======================================", flush=True)
         self.formatInfo = FFprobe(self.videoSrc, self.loglevel).getFormatInfo()
-        self.duration = round(float(self.formatInfo['duration'])-float(self.formatInfo['start_time']))
-        if self.duration < 0:
-            self.duration = round(float(self.formatInfo['duration']))
         return self.formatInfo
 
 
@@ -111,11 +118,11 @@ class vmaf():
         - TO DO: frame rate conversion 
     """
     def __init__(self, mainSrc, refSrc, model = "HD", phone = False, loglevel = "info", subsample = 1):
-        self.main = video(mainSrc)
-        self.ref = video(refSrc)
+        self.loglevel = loglevel
+        self.main = video(mainSrc,self.loglevel)
+        self.ref = video(refSrc,self.loglevel)
         self.model = model
         self.phone = phone
-        self.loglevel = loglevel
         self.subsample = subsample
         self.ffmpegQos = FFmpegQos(self.main.videoSrc, self.ref.videoSrc, self.loglevel)
         self.target_resolution = None
