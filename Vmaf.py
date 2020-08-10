@@ -76,7 +76,7 @@ class video():
 
     def getStreamInfo(self):
         print("\n\n=======================================", flush=True)
-        print("Getting stream info...", self.videoSrc ,flush=True)
+        print("[easyVmaf] Getting stream info...", self.videoSrc ,flush=True)
         print("=======================================", flush=True)
 
         
@@ -85,7 +85,7 @@ class video():
     
     def getFramesInfo(self):
         print("\n\n=======================================", flush=True)
-        print("Getting frames info...", self.videoSrc ,flush=True)
+        print("[easyVmaf] Getting frames info...", self.videoSrc ,flush=True)
         print("=======================================", flush=True)
         self.framesInfo = FFprobe(self.videoSrc, self.loglevel).getFramesInfo()
         self._updateFramesSummary()
@@ -94,7 +94,7 @@ class video():
 
     def getPacketsInfo(self):
         print("\n\n=======================================", flush=True)
-        print("Getting packets info...", self.videoSrc ,flush=True)
+        print("[easyVmaf] Getting packets info...", self.videoSrc ,flush=True)
         print("=======================================", flush=True)
         self.packetsInfo = FFprobe(self.videoSrc, self.loglevel).getPacketsInfo()
         return self.packetsInfo
@@ -102,7 +102,7 @@ class video():
     
     def getFormatInfo(self):
         print("\n\n=======================================", flush=True)
-        print("Getting format info...", self.videoSrc ,flush=True)
+        print("[easyVmaf] Getting format info...", self.videoSrc ,flush=True)
         print("=======================================", flush=True)
         self.formatInfo = FFprobe(self.videoSrc, self.loglevel).getFormatInfo()
         return self.formatInfo
@@ -134,10 +134,12 @@ class vmaf():
         """ 
         initialization of resolutions of each model
         """
-        if self.model == 'HD':
+        if self.model == 'HD' or self.model == 'HDneg':
             self.target_resolution = [1920, 1080]
         elif self.model == '4K':
             self.target_resolution = [3840,2160]
+        else:
+            exit("[easyVmaf] ERROR: Invalid vmaf model")
 
 
     def _autoScale(self):
@@ -187,10 +189,10 @@ class vmaf():
             REF interlaced | MAIN interlaced
             """
             if round(ref_fps ) < round(main_fps):
-                print("Warning: Frame rate conversion can produce bad vmaf scores", flush=True)
+                print("[easyVmaf] Warning: Frame rate conversion can produce bad vmaf scores", flush=True)
                 self.ffmpegQos.main.setFpsFilter(round(ref_fps,5))
             elif round(ref_fps ) > round(main_fps):
-                print("Warning: Frame rate conversion can produce bad vmaf scores", flush=True)
+                print("[easyVmaf] Warning: Frame rate conversion can produce bad vmaf scores", flush=True)
                 self.ffmpegQos.ref.setFpsFilter(round(main_fps,5))
             else:
                 pass
@@ -218,7 +220,7 @@ class vmaf():
                 else: self._deinterlaceField(0.5, self.ffmpegQos.main )
             
             else:
-                print("No Filters available for the given FPS", flush=True)
+                print("[easyVmaf] ERROR: No Filters available for the given Framerates", flush=True)
 
         elif not self.ref.interlaced and self.main.interlaced:
             """ 
@@ -227,7 +229,7 @@ class vmaf():
             if round(ref_fps ) == round(main_fps*2):
                 # REF=60p, MAIN=30i
                 # REF=60p, MAIN=29.97i, etc
-                print("Warning: Frame rate conversion can produce bad vmaf scores", flush=True)
+                print("[easyVmaf] Warning: Frame rate conversion can produce bad vmaf scores", flush=True)
                 if not self.ffmpegQos.invertedSrc: self._deinterlaceField(1, self.ffmpegQos.main)
                 else: self._deinterlaceField(1, self.ffmpegQos.ref)
 
@@ -238,7 +240,7 @@ class vmaf():
                 else: self._deinterlaceFrame(1, self.ffmpegQos.ref)
 
             else:
-                print("No Filters available for the given FPS", flush=True)
+                print("[easyVmaf] ERROR: No Filters available for the given Framerates", flush=True)
             
             
         

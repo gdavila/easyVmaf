@@ -148,12 +148,13 @@ class FFmpegQos:
         if model =='HD': 
             model_path = config.vmaf_HD
             phone_model = int (phone)
+        elif model =='HDneg': 
+            model_path = config.vmaf_HDneg
+            phone_model = int (phone)
         elif model == '4K': 
             model_path = config.vmaf_4K
             phone_model = 0
-        else: 
-            print('invalid vmaf model', flush = True)
-            return
+
         self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model_path={model_path}:phone_model={phone_model}:n_subsample={subsample}:log_path={log_path}:psnr=1']
 
         self._commit()

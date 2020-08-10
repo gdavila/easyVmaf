@@ -54,7 +54,7 @@ def get_args():
     parser.add_argument('-ss',dest='ss', type = float, default = 0, help="Sync Start Time. Time in seconds from the beginning of the Reference video from which the Sync Window will be applied. (default=0)." )
     parser.add_argument('-subsample',dest='n', type = int, default = 1, help="Specifies the subsampling of frames to speed up calculation. (default=1, None)." )
     parser.add_argument('-reverse', help="If enable, it Changes the default Autosync behaviour: The first frames of the Reference video are used as reference to sync with the Distorted one. (Default = Disable).", action = 'store_true' )
-    parser.add_argument('-model', dest='model', type = str, default = "HD", help="Vmaf Model. Options: HD, 4K. (Default: HD)." )
+    parser.add_argument('-model', dest='model', type = str, default = "HD", help="Vmaf Model. Options: HD, HDneg, 4K. (Default: HD)." )
     parser.add_argument('-phone' , help =  'It enables vmaf phone model (HD only). (Default=disable).', action = 'store_true')
     parser.add_argument('-verbose' , help =  'Activate verbose loglevel. (Default: info).', action = 'store_true')
     if len(sys.argv)==1:
@@ -117,6 +117,7 @@ if __name__ == '__main__':
         myVmaf.getVmaf()
         vmafpath = myVmaf.ffmpegQos.vmafpath
         vmafScore = []
+        print(vmafpath)
         with open (vmafpath) as jsonFile:
             jsonData = json.load(jsonFile)
             for frame in jsonData['frames']:
