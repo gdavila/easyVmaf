@@ -7,7 +7,7 @@ ENV TZ=UTC
 
 ENV FFMPEG_version=4.2.2 \
 	VMAF_version=master \
-	easyVmaf_version=1.1 
+	easyVmaf_version=1.2 
 
 # get and install building tools
 WORKDIR     /tmp/workdir
