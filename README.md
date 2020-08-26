@@ -114,17 +114,6 @@ BBB_sampleB_distorted.mp4       */-------------------------*/
 
 ```
 
-Getting the samples and save it in `~/video-samples` folder. You can change the folder name:
-
-```bash
-:~$ mkdir ~/video-samples
-:~$ wget \
-https://github.com/gdavila/easyVmaf-DockerImage/raw/video-samples/Video-Samples/BBB_reference_10s.mp4 \
-https://github.com/gdavila/easyVmaf-DockerImage/raw/video-samples/Video-Samples/BBB_sampleA_distorted.mp4 \
-https://github.com/gdavila/easyVmaf-DockerImage/raw/video-samples/Video-Samples/BBB_sampleB_distorted.mp4 \
--P ~/video-samples/
-```
-
 Run docker container to get VMAF between `BBB_reference_10s.mp4` and `BBB_sampleA_distorted.mp4`:
 
 ```bash
