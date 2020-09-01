@@ -7,7 +7,7 @@ ENV TZ=UTC
 
 ENV FFMPEG_version=4.2.2 \
 	VMAF_version=master \
-	easyVmaf_version=1.2 
+	easyVmaf_version=master 
 
 # get and install building tools
 WORKDIR     /tmp/workdir
@@ -72,8 +72,12 @@ ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/lib64/"
 # install  easyVmaf
 WORKDIR  /app
 RUN \
-	wget https://github.com/gdavila/easyVmaf/archive/v${easyVmaf_version}.tar.gz && \
-	tar -xzf  v${easyVmaf_version}.tar.gz
+	if [ "$easyVmaf_version" = "master" ] ; \
+	 then wget https://github.com/gdavila/easyVmaf/archive/${easyVmaf_version}.tar.gz && \
+	 tar -xzf  ${easyVmaf_version}.tar.gz ; \
+	 else wget https://github.com/gdavila/easyVmaf/archive/v${easyVmaf_version}.tar.gz && \
+	 tar -xzf  v${easyVmaf_version}.tar.gz ; \ 
+	fi
 
 # app setup
 WORKDIR  /app/easyVmaf-${easyVmaf_version}
