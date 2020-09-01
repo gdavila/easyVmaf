@@ -106,7 +106,7 @@ class FFmpegQos:
 
     def _commitInputs(self):
         """build the cmd for the inputs files"""
-        inputCmd = f'-i \"{self.main.videoSrc}\" -i \"{self.ref.videoSrc}\"'
+        inputCmd = f'-i \"{self.main.videoSrc}\" -i \"{self.ref.videoSrc}\" -map 0:v -map 1:v'
         return  inputCmd
 
     def _commitOutputs(self):
