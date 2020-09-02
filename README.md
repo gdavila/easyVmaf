@@ -27,6 +27,41 @@ $ cd easyVmaf
 
 * Run from [docker image](https://hub.docker.com/repository/docker/gfdavila/easyvmaf). More info at the [end of this document](#Docker-Image-usage).
 
+## Usage
+
+```console
+$ python3 easyVmaf.py -h
+usage: eVmaf [-h] -d D -r R [-sw SW] [-ss SS] [-subsample N] [-reverse]
+             [-model MODEL] [-phone] [-verbose]
+
+Script to easy compute VMAF using FFmpeg. It allows to deinterlace, scale and sync Ref and Distorted video samples automatically:             
+
+ 	 Autodeinterlace: If the Reference or Distorted samples are interlaced, deinterlacing is applied            
+
+ 	 Autoscale: Reference and Distorted samples are scaled automatically to 1920x1080 or 3840x2160 depending on the VMAF model to use            
+
+ 	 Autosync: The first frames of the distorted video are used as reference to a sync look up with the Reference video.             
+ 	 	 The sync is doing by a frame-by-frame look up of the best PSNR            
+ 	 	 See [-reverse] for more options of syncing            
+
+ As output, a json file with VMAF score is created
+
+optional arguments:
+  -h, --help    show this help message and exit
+  -sw SW        Sync Window: window size in seconds to get a subsample of the Reference video. The sync look up will be done between the first frames of the Distorted input and this Subsample. (default=0. No sync).
+  -ss SS        Sync Start Time. Time in seconds from the beginning of the Reference video from which the Sync Window will be applied. (default=0).
+  -subsample N  Specifies the subsampling of frames to speed up calculation. (default=1, None).
+  -reverse      If enable, it Changes the default Autosync behaviour: The first frames of the Reference video are used as reference to sync with the Distorted one. (Default = Disable).
+  -model MODEL  Vmaf Model. Options: HD, HDneg, 4K. (Default: HD).
+  -phone        It enables vmaf phone model (HD only). (Default=disable).
+  -verbose      Activate verbose loglevel. (Default: info).
+
+required arguments:
+  -d D          Distorted video
+  -r R          Reference video 
+```
+NOTE: HDneg is not supported yet. 
+
 ## Examples
 
 ### Syncing: Reference Video delayed in regard with the first frame of Distorted one.
