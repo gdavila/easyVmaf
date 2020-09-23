@@ -162,8 +162,8 @@ class vmaf():
 
 
     def _deinterlaceFrame(self, factor, stream):
-        ref_fps = getFrameRate(self.ref.streamInfo['avg_frame_rate'])
-        main_fps = getFrameRate(self.main.streamInfo['avg_frame_rate'])
+        ref_fps = getFrameRate(self.ref.streamInfo['r_frame_rate'])
+        main_fps = getFrameRate(self.main.streamInfo['r_frame_rate'])
 
         stream.setDeintFrameFilter()
         if round(ref_fps,2)!=round(factor*main_fps,2):
@@ -172,8 +172,8 @@ class vmaf():
 
     def _deinterlaceField(self, factor, stream):
         
-        ref_fps = getFrameRate(self.ref.streamInfo['avg_frame_rate'])
-        main_fps = getFrameRate(self.main.streamInfo['avg_frame_rate'])
+        ref_fps = getFrameRate(self.ref.streamInfo['r_frame_rate'])
+        main_fps = getFrameRate(self.main.streamInfo['r_frame_rate'])
 
         stream.setDeintFieldFilter()            
         if round(ref_fps,2)!=round(factor*main_fps,2):
@@ -181,8 +181,8 @@ class vmaf():
         
 
     def _autoDeinterlace(self):
-        ref_fps = getFrameRate(self.ref.streamInfo['avg_frame_rate'])
-        main_fps = getFrameRate(self.main.streamInfo['avg_frame_rate'])
+        ref_fps = getFrameRate(self.ref.streamInfo['r_frame_rate'])
+        main_fps = getFrameRate(self.main.streamInfo['r_frame_rate'])
 
         if self.ref.interlaced ==  self.main.interlaced : 
             """ 
@@ -263,14 +263,14 @@ class vmaf():
         print("\n\n=======================================", flush=True)
         print("Syncing... Computing PSNR values... ", flush=True)
         print("=======================================", flush=True)
-        print("Distorted:" , self.main.videoSrc , "@" , round(getFrameRate(self.main.streamInfo['avg_frame_rate']),5) , "fps","|" ,self.main.streamInfo['width'], self.main.streamInfo['height'] , flush=True)
-        print("Reference:" , self.ref.videoSrc , "@" , round(getFrameRate(self.ref.streamInfo['avg_frame_rate']),5) , "fps","|" ,self.ref.streamInfo['width'], self.ref.streamInfo['height'],  flush=True)
+        print("Distorted:" , self.main.videoSrc , "@" , round(getFrameRate(self.main.streamInfo['r_frame_rate']),5) , "fps","|" ,self.main.streamInfo['width'], self.main.streamInfo['height'] , flush=True)
+        print("Reference:" , self.ref.videoSrc , "@" , round(getFrameRate(self.ref.streamInfo['r_frame_rate']),5) , "fps","|" ,self.ref.streamInfo['width'], self.ref.streamInfo['height'],  flush=True)
         print("=======================================", flush=True)
         print("offset(s)","\t\t","psnr[dB]", flush=True)
 
 
         if reverse: self.ffmpegQos.invertSrcs()
-        fps = getFrameRate(self.ref.streamInfo['avg_frame_rate'])
+        fps = getFrameRate(self.ref.streamInfo['r_frame_rate'])
         frameDuration = 1/fps
         startFrame = int(round(start/frameDuration))
         framesInSyncWindow = int(round(syncWindow/frameDuration))
@@ -345,8 +345,8 @@ class vmaf():
         print("\n\n=======================================", flush=True)
         print("Computing VMAF... ", flush=True)
         print("=======================================", flush=True)
-        print("Distorted:" , self.main.videoSrc , "@" , round(getFrameRate(self.main.streamInfo['avg_frame_rate']),5) , "fps","|" ,self.main.streamInfo['width'], self.main.streamInfo['height'] , flush=True)
-        print("Reference:" , self.ref.videoSrc , "@" , round(getFrameRate(self.ref.streamInfo['avg_frame_rate']),5) , "fps","|" ,self.ref.streamInfo['width'], self.ref.streamInfo['height'],  flush=True)
+        print("Distorted:" , self.main.videoSrc , "@" , round(getFrameRate(self.main.streamInfo['r_frame_rate']),5) , "fps","|" ,self.main.streamInfo['width'], self.main.streamInfo['height'] , flush=True)
+        print("Reference:" , self.ref.videoSrc , "@" , round(getFrameRate(self.ref.streamInfo['r_frame_rate']),5) , "fps","|" ,self.ref.streamInfo['width'], self.ref.streamInfo['height'],  flush=True)
         print("Offset:", self.offset, flush=True)
         print("Model:", self.model, flush=True)
         print("Phone:", self.phone, flush=True)
@@ -357,6 +357,6 @@ class vmaf():
         self.ffmpegQos.getVmaf(model = self.model, phone = self.phone, subsample= self.subsample)
 
 
-def getFrameRate(avg_frame_rate):
-    num, den = avg_frame_rate.split('/')
+def getFrameRate(r_frame_rate):
+    num, den = r_frame_rate.split('/')
     return int(num)/int(den)
