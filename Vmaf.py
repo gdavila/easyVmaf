@@ -183,10 +183,10 @@ class vmaf():
     def _autoDeinterlace(self):
         ref_fps = getFrameRate(self.ref.streamInfo['r_frame_rate'])
         main_fps = getFrameRate(self.main.streamInfo['r_frame_rate'])
-
+        print (self.ref.interlaced, self.ref.interlaced)
         if self.ref.interlaced ==  self.main.interlaced : 
             """ 
-            REF interlaced | MAIN interlaced
+            REF interlaced | MAIN interlaced or  REF progressive  | MAIN progressive
             """
             if round(ref_fps ) < round(main_fps):
                 print("[easyVmaf] Warning: Frame rate conversion can produce bad vmaf scores", flush=True)
@@ -195,7 +195,8 @@ class vmaf():
                 print("[easyVmaf] Warning: Frame rate conversion can produce bad vmaf scores", flush=True)
                 self.ffmpegQos.ref.setFpsFilter(round(main_fps,5))
             else:
-                pass
+                self.ffmpegQos.main.setFpsFilter(round(main_fps,5))
+                self.ffmpegQos.ref.setFpsFilter(round(ref_fps,5))
 
         elif self.ref.interlaced and not self.main.interlaced :
             """ 
@@ -241,10 +242,8 @@ class vmaf():
 
             else:
                 print("[easyVmaf] ERROR: No Filters available for the given Framerates", flush=True)
-            
-            
-        
 
+            
     def syncOffset(self, syncWindow = 3, start=0, reverse = False):
         """
         Method to get the offset needed to sync REF and MAIN (if any). 
