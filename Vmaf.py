@@ -110,8 +110,7 @@ class video():
 
 class vmaf():
     """
-    Video class to manage VMAF computation of video streams by using
-    by _FFmpeg.FFmpegQos. This class allows:
+    Video class to manage VMAF computation of video streams This class allows:
         - To upscale or downscale the MAIN or REF videos automatically according to the Vmaf model
         - Deinterlace automatically the MAIN and REF videos if needed
         - To SYNC the MAIN and REF videos using psnr computation 
@@ -132,7 +131,7 @@ class vmaf():
 
     def _initResolutions(self):
         """ 
-        initialization of resolutions of each model
+        initialization of resolutions for each vmaf model
         """
         if self.model == 'HD' or self.model == 'HDneg':
             self.target_resolution = [1920, 1080]
@@ -181,20 +180,37 @@ class vmaf():
         
 
     def _autoDeinterlace(self):
+
+        """ 
+        This functions normalizes the framerate between MAIN and REF video streams if needed
+        """
         ref_fps = getFrameRate(self.ref.streamInfo['r_frame_rate'])
         main_fps = getFrameRate(self.main.streamInfo['r_frame_rate'])
-        print (self.ref.interlaced, self.ref.interlaced)
+
         if self.ref.interlaced ==  self.main.interlaced : 
             """ 
-            REF interlaced | MAIN interlaced or  REF progressive  | MAIN progressive
+            Case 1:
+                REF interlaced | MAIN interlaced OR REF progressive  | MAIN progressive
             """
             if round(ref_fps ) < round(main_fps):
+                """
+                Do frame rate conversion
+                """
                 print("[easyVmaf] Warning: Frame rate conversion can produce bad vmaf scores", flush=True)
                 self.ffmpegQos.main.setFpsFilter(round(ref_fps,5))
             elif round(ref_fps ) > round(main_fps):
+                """
+                Do frame rate conversion
+                """
                 print("[easyVmaf] Warning: Frame rate conversion can produce bad vmaf scores", flush=True)
                 self.ffmpegQos.ref.setFpsFilter(round(main_fps,5))
             else:
+                """
+                This just pass the original framerate to the ffmpeg filter (lavfi) if no frame rate
+                conversion is requiered. It is needed 
+                under some circunstances by lavfi to work properly
+                """
+
                 self.ffmpegQos.main.setFpsFilter(round(main_fps,5))
                 self.ffmpegQos.ref.setFpsFilter(round(ref_fps,5))
 
