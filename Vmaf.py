@@ -110,11 +110,11 @@ class video():
 
 class vmaf():
     """
-    Video class to manage VMAF computation of video streams This class allows:
-        - To upscale or downscale the MAIN or REF videos automatically according to the Vmaf model
+    Video class to manage VMAF computation of video streams. This class allows:
+        - Upscale or downscale the MAIN or REF videos automatically according to the Vmaf model (1080, 4K, etc)
         - Deinterlace automatically the MAIN and REF videos if needed
-        - To SYNC the MAIN and REF videos using psnr computation 
-        - TO DO: frame rate conversion 
+        - To SYNC (in time) the MAIN and REF videos using psnr computation 
+        - Frame rate conversion (if needed)
     """
     def __init__(self, mainSrc, refSrc, model = "HD", phone = False, loglevel = "info", subsample = 1):
         self.loglevel = loglevel
@@ -143,7 +143,7 @@ class vmaf():
 
     def _autoScale(self):
         """ 
-        scaling MAIN and REF if they doesnt match with the resolution requiered by the vmaf model
+        scaling MAIN and REF if they dont match with the resolution requiered by the vmaf model (target resolution)
         """
         refResolution = [self.ref.streamInfo['width'], self.ref.streamInfo['height']]
         mainResolution = [self.main.streamInfo['width'], self.main.streamInfo['height']]
@@ -182,33 +182,30 @@ class vmaf():
     def _autoDeinterlace(self):
 
         """ 
-        This functions normalizes the framerate between MAIN and REF video streams if needed
+        This functions normalizes the framerate between MAIN and REF video streams (if needed)
         """
         ref_fps = getFrameRate(self.ref.streamInfo['r_frame_rate'])
         main_fps = getFrameRate(self.main.streamInfo['r_frame_rate'])
 
         if self.ref.interlaced ==  self.main.interlaced : 
-            """ 
-            Case 1:
-                REF interlaced | MAIN interlaced OR REF progressive  | MAIN progressive
+            """ Not Deinterlace would be required. So this functions normalizes the fps between REF and MAIN
             """
             if round(ref_fps ) < round(main_fps):
                 """
-                Do frame rate conversion
+                frame rate conversion over MAIN video. The lowest framerate is choosed (REF fps).
                 """
                 print("[easyVmaf] Warning: Frame rate conversion can produce bad vmaf scores", flush=True)
                 self.ffmpegQos.main.setFpsFilter(round(ref_fps,5))
             elif round(ref_fps ) > round(main_fps):
                 """
-                Do frame rate conversion
+                frame rate conversion over REF video. The lowest framerate is choosed (MAIN fps).
                 """
                 print("[easyVmaf] Warning: Frame rate conversion can produce bad vmaf scores", flush=True)
                 self.ffmpegQos.ref.setFpsFilter(round(main_fps,5))
             else:
                 """
-                This just pass the original framerate to the ffmpeg filter (lavfi) if no frame rate
-                conversion is requiered. It is needed 
-                under some circunstances by lavfi to work properly
+                This just pass the original framerate to the ffmpeg filter (lavfi) when no frame rate
+                conversion is requiered. For some reason it is mandatory by lavfi in order to work properly.
                 """
 
                 self.ffmpegQos.main.setFpsFilter(round(main_fps,5))
@@ -219,19 +216,19 @@ class vmaf():
             REF interlaced  | MAIN progressive
             """ 
             if round(ref_fps ) == round(main_fps*2): 
-                # REF=60i, MAIN=30p
+                # Examples: REF=60i, MAIN=30p
                 # REF=59.97i, MAIN=30p, etc
                 if not self.ffmpegQos.invertedSrc: self._deinterlaceFrame(2, self.ffmpegQos.ref )
                 else: self._deinterlaceFrame(2, self.ffmpegQos.main )
 
             elif round(ref_fps) == round(main_fps): 
-                # REF=30i, MAIN=30p
+                # Examples: REF=30i, MAIN=30p
                 # REF=29.97i, MAIN=30p, etc
                 if not self.ffmpegQos.invertedSrc: self._deinterlaceFrame(1, self.ffmpegQos.ref )
                 else: self._deinterlaceFrame(1, self.ffmpegQos.main )
 
             elif round(ref_fps) == round(main_fps/2): 
-                # REF=30i, MAIN=60p
+                # Examples: REF=30i, MAIN=60p
                 # REF=29.97i, MAIN=60p, etc
                 if not self.ffmpegQos.invertedSrc: self._deinterlaceField(0.5, self.ffmpegQos.ref )
                 else: self._deinterlaceField(0.5, self.ffmpegQos.main )
@@ -244,14 +241,14 @@ class vmaf():
             Input Progressive (REF) | Output Interlaced (MAIN)
             """
             if round(ref_fps ) == round(main_fps*2):
-                # REF=60p, MAIN=30i
+                # Examples: REF=60p, MAIN=30i
                 # REF=60p, MAIN=29.97i, etc
                 print("[easyVmaf] Warning: Frame rate conversion can produce bad vmaf scores", flush=True)
                 if not self.ffmpegQos.invertedSrc: self._deinterlaceField(1, self.ffmpegQos.main)
                 else: self._deinterlaceField(1, self.ffmpegQos.ref)
 
             elif round(ref_fps ) == round(main_fps):
-                # REF=30p, MAIN=30i
+                # Examples: REF=30p, MAIN=30i
                 # REF=30p, MAIN=29.97i, etc
                 if not self.ffmpegQos.invertedSrc: self._deinterlaceFrame(1, self.ffmpegQos.main)
                 else: self._deinterlaceFrame(1, self.ffmpegQos.ref)
@@ -307,7 +304,14 @@ class vmaf():
         maxPsnr = max(psnr['value'])
         index = psnr['value'].index(maxPsnr)
         offset = psnr['time'][index]
-        if reverse: 
+        if reverse:
+         """
+         The reverse variable/flag indicates if the offset (for time syncing ) was applied over the MAIN or over the REF.
+         It is FALSE if it was applied over REF (default) and TRUE if it was applied over the MAIN. 
+         If it is TRUE, it means that REF and MAIN where "interchanged" (REF -> MAIN, MAIN -> REF) to compute the PSNR for sync. Once the PSNR is
+         computed, it is requiered to come back to the original MAIN/REF.
+         """
+            
             self.ffmpegQos.invertSrcs()
             offset = -1 * offset
         self.offset = offset
