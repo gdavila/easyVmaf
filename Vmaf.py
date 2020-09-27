@@ -304,14 +304,13 @@ class vmaf():
         maxPsnr = max(psnr['value'])
         index = psnr['value'].index(maxPsnr)
         offset = psnr['time'][index]
-        if reverse:
-         """
+        """
          The reverse variable/flag indicates if the offset (for time syncing ) was applied over the MAIN or over the REF.
          It is FALSE if it was applied over REF (default) and TRUE if it was applied over the MAIN. 
          If it is TRUE, it means that REF and MAIN where "interchanged" (REF -> MAIN, MAIN -> REF) to compute the PSNR for sync. Once the PSNR is
          computed, it is requiered to come back to the original MAIN/REF.
-         """
-            
+        """
+        if reverse:
             self.ffmpegQos.invertSrcs()
             offset = -1 * offset
         self.offset = offset
