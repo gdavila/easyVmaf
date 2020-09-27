@@ -101,6 +101,13 @@ if __name__ == '__main__':
     main_pattern = os.path.expanduser(main_pattern)
     mainFiles = glob.glob(main_pattern)
 
+    if not(os.path.isfile(reference)):
+        print("Reference Video file not found: ", reference, flush=True)
+        sys.exit(1)
+
+    if len(mainFiles) == 0:
+        print("Distorted Video files not found with the given pattern/name: ", main_pattern, flush=True)
+        sys.exit(1)
 
     for main in mainFiles:
         myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample, model=model)
