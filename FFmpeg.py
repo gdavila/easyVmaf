@@ -138,12 +138,17 @@ class FFmpegQos:
         return float(psnr)
 
 
-    def getVmaf(self, log_path= None, model= 'HD', phone = False, subsample = 1):
+    def getVmaf(self, log_path= None, model= 'HD', phone = False, subsample = 1,xmloutput=False):
         main = self.main.lastOutputID
         ref = self.ref.lastOutputID
-        log_fmt = "json"
-        if log_path == None:
-            log_path = os.path.splitext(self.main.videoSrc)[0]+ '_vmaf.json'
+        if xmloutput:
+            log_fmt = "xml"
+            if log_path == None:
+                log_path = os.path.splitext(self.main.videoSrc)[0]+ '_vmaf.xml'
+        else:
+            log_fmt = "json"
+            if log_path == None:
+                log_path = os.path.splitext(self.main.videoSrc)[0]+ '_vmaf.json'
         self.vmafpath = log_path
         if model =='HD': 
             model_path = config.vmaf_HD
