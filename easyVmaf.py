@@ -124,17 +124,22 @@ if __name__ == '__main__':
         myVmaf.getVmaf()
         vmafpath = myVmaf.ffmpegQos.vmafpath
         vmafScore = []
+        vmafScoreHarmonicMean = 0
         print(vmafpath)
         with open (vmafpath) as jsonFile:
             jsonData = json.load(jsonFile)
             for frame in jsonData['frames']:
                 vmafScore.append(frame["metrics"]["vmaf"])
+            for ele in vmafScore: 
+                vmafScoreHarmonicMean += 1 / ele     
+            vmafScoreHarmonicMean = len(vmafScore)/vmafScoreHarmonicMean
         
         print("\n \n \n \n \n ")
         print("=======================================", flush=True)
         print("VMAF computed", flush=True)
         print("=======================================", flush=True)
         print("offset: ", offset, " | psnr: ", psnr)
-        print("VMAF score: ", mean(vmafScore))
+        print("VMAF score (arithmetic mean): ", mean(vmafScore))
+        print("VMAF score (harmonic mean): ", vmafScoreHarmonicMean)
         print("VMAF json File Path: ", myVmaf.ffmpegQos.vmafpath )
         print("\n \n \n \n \n ")
