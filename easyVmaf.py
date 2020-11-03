@@ -50,25 +50,17 @@ def get_args():
             \n \t \t See [-reverse] for more options of syncing\
             \n\n As output, a json file with VMAF score is created", formatter_class=argparse.RawTextHelpFormatter)
     requiredgroup = parser.add_argument_group('required arguments')
-    requiredgroup.add_argument(
-        '-d', dest='d', type=str, help='Distorted video', required=True)
-    requiredgroup.add_argument(
-        '-r', dest='r', type=str, help='Reference video ', required=True)
-    parser.add_argument('-sw', dest='sw', type=float, default=0,
-                        help='Sync Window: window size in seconds of a subsample of the Reference video. The sync lookup will be done between the first frames of the Distorted input and this Subsample of the Reference. (default=0. No sync).')
-    parser.add_argument('-ss', dest='ss', type=float, default=0,
-                        help="Sync Start Time. Time in seconds from the beginning of the Reference video to which the Sync Window will be applied from. (default=0).")
-    parser.add_argument('-subsample', dest='n', type=int, default=1,
-                        help="Specifies the subsampling of frames to speed up calculation. (default=1, None).")
+    requiredgroup.add_argument('-d', dest='d', type=str, help='Distorted video', required=True)
+    requiredgroup.add_argument('-r', dest='r', type=str, help='Reference video ', required=True)
+    parser.add_argument('-sw', dest='sw', type=float, default=0, help='Sync Window: window size in seconds of a subsample of the Reference video. The sync lookup will be done between the first frames of the Distorted input and this Subsample of the Reference. (default=0. No sync).')
+    parser.add_argument('-ss', dest='ss', type=float, default=0, help="Sync Start Time. Time in seconds from the beginning of the Reference video to which the Sync Window will be applied from. (default=0).")
+    parser.add_argument('-subsample', dest='n', type=int, default=1, help="Specifies the subsampling of frames to speed up calculation. (default=1, None).")
     parser.add_argument('-reverse', help="If enable, it Changes the default Autosync behaviour: The first frames of the Reference video are used as reference to sync with the Distorted one. (Default = Disable).", action='store_true')
-    parser.add_argument('-model', dest='model', type=str, default="HD",
-                        help="Vmaf Model. Options: HD, HDneg, 4K. (Default: HD).")
-    parser.add_argument(
-        '-phone', help='It enables vmaf phone model (HD only). (Default=disable).', action='store_true')
-    parser.add_argument(
-        '-verbose', help='Activate verbose loglevel. (Default: info).', action='store_true')
-    parser.add_argument('-XMLoutput', dest='xmloutput',
-                        help='XML output result file (Default: json).', action='store_true')
+    parser.add_argument('-model', dest='model', type=str, default="HD", help="Vmaf Model. Options: HD, HDneg, 4K. (Default: HD).")
+    parser.add_argument('-phone', help='It enables vmaf phone model (HD only). (Default=disable).', action='store_true')
+    parser.add_argument('-verbose', help='Activate verbose loglevel. (Default: info).', action='store_true')
+    parser.add_argument('-output_fmt', dest='output_fmt',type=str, default='json', help='Output vmaf file format. Options: json or xml (Default: json)')
+    
     if len(sys.argv) == 1:
         parser.print_help(sys.stderr)
         sys.exit(1)
@@ -98,7 +90,8 @@ if __name__ == '__main__':
     model = cmdParser.model
     phone = cmdParser.phone
     verbose = cmdParser.verbose
-    xmloutput = cmdParser.xmloutput
+    #xmloutput = cmdParser.xmloutput
+    output_fmt = cmdParser.output_fmt
 
     # Setting verbosity
     if verbose:
@@ -123,8 +116,7 @@ if __name__ == '__main__':
         sys.exit(1)
 
     for main in mainFiles:
-        myVmaf = vmaf(main, reference, loglevel=loglevel,
-                      subsample=n_subsample, model=model, xmloutput=xmloutput)
+        myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample, model=model, output_fmt=output_fmt)
         '''check if syncWin was set. If true offset is computed automatically, otherwise manual values are used  '''
 
         if syncWin > 0:
@@ -143,7 +135,7 @@ if __name__ == '__main__':
         vmafScoreMean = 0
         print(vmafpath)
 
-        if xmloutput == False:
+        if output_fmt == 'json':
             with open(vmafpath) as jsonFile:
                 jsonData = json.load(jsonFile)
                 for frame in jsonData['frames']:
