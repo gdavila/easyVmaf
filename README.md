@@ -32,7 +32,7 @@ $ cd easyVmaf
 ```console
 $ python3 easyVmaf.py -h
 usage: eVmaf [-h] -d D -r R [-sw SW] [-ss SS] [-subsample N] [-reverse]
-             [-model MODEL] [-phone] [-verbose]
+             [-model MODEL] [-phone] [-verbose] [-output_fmt TYPE]
 
 Script to easy compute VMAF using FFmpeg. It allows to deinterlace, scale and sync Ref and Distorted video samples automatically:             
 
@@ -44,7 +44,7 @@ Script to easy compute VMAF using FFmpeg. It allows to deinterlace, scale and sy
  	 	 The sync is doing by a frame-by-frame look up of the best PSNR            
  	 	 See [-reverse] for more options of syncing            
 
- As output, a json file with VMAF score is created
+ As output, a json or XML file with VMAF score is created
 
 optional arguments:
   -h, --help    show this help message and exit
@@ -55,6 +55,7 @@ optional arguments:
   -model MODEL  Vmaf Model. Options: HD, HDneg, 4K. (Default: HD).
   -phone        It enables vmaf phone model (HD only). (Default=disable).
   -verbose      Activate verbose loglevel. (Default: info).
+  -output_fmt TYPE   Output vmaf file format. Options: json or xml (Default: json)
 
 required arguments:
   -d D          Distorted video
