@@ -134,13 +134,21 @@ if __name__ == '__main__':
         vmafScore = []
         vmafScoreHarmonicMean = 0
         print(vmafpath)
-        with open (vmafpath) as jsonFile:
-            jsonData = json.load(jsonFile)
-            for frame in jsonData['frames']:
-                vmafScore.append(frame["metrics"]["vmaf"])
-            for ele in vmafScore: 
-                vmafScoreHarmonicMean += 1 / ele     
-            vmafScoreHarmonicMean = len(vmafScore)/vmafScoreHarmonicMean
+        
+        if output_fmt == 'json':
+            with open(vmafpath) as jsonFile:
+                jsonData = json.load(jsonFile)
+                for frame in jsonData['frames']:
+                    vmafScore.append(frame["metrics"]["vmaf"])
+                vmafScoreMean = mean(vmafScore)
+        else:
+            tree = ET.parse(vmafpath)
+            root = tree.getroot()
+            for frame in root.findall('frames/frame'):
+                value = frame.get('vmaf')
+                print(value)
+                vmafScore.append(float(value))
+            vmafScoreMean = (sum(vmafScore) / len(vmafScore)) 
         
         print("\n \n \n \n \n ")
         print("=======================================", flush=True)
