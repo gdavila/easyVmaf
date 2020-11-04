@@ -22,25 +22,27 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
-import  argparse
+import argparse
 import json
 import sys
 import os.path
 import glob
-
+import xml.etree.ElementTree as ET
 
 
 from statistics import mean
 from Vmaf import vmaf
 from signal import signal, SIGINT
 
+
 def handler(signal_received, frame):
     print('SIGINT or CTRL-C detected. Exiting gracefully')
     sys.exit(0)
 
+
 def get_args():
     '''This function parses and return arguments passed in'''
-    parser = MyParser(prog = 'eVmaf', description = "Script to easy compute VMAF using FFmpeg. It allows to deinterlace, scale and sync Ref and Distorted video samples automatically: \
+    parser = MyParser(prog='eVmaf', description="Script to easy compute VMAF using FFmpeg. It allows to deinterlace, scale and sync Ref and Distorted video samples automatically: \
             \n\n \t Autodeinterlace: If the Reference or Distorted samples are interlaced, deinterlacing is applied\
             \n\n \t Autoscale: Reference and Distorted samples are scaled automatically to 1920x1080 or 3840x2160 depending on the VMAF model to use\
             \n\n \t Autosync: The first frames of the distorted video are used as reference to a sync look up with the Reference video. \
@@ -48,19 +50,22 @@ def get_args():
             \n \t \t See [-reverse] for more options of syncing\
             \n\n As output, a json file with VMAF score is created", formatter_class=argparse.RawTextHelpFormatter)
     requiredgroup = parser.add_argument_group('required arguments')
-    requiredgroup.add_argument('-d' , dest='d', type = str, help = 'Distorted video', required=True)
-    requiredgroup.add_argument('-r' , dest='r', type = str, help = 'Reference video ', required=True)
-    parser.add_argument('-sw', dest='sw', type = float, default = 0, help='Sync Window: window size in seconds of a subsample of the Reference video. The sync lookup will be done between the first frames of the Distorted input and this Subsample of the Reference. (default=0. No sync).')
-    parser.add_argument('-ss',dest='ss', type = float, default = 0, help="Sync Start Time. Time in seconds from the beginning of the Reference video to which the Sync Window will be applied from. (default=0)." )
-    parser.add_argument('-subsample',dest='n', type = int, default = 1, help="Specifies the subsampling of frames to speed up calculation. (default=1, None)." )
-    parser.add_argument('-reverse', help="If enable, it Changes the default Autosync behaviour: The first frames of the Reference video are used as reference to sync with the Distorted one. (Default = Disable).", action = 'store_true' )
-    parser.add_argument('-model', dest='model', type = str, default = "HD", help="Vmaf Model. Options: HD, HDneg, 4K. (Default: HD)." )
-    parser.add_argument('-phone' , help =  'It enables vmaf phone model (HD only). (Default=disable).', action = 'store_true')
-    parser.add_argument('-verbose' , help =  'Activate verbose loglevel. (Default: info).', action = 'store_true')
-    if len(sys.argv)==1:
+    requiredgroup.add_argument('-d', dest='d', type=str, help='Distorted video', required=True)
+    requiredgroup.add_argument('-r', dest='r', type=str, help='Reference video ', required=True)
+    parser.add_argument('-sw', dest='sw', type=float, default=0, help='Sync Window: window size in seconds of a subsample of the Reference video. The sync lookup will be done between the first frames of the Distorted input and this Subsample of the Reference. (default=0. No sync).')
+    parser.add_argument('-ss', dest='ss', type=float, default=0, help="Sync Start Time. Time in seconds from the beginning of the Reference video to which the Sync Window will be applied from. (default=0).")
+    parser.add_argument('-subsample', dest='n', type=int, default=1, help="Specifies the subsampling of frames to speed up calculation. (default=1, None).")
+    parser.add_argument('-reverse', help="If enable, it Changes the default Autosync behaviour: The first frames of the Reference video are used as reference to sync with the Distorted one. (Default = Disable).", action='store_true')
+    parser.add_argument('-model', dest='model', type=str, default="HD", help="Vmaf Model. Options: HD, HDneg, 4K. (Default: HD).")
+    parser.add_argument('-phone', help='It enables vmaf phone model (HD only). (Default=disable).', action='store_true')
+    parser.add_argument('-verbose', help='Activate verbose loglevel. (Default: info).', action='store_true')
+    parser.add_argument('-output_fmt', dest='output_fmt',type=str, default='json', help='Output vmaf file format. Options: json or xml (Default: json)')
+    
+    if len(sys.argv) == 1:
         parser.print_help(sys.stderr)
         sys.exit(1)
     return parser.parse_args()
+
 
 class MyParser(argparse.ArgumentParser):
     def error(self, message):
@@ -73,7 +78,7 @@ if __name__ == '__main__':
     signal(SIGINT, handler)
 
     '''reading values from cmdParser'''
-    cmdParser=get_args()
+    cmdParser = get_args()
     main_pattern = cmdParser.d
     reference = cmdParser.r
 
@@ -86,13 +91,13 @@ if __name__ == '__main__':
     phone = cmdParser.phone
     verbose = cmdParser.verbose
 
-    #Setting verbosity
-    if verbose: 
+    output_fmt = cmdParser.output_fmt
+
+    # Setting verbosity
+    if verbose:
         loglevel = "verbose"
     else:
         loglevel = "info"
-
-
 
     '''
     Distorted video path could be loaded as patterns i.e., "myFolder/video-sample-*.mp4"
@@ -106,11 +111,12 @@ if __name__ == '__main__':
         sys.exit(1)
 
     if len(mainFiles) == 0:
-        print("Distorted Video files not found with the given pattern/name: ", main_pattern, flush=True)
+        print("Distorted Video files not found with the given pattern/name: ",
+              main_pattern, flush=True)
         sys.exit(1)
 
     for main in mainFiles:
-        myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample, model=model)
+        myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample, model=model, output_fmt=output_fmt)
         '''check if syncWin was set. If true offset is computed automatically, otherwise manual values are used  '''
 
         if syncWin > 0:
@@ -118,9 +124,11 @@ if __name__ == '__main__':
         else:
             offset = ss
             psnr = None
-            if reverse: myVmaf.offset = -offset
-            else: myVmaf.offset = offset
-        
+            if reverse:
+                myVmaf.offset = -offset
+            else:
+                myVmaf.offset = offset
+
         myVmaf.getVmaf()
         vmafpath = myVmaf.ffmpegQos.vmafpath
         vmafScore = []
