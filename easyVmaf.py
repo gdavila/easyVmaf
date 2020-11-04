@@ -90,7 +90,7 @@ if __name__ == '__main__':
     model = cmdParser.model
     phone = cmdParser.phone
     verbose = cmdParser.verbose
-    #xmloutput = cmdParser.xmloutput
+
     output_fmt = cmdParser.output_fmt
 
     # Setting verbosity
@@ -132,29 +132,22 @@ if __name__ == '__main__':
         myVmaf.getVmaf()
         vmafpath = myVmaf.ffmpegQos.vmafpath
         vmafScore = []
-        vmafScoreMean = 0
+        vmafScoreHarmonicMean = 0
         print(vmafpath)
-
-        if output_fmt == 'json':
-            with open(vmafpath) as jsonFile:
-                jsonData = json.load(jsonFile)
-                for frame in jsonData['frames']:
-                    vmafScore.append(frame["metrics"]["vmaf"])
-                vmafScoreMean = mean(vmafScore)
-        else:
-            tree = ET.parse(vmafpath)
-            root = tree.getroot()
-            for frame in root.findall('frames/frame'):
-                value = frame.get('vmaf')
-                print(value)
-                vmafScore.append(float(value))
-            vmafScoreMean = (sum(vmafScore) / len(vmafScore)) 
-
-    print("\n \n \n \n \n ")
-    print("=======================================", flush=True)
-    print("VMAF computed", flush=True)
-    print("=======================================", flush=True)
-    print("offset: ", offset, " | psnr: ", psnr)
-    print("VMAF score: ",vmafScoreMean)
-    print("VMAF json File Path: ", myVmaf.ffmpegQos.vmafpath)
-    print("\n \n \n \n \n ")
+        with open (vmafpath) as jsonFile:
+            jsonData = json.load(jsonFile)
+            for frame in jsonData['frames']:
+                vmafScore.append(frame["metrics"]["vmaf"])
+            for ele in vmafScore: 
+                vmafScoreHarmonicMean += 1 / ele     
+            vmafScoreHarmonicMean = len(vmafScore)/vmafScoreHarmonicMean
+        
+        print("\n \n \n \n \n ")
+        print("=======================================", flush=True)
+        print("VMAF computed", flush=True)
+        print("=======================================", flush=True)
+        print("offset: ", offset, " | psnr: ", psnr)
+        print("VMAF score (arithmetic mean): ", mean(vmafScore))
+        print("VMAF score (harmonic mean): ", vmafScoreHarmonicMean)
+        print("VMAF json File Path: ", myVmaf.ffmpegQos.vmafpath )
+        print("\n \n \n \n \n ")
