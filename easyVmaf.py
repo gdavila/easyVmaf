@@ -39,6 +39,11 @@ def handler(signal_received, frame):
     print('SIGINT or CTRL-C detected. Exiting gracefully')
     sys.exit(0)
 
+def getHarmonicMean(values):
+    hmean = 0
+    for i in values: 
+        hmean += 1 / i     
+    return len(values)/hmean
 
 def get_args():
     '''This function parses and return arguments passed in'''
@@ -132,23 +137,23 @@ if __name__ == '__main__':
         myVmaf.getVmaf()
         vmafpath = myVmaf.ffmpegQos.vmafpath
         vmafScore = []
-        vmafScoreHarmonicMean = 0
-        print(vmafpath)
+
         
         if output_fmt == 'json':
             with open(vmafpath) as jsonFile:
                 jsonData = json.load(jsonFile)
                 for frame in jsonData['frames']:
                     vmafScore.append(frame["metrics"]["vmaf"])
-                vmafScoreMean = mean(vmafScore)
-        else:
+
+        elif output_fmt == 'xml':
             tree = ET.parse(vmafpath)
             root = tree.getroot()
             for frame in root.findall('frames/frame'):
                 value = frame.get('vmaf')
-                print(value)
                 vmafScore.append(float(value))
-            vmafScoreMean = (sum(vmafScore) / len(vmafScore)) 
+
+
+        else: print("output_fmt: ", output_fmt, " Not supported", flush=True) 
         
         print("\n \n \n \n \n ")
         print("=======================================", flush=True)
@@ -156,6 +161,6 @@ if __name__ == '__main__':
         print("=======================================", flush=True)
         print("offset: ", offset, " | psnr: ", psnr)
         print("VMAF score (arithmetic mean): ", mean(vmafScore))
-        print("VMAF score (harmonic mean): ", vmafScoreHarmonicMean)
+        print("VMAF score (harmonic mean): ", getHarmonicMean(vmafScore))
         print("VMAF json File Path: ", myVmaf.ffmpegQos.vmafpath )
         print("\n \n \n \n \n ")
