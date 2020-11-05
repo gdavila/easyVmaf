@@ -30,7 +30,7 @@ import glob
 import xml.etree.ElementTree as ET
 
 
-from statistics import mean
+from statistics import mean, harmonic_mean
 from Vmaf import vmaf
 from signal import signal, SIGINT
 
@@ -38,12 +38,6 @@ from signal import signal, SIGINT
 def handler(signal_received, frame):
     print('SIGINT or CTRL-C detected. Exiting gracefully')
     sys.exit(0)
-
-def getHarmonicMean(values):
-    hmean = 0
-    for i in values: 
-        hmean += 1 / i     
-    return len(values)/hmean
 
 def get_args():
     '''This function parses and return arguments passed in'''
@@ -95,7 +89,6 @@ if __name__ == '__main__':
     model = cmdParser.model
     phone = cmdParser.phone
     verbose = cmdParser.verbose
-
     output_fmt = cmdParser.output_fmt
 
     # Setting verbosity
@@ -103,6 +96,12 @@ if __name__ == '__main__':
         loglevel = "verbose"
     else:
         loglevel = "info"
+
+    # check output format
+    if not output_fmt in ["json", "xml"]:
+        print("output_fmt: ", output_fmt, " Not supported. JSON output used instead", flush=True)
+        output_fmt = "json"
+
 
     '''
     Distorted video path could be loaded as patterns i.e., "myFolder/video-sample-*.mp4"
@@ -151,9 +150,6 @@ if __name__ == '__main__':
             for frame in root.findall('frames/frame'):
                 value = frame.get('vmaf')
                 vmafScore.append(float(value))
-
-
-        else: print("output_fmt: ", output_fmt, " Not supported", flush=True) 
         
         print("\n \n \n \n \n ")
         print("=======================================", flush=True)
@@ -161,6 +157,6 @@ if __name__ == '__main__':
         print("=======================================", flush=True)
         print("offset: ", offset, " | psnr: ", psnr)
         print("VMAF score (arithmetic mean): ", mean(vmafScore))
-        print("VMAF score (harmonic mean): ", getHarmonicMean(vmafScore))
-        print("VMAF json File Path: ", myVmaf.ffmpegQos.vmafpath )
+        print("VMAF score (harmonic mean): ", harmonic_mean(vmafScore))
+        print("VMAF output File Path: ", myVmaf.ffmpegQos.vmafpath )
         print("\n \n \n \n \n ")
