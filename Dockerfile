@@ -6,7 +6,7 @@ ENV TZ=UTC
 # setup dependencies versions
 
 ENV	FFMPEG_version=4.2.2 \
-	VMAF_version=1.5.3 \
+	VMAF_version=master \
 	easyVmaf_version=master 
 
 # get and install building tools
