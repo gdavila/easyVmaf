@@ -41,13 +41,16 @@ def handler(signal_received, frame):
 
 def get_args():
     '''This function parses and return arguments passed in'''
-    parser = MyParser(prog='eVmaf', description="Script to easy compute VMAF using FFmpeg. It allows to deinterlace, scale and sync Ref and Distorted video samples automatically: \
-            \n\n \t Autodeinterlace: If the Reference or Distorted samples are interlaced, deinterlacing is applied\
-            \n\n \t Autoscale: Reference and Distorted samples are scaled automatically to 1920x1080 or 3840x2160 depending on the VMAF model to use\
-            \n\n \t Autosync: The first frames of the distorted video are used as reference to a sync look up with the Reference video. \
-            \n \t \t The sync is doing by a frame-by-frame look up of the best PSNR\
-            \n \t \t See [-reverse] for more options of syncing\
-            \n\n As output, a json file with VMAF score is created", formatter_class=argparse.RawTextHelpFormatter)
+    parser = MyParser(prog='easyVmaf', 
+            description="Script to easy compute VMAF using FFmpeg. It allows to deinterlace, scale and sync Ref and Distorted video samples automatically: \
+                        \n\n \t Autodeinterlace: If the Reference or Distorted samples are interlaced, deinterlacing is applied\
+                        \n\n \t Autoscale: Reference and Distorted samples are scaled automatically to 1920x1080 or 3840x2160 depending on the VMAF model to use\
+                        \n\n \t Autosync: The first frames of the distorted video are used as reference to a sync look up with the Reference video. \
+                        \n \t \t The sync is doing by a frame-by-frame look up of the best PSNR\
+                        \n \t \t See [-reverse] for more options of syncing\
+                        \n\n As output, a json file with VMAF score is created", 
+            epilog="* NOTE: HDneg is a VMAF experimental feature not supported yet by FFmpeg.",
+            formatter_class=argparse.RawTextHelpFormatter)
     requiredgroup = parser.add_argument_group('required arguments')
     requiredgroup.add_argument('-d', dest='d', type=str, help='Distorted video', required=True)
     requiredgroup.add_argument('-r', dest='r', type=str, help='Reference video ', required=True)
@@ -55,7 +58,7 @@ def get_args():
     parser.add_argument('-ss', dest='ss', type=float, default=0, help="Sync Start Time. Time in seconds from the beginning of the Reference video to which the Sync Window will be applied from. (default=0).")
     parser.add_argument('-subsample', dest='n', type=int, default=1, help="Specifies the subsampling of frames to speed up calculation. (default=1, None).")
     parser.add_argument('-reverse', help="If enable, it Changes the default Autosync behaviour: The first frames of the Reference video are used as reference to sync with the Distorted one. (Default = Disable).", action='store_true')
-    parser.add_argument('-model', dest='model', type=str, default="HD", help="Vmaf Model. Options: HD, HDneg, 4K. (Default: HD).")
+    parser.add_argument('-model', dest='model', type=str, default="HD", help="Vmaf Model. Options: HD, HDneg*, 4K. (Default: HD).")
     parser.add_argument('-phone', help='It enables vmaf phone model (HD only). (Default=disable).', action='store_true')
     parser.add_argument('-verbose', help='Activate verbose loglevel. (Default: info).', action='store_true')
     parser.add_argument('-output_fmt', dest='output_fmt',type=str, default='json', help='Output vmaf file format. Options: json or xml (Default: json)')

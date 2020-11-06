@@ -5,12 +5,12 @@ ENV TZ=UTC
 
 # setup dependencies versions
 
-ENV FFMPEG_version=4.2.2 \
+ENV	FFMPEG_version=4.2.2 \
 	VMAF_version=master \
 	easyVmaf_version=master 
 
 # get and install building tools
-WORKDIR     /tmp/workdir
+WORKDIR	/tmp/workdir
 RUN \
 	ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone && \
 	apt-get update -yqq && \
