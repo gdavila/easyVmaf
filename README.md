@@ -135,9 +135,9 @@ A [docker image](https://hub.docker.com/repository/docker/gfdavila/easyvmaf) is 
 
 The Docker Image is basically an ubuntu image with `ffmpeg` and `libvmaf` already installed. You can check the [Dockerfile](https://hub.docker.com/r/gfdavila/easyvmaf/dockerfile) for more details.
 
-The easiest way to run easyVmaf through Docker is mounting a shared volume between your host machine and the container. This volume should have inside it all the video files you want to analyze. The outputs (vmaf information files) will be putting in this shared folder also. Example:
+The easiest way to run easyVmaf through Docker is mounting a shared volume between your host machine and the container. This volume should have inside it all the video files you want to analyze. The outputs (vmaf information files) will be putting in this shared folder also.
 
-Some video samples to start:
+Some video samples located on the docker image:
 
 ```bash
 NAME                        TIME
@@ -153,11 +153,11 @@ BBB_sampleB_distorted.mp4       */-------------------------*/
 Run docker container to get VMAF between `BBB_reference_10s.mp4` and `BBB_sampleA_distorted.mp4`:
 
 ```bash
-:~$ docker run -v ~/video-samples:/video-samples gfdavila/easyvmaf -r /video-samples/BBB_reference_10s.mp4 -d /video-samples/BBB_sampleA_distorted.mp4 -sw 1 -ss 1
+:~$ docker run --rm  gfdavila/easyvmaf -r video_samples/BBB_reference_10s.mp4 -d video_samples/BBB_sampleA_distorted.mp4 -sw 1 -ss 1
 ```
 
 Run docker container to get VMAF between `BBB_sampleA_distorted.mp4` and `BBB_sampleB_distorted.mp4`:
 
 ```bash
-:~$ docker run -v ~/video-samples:/video-samples gfdavila/easyvmaf -r /video-samples/BBB_sampleA_distorted.mp4 -d /video-samples/BBB_sampleB_distorted.mp4 -sw 2 -ss 0 -reverse
+:~$ docker run --rm  gfdavila/easyvmaf -r video_samples/BBB_sampleA_distorted.mp4 -d video_samples/BBB_sampleB_distorted.mp4 -sw 2 -ss 0 -reverse
 ```
