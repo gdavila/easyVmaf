@@ -123,7 +123,7 @@ if __name__ == '__main__':
         sys.exit(1)
 
     for main in mainFiles:
-        myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample, model=model, output_fmt=output_fmt)
+        myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample, model=model, phone= phone, output_fmt=output_fmt)
         '''check if syncWin was set. If true offset is computed automatically, otherwise manual values are used  '''
 
         if syncWin > 0:
