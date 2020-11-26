@@ -33,6 +33,7 @@ import xml.etree.ElementTree as ET
 from statistics import mean, harmonic_mean
 from Vmaf import vmaf
 from signal import signal, SIGINT
+from Plot_vmaf import plot_vmaf_xml, plot_vmaf_json
 
 
 def handler(signal_received, frame):
@@ -104,8 +105,6 @@ if __name__ == '__main__':
     if not output_fmt in ["json", "xml"]:
         print("output_fmt: ", output_fmt, " Not supported. JSON output used instead", flush=True)
         output_fmt = "json"
-
-
     '''
     Distorted video path could be loaded as patterns i.e., "myFolder/video-sample-*.mp4"
     In this way, many computations could be done with just one command line.
@@ -138,14 +137,15 @@ if __name__ == '__main__':
 
         myVmaf.getVmaf()
         vmafpath = myVmaf.ffmpegQos.vmafpath
+        plot_output=os.path.splitext(mainFiles[0])[0]
         vmafScore = []
-
-        
+                
         if output_fmt == 'json':
             with open(vmafpath) as jsonFile:
                 jsonData = json.load(jsonFile)
                 for frame in jsonData['frames']:
                     vmafScore.append(frame["metrics"]["vmaf"])
+                plot_vmaf_json(vmafpath,plot_output)
 
         elif output_fmt == 'xml':
             tree = ET.parse(vmafpath)
@@ -153,6 +153,7 @@ if __name__ == '__main__':
             for frame in root.findall('frames/frame'):
                 value = frame.get('vmaf')
                 vmafScore.append(float(value))
+                plot_vmaf_xml(vmafpath,plot_output)
         
         print("\n \n \n \n \n ")
         print("=======================================", flush=True)
