@@ -31,6 +31,7 @@ RUN \
 		pkg-config \
 		make \
 		nasm \
+		xxd \
 		yasm -y && \
 	apt-get autoremove -y && \
     apt-get clean -y && \
