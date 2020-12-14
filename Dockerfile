@@ -65,7 +65,7 @@ RUN \
 	tar xjf ffmpeg-${FFMPEG_version}.tar.bz2 && \
 	cd ffmpeg-${FFMPEG_version} && \
 	./configure --enable-libvmaf --enable-version3 --disable-shared && \
-	make && \
+	make -j4 && \
 	make install && \
 	rm -rf /tmp/workdir
 
