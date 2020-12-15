@@ -55,7 +55,7 @@ RUN \
 	ninja -vC build test && \
 	ninja -vC build install && \ 
 	mkdir -p /usr/local/share/model  && \
-	cp  -R ../models/* /usr/local/share/model && \
+	cp  -R ../model/* /usr/local/share/model && \
 	rm -rf /tmp/workdir
 
 # install ffmpeg
