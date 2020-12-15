@@ -53,7 +53,9 @@ RUN \
 	meson build --buildtype release && \
 	ninja -vC build && \
 	ninja -vC build test && \
-	ninja -vC build install && \
+	ninja -vC build install && \ 
+	mkdir -p /usr/local/share/model  && \
+	cp  -R ../models/* /usr/local/share/model && \
 	rm -rf /tmp/workdir
 
 # install ffmpeg
