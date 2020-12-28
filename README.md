@@ -8,6 +8,17 @@ Python tool based on ffmpeg and ffprobe to deal with the video preprocesing requ
 
 Details about **How it Works** can be found [here](https://gdavila.github.io/broadcast/Vmaf/2020-03-05-Vmaf/).
 
+## Updates
+
+* With `libvmaf v2.0.0`, the vmaf models files were refactored. Basically, the models use now fixed-point data types instead of float-point data types. So depending on the `libvmaf` version you are using, you could need to modify the [easyVmaf/config.py](https://github.com/gdavila/easyVmaf/blob/master/config.py)  file:
+
+  *  `libvmaf` <  `v2.0.0 `: Use the old `vmaf_*.pkl` model files with float-point data types: `vmaf_4k_v0.6.1.pkl`, `vmaf_v0.6.1.pkl`, etc.
+  
+  *  `libvmaf` >=  `v2.0.0 `: Use the new `vmaf_*.json` model files with fixed-point data types: `vmaf_4k_v0.6.1.json`, `vmaf_v0.6.1.json`, `vmaf_v0.6.1neg.json`
+  
+* New neg model is supported since `libvmaf v2.0.0` only. So if you want to use it, be sure to update libvmaf first.
+
+
 ## Requirements
 
 * `Linux`/`OSX`
