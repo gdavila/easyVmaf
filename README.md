@@ -6,7 +6,7 @@ Python tool based on ffmpeg and ffprobe to deal with the video preprocesing requ
 * Frame-to-Frame Syncing
 * Frame rate adaptation
 
-Details about **How it Works** can be found [here](https://gdavila.github.io/broadcast/Vmaf/2020-03-05-Vmaf/).
+Details about **How it Works** can be found [here](https://ottverse.com/vmaf-easyvmaf/).
 
 ## Updates
 
