@@ -148,6 +148,12 @@ The Docker Image is basically an ubuntu image with `ffmpeg` and `libvmaf` alread
 
 The easiest way to run easyVmaf through Docker is mounting a shared volume between your host machine and the container. This volume should have inside it all the video files you want to analyze. The outputs (vmaf information files) will be putting in this shared folder also.
 
+Example
+
+```bash
+docker run --rm -v <local-path-to-your-video-files>:/<custom-name-folder> gfdavila/easyvmaf -r /<custom-name-folder>/video-1.mp4 -d /<custom-name-folder>/video-2.mp4
+```
+
 Some video samples located on the docker image:
 
 ```bash
