@@ -60,6 +60,7 @@ def get_args():
     parser.add_argument('-reverse', help="If enable, it Changes the default Autosync behaviour: The first frames of the Reference video are used as reference to sync with the Distorted one. (Default = Disable).", action='store_true')
     parser.add_argument('-model', dest='model', type=str, default="HD", help="Vmaf Model. Options: HD, HDneg*, 4K. (Default: HD).")
     parser.add_argument('-phone', help='It enables vmaf phone model (HD only). (Default=disable).', action='store_true')
+    parser.add_argument('-threads', dest = 'threads', type = int, default=0, help='number of threads')
     parser.add_argument('-verbose', help='Activate verbose loglevel. (Default: info).', action='store_true')
     parser.add_argument('-output_fmt', dest='output_fmt',type=str, default='json', help='Output vmaf file format. Options: json or xml (Default: json)')
     
@@ -93,6 +94,7 @@ if __name__ == '__main__':
     phone = cmdParser.phone
     verbose = cmdParser.verbose
     output_fmt = cmdParser.output_fmt
+    threads = cmdParser.threads
 
     # Setting verbosity
     if verbose:
@@ -123,7 +125,7 @@ if __name__ == '__main__':
         sys.exit(1)
 
     for main in mainFiles:
-        myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample, model=model, phone= phone, output_fmt=output_fmt)
+        myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample, model=model, phone= phone, output_fmt=output_fmt, threads=threads)
         '''check if syncWin was set. If true offset is computed automatically, otherwise manual values are used  '''
 
         if syncWin > 0:
@@ -136,7 +138,7 @@ if __name__ == '__main__':
             else:
                 myVmaf.offset = offset
 
-        myVmaf.getVmaf()
+        vmafProcess = myVmaf.getVmaf()
         vmafpath = myVmaf.ffmpegQos.vmafpath
         vmafScore = []
 

@@ -116,7 +116,7 @@ class vmaf():
         - To SYNC (in time) the MAIN and REF videos using psnr computation 
         - Frame rate conversion (if needed)
     """
-    def __init__(self, mainSrc, refSrc,output_fmt, model = "HD", phone = False, loglevel = "info", subsample = 1 ):
+    def __init__(self, mainSrc, refSrc,output_fmt, model = "HD", phone = False, loglevel = "info", subsample = 1, threads = 0):
         self.loglevel = loglevel
         self.main = video(mainSrc,self.loglevel)
         self.ref = video(refSrc,self.loglevel)
@@ -127,8 +127,8 @@ class vmaf():
         self.target_resolution = None
         self.offset = 0
         self._initResolutions()
-        self.output_fmt = output_fmt 
-
+        self.output_fmt = output_fmt
+        self.threads = threads
 
     def _initResolutions(self):
         """ 
@@ -374,7 +374,8 @@ class vmaf():
         print("output_fmt:", self.output_fmt, flush=True)
         print("=======================================", flush=True)
 
-        self.ffmpegQos.getVmaf(model = self.model, phone = self.phone, subsample= self.subsample, output_fmt=self.output_fmt)
+        vmafProcess = self.ffmpegQos.getVmaf(model = self.model, phone = self.phone, subsample= self.subsample, output_fmt=self.output_fmt, threads=self.threads)
+        return vmafProcess
 
 
 def getFrameRate(r_frame_rate):

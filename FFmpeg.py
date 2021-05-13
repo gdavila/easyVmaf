@@ -138,7 +138,7 @@ class FFmpegQos:
         return float(psnr)
 
 
-    def getVmaf(self, log_path= None, model= 'HD', phone = False, subsample = 1,output_fmt='json'):
+    def getVmaf(self, log_path= None, model= 'HD', phone = False, subsample = 1,output_fmt='json', threads = 0):
         main = self.main.lastOutputID
         ref = self.ref.lastOutputID
         if output_fmt=='xml':
@@ -159,13 +159,15 @@ class FFmpegQos:
         elif model == '4K': 
             model_path = config.vmaf_4K
             phone_model = 0
+        if threads == 0: threads = os.cpu_count()
 
-        self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model_path={model_path}:phone_model={phone_model}:n_subsample={subsample}:log_path={log_path}']
+        self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model_path={model_path}:phone_model={phone_model}:n_subsample={subsample}:log_path={log_path}:n_threads={threads}']
 
         self._commit()
         if self.loglevel == "verbose": print(self.cmd, flush=True)
         process = subprocess.Popen(self.cmd, stdout=subprocess.PIPE, shell=True)
         process.communicate()
+        return process
     
     def clearFilters(self):
         self.psnrFilter = []
