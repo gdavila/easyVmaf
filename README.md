@@ -10,6 +10,10 @@ Details about **How it Works** can be found [here](https://ottverse.com/vmaf-eas
 
 ## Updates
 
+* Progress indicator added `-progress`. It shows the progress while doing vmaf computations.
+
+* Added the option to explicilty set the number of threads to run `-threads (int)`
+
 * With `libvmaf v2.0.0`, the vmaf models files were refactored. Basically, the models use now fixed-point data types instead of float-point data types. So depending on the `libvmaf` version you are using, you could need to modify the [easyVmaf/config.py](https://github.com/gdavila/easyVmaf/blob/master/config.py)  file:
 
   *  `libvmaf` <  `v2.0.0 `: Use the old `vmaf_*.pkl` model files with float-point data types: `vmaf_4k_v0.6.1.pkl`, `vmaf_v0.6.1.pkl`, etc.
@@ -44,37 +48,40 @@ $ cd easyVmaf
 
 ```console
 $ python3 easyVmaf.py -h
-usage: eVmaf [-h] -d D -r R [-sw SW] [-ss SS] [-subsample N] [-reverse]
-             [-model MODEL] [-phone] [-verbose] [-output_fmt TYPE]
+usage: easyVmaf [-h] -d D -r R [-sw SW] [-ss SS] [-subsample N] [-reverse] [-model MODEL] [-phone]
+                [-threads THREADS] [-verbose] [-progress] [-output_fmt OUTPUT_FMT]
 
-Script to easy compute VMAF using FFmpeg. It allows to deinterlace, scale and sync Ref and Distorted video samples automatically:             
+Script to easy compute VMAF using FFmpeg. It allows to deinterlace, scale and sync Ref and Distorted video samples automatically:                         
 
- 	 Autodeinterlace: If the Reference or Distorted samples are interlaced, deinterlacing is applied            
+ 	 Autodeinterlace: If the Reference or Distorted samples are interlaced, deinterlacing is applied                        
 
- 	 Autoscale: Reference and Distorted samples are scaled automatically to 1920x1080 or 3840x2160 depending on the VMAF model to use            
+ 	 Autoscale: Reference and Distorted samples are scaled automatically to 1920x1080 or 3840x2160 depending on the VMAF model to use                        
 
- 	 Autosync: The first frames of the distorted video are used as reference to a sync look up with the Reference video.             
- 	 	 The sync is doing by a frame-by-frame look up of the best PSNR            
- 	 	 See [-reverse] for more options of syncing            
+ 	 Autosync: The first frames of the distorted video are used as reference to a sync look up with the Reference video.                         
+ 	 	 The sync is doing by a frame-by-frame look up of the best PSNR                        
+ 	 	 See [-reverse] for more options of syncing                        
 
- As output, a json or XML file with VMAF score is created
+ As output, a json file with VMAF score is created
 
 optional arguments:
-  -h, --help    show this help message and exit
-  -sw SW        Sync Window: window size in seconds to get a subsample of the Reference video. The sync look up will be done between the first frames of the Distorted input and this Subsample. (default=0. No sync).
-  -ss SS        Sync Start Time. Time in seconds from the beginning of the Reference video from which the Sync Window will be applied. (default=0).
-  -subsample N  Specifies the subsampling of frames to speed up calculation. (default=1, None).
-  -reverse      If enable, it Changes the default Autosync behaviour: The first frames of the Reference video are used as reference to sync with the Distorted one. (Default = Disable).
-  -model MODEL  Vmaf Model. Options: HD, HDneg, 4K. (Default: HD).
-  -phone        It enables vmaf phone model (HD only). (Default=disable).
-  -verbose      Activate verbose loglevel. (Default: info).
-  -output_fmt TYPE   Output vmaf file format. Options: json or xml (Default: json)
+  -h, --help            show this help message and exit
+  -sw SW                Sync Window: window size in seconds of a subsample of the Reference video. The sync lookup will be done between the first frames of the Distorted input and this Subsample of the Reference. (default=0. No sync).
+  -ss SS                Sync Start Time. Time in seconds from the beginning of the Reference video to which the Sync Window will be applied from. (default=0).
+  -subsample N          Specifies the subsampling of frames to speed up calculation. (default=1, None).
+  -reverse              If enable, it Changes the default Autosync behaviour: The first frames of the Reference video are used as reference to sync with the Distorted one. (Default = Disable).
+  -model MODEL          Vmaf Model. Options: HD, HDneg*, 4K. (Default: HD).
+  -phone                It enables vmaf phone model (HD only). (Default=disable).
+  -threads THREADS      number of threads
+  -verbose              Activate verbose loglevel. (Default: info).
+  -progress             Activate progress indicator for vmaf computation. (Default: false).
+  -output_fmt OUTPUT_FMT
+                        Output vmaf file format. Options: json or xml (Default: json)
 
 required arguments:
-  -d D          Distorted video
-  -r R          Reference video 
+  -d D                  Distorted video
+  -r R                  Reference video 
 ```
-NOTE: HDneg is not supported yet. 
+NOTE: HDneg is not supported by ffmpeg yet. So  `-model HDneg` wont work for now.
 
 ## Examples
 
