@@ -35,7 +35,7 @@ RUN \
 		yasm -y && \
 	apt-get autoremove -y && \
     apt-get clean -y && \
-	pip3 install --user meson && \
+	pip3 install --user meson ffmpeg-progress-yield && \
 	rm -rf /tmp/workdir
 
 # install libvmaf
