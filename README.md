@@ -25,6 +25,8 @@ Details about **How it Works** can be found [here](https://ottverse.com/vmaf-eas
 
 * Python `>= v3.0`
 
+* Python module [ffmpeg_progress_yield](https://github.com/slhck/ffmpeg-progress-yield)
+
 * FFmpeg build with `libvmaf`. More details [here](http://underpop.online.fr/f/ffmpeg/help/libvmaf.htm.gz)
 
 ## Installation

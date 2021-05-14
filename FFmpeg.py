@@ -27,6 +27,7 @@ import config
 import subprocess
 import json
 import os
+from ffmpeg_progress_yield import FfmpegProgress
 
 class FFprobe:
     '''
@@ -138,7 +139,7 @@ class FFmpegQos:
         return float(psnr)
 
 
-    def getVmaf(self, log_path= None, model= 'HD', phone = False, subsample = 1,output_fmt='json', threads = 0):
+    def getVmaf(self, log_path= None, model= 'HD', phone = False, subsample = 1,output_fmt='json', threads = 0, print_progress = False ):
         main = self.main.lastOutputID
         ref = self.ref.lastOutputID
         if output_fmt=='xml':
@@ -165,9 +166,28 @@ class FFmpegQos:
 
         self._commit()
         if self.loglevel == "verbose": print(self.cmd, flush=True)
-        process = subprocess.Popen(self.cmd, stdout=subprocess.PIPE, shell=True)
-        process.communicate()
+    
+        if print_progress:
+            cmd_progress =[]
+            cmd_fancy = " ".join(self.cmd.split())
+            cmd_fancy = cmd_fancy.split(' ')
+            [ cmd_progress.append(i.strip('"')) for i in cmd_fancy] 
+            print (cmd_fancy,cmd_progress)
+            process = FfmpegProgress(cmd_progress)
+            for progress in process.run_command_with_progress():
+                print(f"progress = {progress}% - ", "\n".join(process.stderr.splitlines()[-9:-8]))
+
+                
+
+        else:
+            process = subprocess.Popen(self.cmd, stdout=subprocess.PIPE, shell=True)
+            process.communicate()
+
         return process
+
+
+
+
     
     def clearFilters(self):
         self.psnrFilter = []
