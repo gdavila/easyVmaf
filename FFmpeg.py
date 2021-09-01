@@ -170,8 +170,12 @@ class FFmpegQos:
             phone_model = 0
         if threads == 0:
             threads = os.cpu_count()
+        if end_sync:
+            shortest = 1
+        else:
+            shortest = 0
 
-        self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model_path={model_path}:phone_model={phone_model}:n_subsample={subsample}:log_path={log_path}:n_threads={threads}:shortest=1' if end_sync else f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model_path={model_path}:phone_model={phone_model}:n_subsample={subsample}:log_path={log_path}:n_threads={threads}']
+        self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model_path={model_path}:phone_model={phone_model}:n_subsample={subsample}:log_path={log_path}:n_threads={threads}:shortest={shortest}']
 
         self._commit()
         if self.loglevel == "verbose":
