@@ -119,7 +119,7 @@ class vmaf():
         - Frame rate conversion (if needed)
     """
 
-    def __init__(self, mainSrc, refSrc, output_fmt, model="HD", phone=False, loglevel="info", subsample=1, threads=0, print_progress=False, end_sync=False):
+    def __init__(self, mainSrc, refSrc, output_fmt, model="HD", phone=False, loglevel="info", subsample=1, threads=0, print_progress=False, end_sync=False,  manual_fps=0):
         self.loglevel = loglevel
         self.main = video(mainSrc, self.loglevel)
         self.ref = video(refSrc, self.loglevel)
@@ -130,6 +130,7 @@ class vmaf():
             self.main.videoSrc, self.ref.videoSrc, self.loglevel)
         self.target_resolution = None
         self.offset = 0
+        self.manual_fps = manual_fps
         self._initResolutions()
         self.output_fmt = output_fmt
         self.threads = threads
@@ -279,6 +280,11 @@ class vmaf():
                 print(
                     "[easyVmaf] ERROR: No Filters available for the given Framerates", flush=True)
 
+    def _forceFps(self):
+        print("[easyVmaf] Warning: Forcing frame rate conversion manually", flush=True)
+        self.ffmpegQos.main.setFpsFilter(self.manual_fps)
+        self.ffmpegQos.main.setFpsFilter(self.manual_fps)
+
     def syncOffset(self, syncWindow=3, start=0, reverse=False):
         """
         Method to get the offset needed to sync REF and MAIN (if any). 
@@ -319,7 +325,10 @@ class vmaf():
             self.ffmpegQos.ref.setTrimFilter(offset, 0.5)
             self.ffmpegQos.main.setTrimFilter(0, 0.5)
             self._autoScale()
-            self._autoDeinterlace()
+            if self.manual_fps == 0:
+                self._autoDeinterlace()
+            else:
+                self._forceFps()
             psnr['value'].append(self.ffmpegQos.getPsnr())
             psnr['time'].append(offset)
             print(psnr['time'][i], "\t", psnr['value'][i], flush=True)
@@ -371,7 +380,11 @@ class vmaf():
 
         """AutoScale according to vmaf model and deinterlace the source if needed """
         self._autoScale()
-        self._autoDeinterlace()
+
+        if self.manual_fps == 0:
+            self._autoDeinterlace()
+        else:
+            self._forceFps()
 
         """Lookup for sync between Main and reference. Default: dissable
            It is suggested to run syncOffset manually before getVmaf()

@@ -61,6 +61,8 @@ def get_args():
                         help='Sync Window: window size in seconds of a subsample of the Reference video. The sync lookup will be done between the first frames of the Distorted input and this Subsample of the Reference. (default=0. No sync).')
     parser.add_argument('-ss', dest='ss', type=float, default=0,
                         help="Sync Start Time. Time in seconds from the beginning of the Reference video to which the Sync Window will be applied from. (default=0).")
+    parser.add_argument('-fps', dest='fps', type=float, default=0, 
+                        help='Video Frame Rate: force frame rate conversion to <fps> value. Autodeinterlace is disabled when setting this')
     parser.add_argument('-subsample', dest='n', type=int, default=1,
                         help="Specifies the subsampling of frames to speed up calculation. (default=1, None).")
     parser.add_argument('-reverse', help="If enable, it Changes the default Autosync behaviour: The first frames of the Reference video are used as reference to sync with the Distorted one. (Default = Disable).", action='store_true')
@@ -104,6 +106,7 @@ if __name__ == '__main__':
     ''' to avoid error negative numbers are not allowed'''
     syncWin = abs(cmdParser.sw)
     ss = abs(cmdParser.ss)
+    fps = abs(cmdParser.fps)
     n_subsample = abs(cmdParser.n)
     reverse = cmdParser.reverse
     model = cmdParser.model
@@ -144,7 +147,7 @@ if __name__ == '__main__':
 
     for main in mainFiles:
         myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample, model=model, phone=phone,
-                      output_fmt=output_fmt, threads=threads, print_progress=print_progress, end_sync=end_sync)
+                      output_fmt=output_fmt, threads=threads, print_progress=print_progress, end_sync=end_sync, manual_fps=fps)
         '''check if syncWin was set. If true offset is computed automatically, otherwise manual values are used  '''
 
         if syncWin > 0:
