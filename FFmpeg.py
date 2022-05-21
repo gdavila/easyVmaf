@@ -27,6 +27,7 @@ import config
 import subprocess
 import json
 import os
+import shlex
 from ffmpeg_progress_yield import FfmpegProgress
 
 
@@ -182,15 +183,11 @@ class FFmpegQos:
             print(self.cmd, flush=True)
 
         if print_progress:
-            cmd_progress = []
-            cmd_fancy = " ".join(self.cmd.split())
-            cmd_fancy = cmd_fancy.split(' ')
-            [cmd_progress.append(i.strip('"')) for i in cmd_fancy]
-            #print(cmd_fancy, cmd_progress)
+            cmd_progress = shlex.split(self.cmd)
             process = FfmpegProgress(cmd_progress)
             for progress in process.run_command_with_progress():
                 print(f"progress = {progress}% - ",
-                      "n/".join(str(process.stderr).splitlines()[-9:-8]))
+                      "\n".join(str(process.stderr).splitlines()[-9:-8]))
 
         else:
             process = subprocess.Popen(
