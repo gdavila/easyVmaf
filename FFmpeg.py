@@ -186,11 +186,11 @@ class FFmpegQos:
             cmd_fancy = " ".join(self.cmd.split())
             cmd_fancy = cmd_fancy.split(' ')
             [cmd_progress.append(i.strip('"')) for i in cmd_fancy]
-            print(cmd_fancy, cmd_progress)
+            #print(cmd_fancy, cmd_progress)
             process = FfmpegProgress(cmd_progress)
             for progress in process.run_command_with_progress():
                 print(f"progress = {progress}% - ",
-                      "\n".join(process.stderr.splitlines()[-9:-8]))
+                      "n/".join(str(process.stderr).splitlines()[-9:-8]))
 
         else:
             process = subprocess.Popen(
