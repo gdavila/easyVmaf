@@ -187,7 +187,8 @@ class FFmpegQos:
             process = FfmpegProgress(cmd_progress)
             for progress in process.run_command_with_progress():
                 print(f"progress = {progress}% - ",
-                      "\n".join(str(process.stderr).splitlines()[-9:-8]))
+                      "\n".join(str(process.stderr).splitlines()[-9:-8]),
+                      flush=True)
 
         else:
             process = subprocess.Popen(

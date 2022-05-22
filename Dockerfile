@@ -1,25 +1,19 @@
-FROM ubuntu:20.04
-
-# setup timezone
-ENV TZ=UTC
+FROM python:3.8-slim AS base
 
 # setup dependencies versions
 
-ENV	FFMPEG_version=4.2.2 \
-	VMAF_version=master \
-	easyVmaf_version=master 
+ARG	FFMPEG_version=master \
+ARG	VMAF_version=master \
+ARG	easyVmaf_hash=af01f03b451b5f4ab74ddc58dfd264849383f226	
+
+FROM base as build
 
 # get and install building tools
-WORKDIR	/tmp/workdir
 RUN \
+	export TZ='UTC' && \
 	ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone && \
 	apt-get update -yqq && \
 	apt-get install --no-install-recommends\
-		ninja-build \
-		python3 \
-		python3-pip \
-		python3-setuptools \
-		python3-wheel \
 		ninja-build \
 		wget \
 		doxygen \
@@ -30,16 +24,15 @@ RUN \
 		gcc \
 		pkg-config \
 		make \
-		nasm \
+		nasm \	
 		xxd \
 		yasm -y && \
 	apt-get autoremove -y && \
     apt-get clean -y && \
-	pip3 install --user meson ffmpeg-progress-yield && \
-	rm -rf /tmp/workdir
+	pip3 install --user meson
 
 # install libvmaf
-WORKDIR     /tmp/workdir
+WORKDIR     /tmp/vmaf
 RUN \
 	export PATH="${HOME}/.local/bin:${PATH}" && \
 	echo $PATH &&\
@@ -50,38 +43,48 @@ RUN \
 	 tar -xzf  v${VMAF_version}.tar.gz ; \ 
 	fi && \
 	cd vmaf-${VMAF_version}/libvmaf/ && \
-	meson build --buildtype release && \
+	meson build --buildtype release -Dbuilt_in_models=true && \
 	ninja -vC build && \
 	ninja -vC build test && \
 	ninja -vC build install && \ 
 	mkdir -p /usr/local/share/model  && \
 	cp  -R ../model/* /usr/local/share/model && \
-	rm -rf /tmp/workdir
+	rm -rf /tmp/vmaf
 
 # install ffmpeg
-WORKDIR     /tmp/workdir
+WORKDIR     /tmp/ffmpeg
 RUN \
-	export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/lib64/" && \
-	export PKG_CONFIG_PATH="${PKG_CONFIG_PATH}:/usr/local/lib64/pkgconfig/" && \
-	wget https://ffmpeg.org/releases/ffmpeg-${FFMPEG_version}.tar.bz2 && \
-	tar xjf ffmpeg-${FFMPEG_version}.tar.bz2 && \
-	cd ffmpeg-${FFMPEG_version} && \
-	./configure --enable-libvmaf --enable-version3 --disable-shared && \
+	export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/lib/" && \
+	export PKG_CONFIG_PATH="${PKG_CONFIG_PATH}:/usr/local/lib/pkgconfig/" && \
+	wget https://github.com/FFmpeg/FFmpeg/archive/refs/heads/master.tar.gz  && \
+	tar -xzf ${FFMPEG_version}.tar.gz && \
+	cd FFmpeg-${FFMPEG_version} && \
+	./configure --enable-libvmaf --enable-version3 --enable-shared && \
 	make -j4 && \
 	make install && \
-	rm -rf /tmp/workdir
+	rm -rf /tmp/ffmpeg
 
-ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/lib64/"
 # install  easyVmaf
 WORKDIR  /app
 RUN \
-	if [ "$easyVmaf_version" = "master" ] ; \
-	 then wget https://github.com/gdavila/easyVmaf/archive/${easyVmaf_version}.tar.gz && \
-	 tar -xzf  ${easyVmaf_version}.tar.gz ; \
-	 else wget https://github.com/gdavila/easyVmaf/archive/v${easyVmaf_version}.tar.gz && \
-	 tar -xzf  v${easyVmaf_version}.tar.gz ; \ 
-	fi
+	wget https://github.com/gdavila/easyVmaf/archive/${easyVmaf_hash}.tar.gz && \
+	tar -xzf  ${easyVmaf_hash}.tar.gz
+
+FROM base AS release
+
+ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/lib/"
+
+RUN \
+	export TZ='UTC' && \
+	ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone && \
+	apt-get update -yqq && \
+	apt-get autoremove -y && \
+    apt-get clean -y && \
+	pip3 install --user ffmpeg-progress-yield
+
+COPY --from=build /usr/local /usr/local/
+COPY --from=build /app/easyVmaf-${easyVmaf_hash} /app/easyVmaf/
 
 # app setup
-WORKDIR  /app/easyVmaf-${easyVmaf_version}
-ENTRYPOINT [ "python3", "easyVmaf.py" ]
+WORKDIR  /app/easyVmaf
+ENTRYPOINT [ "python3", "-u", "easyVmaf.py" ]
