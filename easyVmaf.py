@@ -29,6 +29,9 @@ import os.path
 import glob
 import xml.etree.ElementTree as ET
 
+from  FFmpeg import HD_MODEL_NAME
+from  FFmpeg import _4K_MODEL_NAME
+
 
 from statistics import mean, harmonic_mean
 from Vmaf import vmaf
@@ -50,7 +53,6 @@ def get_args():
                         \n \t \t The sync is doing by a frame-by-frame look up of the best PSNR\
                         \n \t \t See [-reverse] for more options of syncing\
                         \n\n As output, a json file with VMAF score is created",
-                      epilog="* NOTE: HDneg is a VMAF experimental feature not supported yet by FFmpeg.",
                       formatter_class=argparse.RawTextHelpFormatter)
     requiredgroup = parser.add_argument_group('required arguments')
     requiredgroup.add_argument(
@@ -67,9 +69,7 @@ def get_args():
                         help="Specifies the subsampling of frames to speed up calculation. (default=1, None).")
     parser.add_argument('-reverse', help="If enable, it Changes the default Autosync behaviour: The first frames of the Reference video are used as reference to sync with the Distorted one. (Default = Disable).", action='store_true')
     parser.add_argument('-model', dest='model', type=str, default="HD",
-                        help="Vmaf Model. Options: HD, HDneg*, 4K. (Default: HD).")
-    parser.add_argument(
-        '-phone', help='It enables vmaf phone model (HD only). (Default=disable).', action='store_true')
+                        help="Vmaf Model. Options: HD, 4K. (Default: HD).")
     parser.add_argument('-threads', dest='threads', type=int,
                         default=0, help='number of threads')
     parser.add_argument(
@@ -81,6 +81,9 @@ def get_args():
 
     parser.add_argument('-output_fmt', dest='output_fmt', type=str, default='json',
                         help='Output vmaf file format. Options: json or xml (Default: json)')
+    
+    parser.add_argument(
+        '-cambi_heatmap', help='Activate cambi heatmap. (Default: false).', action='store_true')
 
     if len(sys.argv) == 1:
         parser.print_help(sys.stderr)
@@ -110,12 +113,12 @@ if __name__ == '__main__':
     n_subsample = abs(cmdParser.n)
     reverse = cmdParser.reverse
     model = cmdParser.model
-    phone = cmdParser.phone
     verbose = cmdParser.verbose
     output_fmt = cmdParser.output_fmt
     threads = cmdParser.threads
     print_progress = cmdParser.progress
     end_sync = cmdParser.endsync
+    cambi_heatmap = cmdParser.cambi_heatmap
 
     # Setting verbosity
     if verbose:
@@ -128,6 +131,8 @@ if __name__ == '__main__':
         print("output_fmt: ", output_fmt,
               " Not supported. JSON output used instead", flush=True)
         output_fmt = "json"
+
+
 
     '''
     Distorted video path could be loaded as patterns i.e., "myFolder/video-sample-*.mp4"
@@ -145,9 +150,12 @@ if __name__ == '__main__':
               main_pattern, flush=True)
         sys.exit(1)
 
+    if model == 'HD': vmaf_metric_name = HD_MODEL_NAME
+    elif model == '4K': vmaf_metric_name = _4K_MODEL_NAME
+
     for main in mainFiles:
-        myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample, model=model, phone=phone,
-                      output_fmt=output_fmt, threads=threads, print_progress=print_progress, end_sync=end_sync, manual_fps=fps)
+        myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample, model=model,
+                      output_fmt=output_fmt, threads=threads, print_progress=print_progress, end_sync=end_sync, manual_fps=fps, cambi_heatmap = cambi_heatmap)
         '''check if syncWin was set. If true offset is computed automatically, otherwise manual values are used  '''
 
         if syncWin > 0:
@@ -168,13 +176,13 @@ if __name__ == '__main__':
             with open(vmafpath) as jsonFile:
                 jsonData = json.load(jsonFile)
                 for frame in jsonData['frames']:
-                    vmafScore.append(frame["metrics"]["vmaf"])
+                    vmafScore.append(frame["metrics"][vmaf_metric_name])
 
         elif output_fmt == 'xml':
             tree = ET.parse(vmafpath)
             root = tree.getroot()
             for frame in root.findall('frames/frame'):
-                value = frame.get('vmaf')
+                value = frame.get(vmaf_metric_name)
                 vmafScore.append(float(value))
 
         print("\n \n \n \n \n ")

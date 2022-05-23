@@ -10,18 +10,13 @@ Details about **How it Works** can be found [here](https://ottverse.com/vmaf-eas
 
 ## Updates
 
+* Cambi features support 
+
+* Added support for ffmpeg 5.0 and their built-in vmaf models
+
 * Progress indicator added `-progress`. It shows the progress while doing vmaf computations.
 
 * Added the option to explicilty set the number of threads to run `-threads (int)`
-
-* With `libvmaf v2.0.0`, the vmaf models files were refactored. Basically, the models use now fixed-point data types instead of float-point data types. So depending on the `libvmaf` version you are using, you could need to modify the [easyVmaf/config.py](https://github.com/gdavila/easyVmaf/blob/master/config.py)  file:
-
-  *  `libvmaf` <  `v2.0.0 `: Use the old `vmaf_*.pkl` model files with float-point data types: `vmaf_4k_v0.6.1.pkl`, `vmaf_v0.6.1.pkl`, etc.
-  
-  *  `libvmaf` >=  `v2.0.0 `: Use the new `vmaf_*.json` model files with fixed-point data types: `vmaf_4k_v0.6.1.json`, `vmaf_v0.6.1.json`, `vmaf_v0.6.1neg.json`
-  
-* New neg model is supported since `libvmaf v2.0.0` only. So if you want to use it, be sure to update libvmaf first.
-
 
 ## Requirements
 
@@ -31,7 +26,7 @@ Details about **How it Works** can be found [here](https://ottverse.com/vmaf-eas
 
 * Python module [ffmpeg_progress_yield](https://github.com/slhck/ffmpeg-progress-yield)
 
-* FFmpeg build with `libvmaf`. More details [here](http://underpop.online.fr/f/ffmpeg/help/libvmaf.htm.gz)
+* FFmpeg >= `5.0` build with `libvmaf`. More details [here](http://underpop.online.fr/f/ffmpeg/help/libvmaf.htm.gz)
 
 ## Installation
 
@@ -47,9 +42,10 @@ $ cd easyVmaf
 ## Usage
 
 ```console
-$ python3 easyVmaf.py -h
-usage: easyVmaf [-h] -d D -r R [-sw SW] [-ss SS] [-subsample N] [-reverse] [-model MODEL] [-phone]
-                [-threads THREADS] [-verbose] [-progress] [-output_fmt OUTPUT_FMT]
+$ python3 easyVmaf.py
+usage: easyVmaf [-h] -d D -r R [-sw SW] [-ss SS] [-fps FPS] [-subsample N] [-reverse] [-model MODEL]
+                [-threads THREADS] [-verbose] [-progress] [-endsync] [-output_fmt OUTPUT_FMT]
+                [-cambi_heatmap]
 
 Script to easy compute VMAF using FFmpeg. It allows to deinterlace, scale and sync Ref and Distorted video samples automatically:                         
 
@@ -67,21 +63,22 @@ optional arguments:
   -h, --help            show this help message and exit
   -sw SW                Sync Window: window size in seconds of a subsample of the Reference video. The sync lookup will be done between the first frames of the Distorted input and this Subsample of the Reference. (default=0. No sync).
   -ss SS                Sync Start Time. Time in seconds from the beginning of the Reference video to which the Sync Window will be applied from. (default=0).
+  -fps FPS              Video Frame Rate: force frame rate conversion to <fps> value. Autodeinterlace is disabled when setting this
   -subsample N          Specifies the subsampling of frames to speed up calculation. (default=1, None).
   -reverse              If enable, it Changes the default Autosync behaviour: The first frames of the Reference video are used as reference to sync with the Distorted one. (Default = Disable).
-  -model MODEL          Vmaf Model. Options: HD, HDneg*, 4K. (Default: HD).
-  -phone                It enables vmaf phone model (HD only). (Default=disable).
+  -model MODEL          Vmaf Model. Options: HD, 4K. (Default: HD).
   -threads THREADS      number of threads
   -verbose              Activate verbose loglevel. (Default: info).
   -progress             Activate progress indicator for vmaf computation. (Default: false).
+  -endsync              Activate end sync. This ends the computation when the shortest video ends. (Default: false).
   -output_fmt OUTPUT_FMT
                         Output vmaf file format. Options: json or xml (Default: json)
+  -cambi_heatmap        Activate cambi heatmap. (Default: false).
 
 required arguments:
   -d D                  Distorted video
   -r R                  Reference video 
 ```
-NOTE: HDneg is not supported by ffmpeg yet. So  `-model HDneg` wont work for now.
 
 ## Examples
 

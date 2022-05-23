@@ -23,6 +23,7 @@ SOFTWARE.
 """
 from FFmpeg import FFprobe
 from FFmpeg import FFmpegQos
+import os
 
 
 class video():
@@ -107,6 +108,7 @@ class video():
         print("[easyVmaf] Getting format info...", self.videoSrc, flush=True)
         print("=======================================", flush=True)
         self.formatInfo = FFprobe(self.videoSrc, self.loglevel).getFormatInfo()
+        print (self.formatInfo)
         return self.formatInfo
 
 
@@ -119,7 +121,7 @@ class vmaf():
         - Frame rate conversion (if needed)
     """
 
-    def __init__(self, mainSrc, refSrc, output_fmt, model="HD", phone=False, loglevel="info", subsample=1, threads=0, print_progress=False, end_sync=False,  manual_fps=0):
+    def __init__(self, mainSrc, refSrc, output_fmt, model="HD", phone=False, loglevel="info", subsample=1, threads=0, print_progress=False, end_sync=False,  manual_fps=0, cambi_heatmap=False):
         self.loglevel = loglevel
         self.main = video(mainSrc, self.loglevel)
         self.ref = video(refSrc, self.loglevel)
@@ -136,12 +138,13 @@ class vmaf():
         self.threads = threads
         self.print_progress = print_progress
         self.end_sync = end_sync
+        self.cambi_heatmap = cambi_heatmap
 
     def _initResolutions(self):
         """ 
         initialization of resolutions for each vmaf model
         """
-        if self.model == 'HD' or self.model == 'HDneg':
+        if self.model == 'HD':
             self.target_resolution = [1920, 1080]
         elif self.model == '4K':
             self.target_resolution = [3840, 2160]
@@ -235,7 +238,8 @@ class vmaf():
                     self._deinterlaceFrame(2, self.ffmpegQos.main)
 
             elif round(ref_fps) == round(main_fps):
-                # Examples: REF=30i, MAIN=30p
+                # Examples: 
+                # REF=30i, MAIN=30p
                 # REF=29.97i, MAIN=30p, etc
                 if not self.ffmpegQos.invertedSrc:
                     self._deinterlaceFrame(1, self.ffmpegQos.ref)
@@ -243,7 +247,8 @@ class vmaf():
                     self._deinterlaceFrame(1, self.ffmpegQos.main)
 
             elif round(ref_fps) == round(main_fps/2):
-                # Examples: REF=30i, MAIN=60p
+                # Examples: 
+                # REF=30i, MAIN=60p
                 # REF=29.97i, MAIN=60p, etc
                 if not self.ffmpegQos.invertedSrc:
                     self._deinterlaceField(0.5, self.ffmpegQos.ref)
@@ -269,7 +274,8 @@ class vmaf():
                     self._deinterlaceField(1, self.ffmpegQos.ref)
 
             elif round(ref_fps) == round(main_fps):
-                # Examples: REF=30p, MAIN=30i
+                # Examples: 
+                # REF=30p, MAIN=30i
                 # REF=30p, MAIN=29.97i, etc
                 if not self.ffmpegQos.invertedSrc:
                     self._deinterlaceFrame(1, self.ffmpegQos.main)
@@ -394,6 +400,14 @@ class vmaf():
         """Apply Offset filters, if offset =0 nothing happens """
         self.setOffset()
 
+        if self.cambi_heatmap:
+            heatmap_path = os.path.splitext(self.main.videoSrc)[0] + '_cambi_heatmap'
+            self.features = f'name=psnr|name=cambi\\\\:full_ref=true\\\\:enc_width={self.main.streamInfo["width"]}\\\\:enc_height={self.main.streamInfo["height"]}\\\\:src_width={self.ref.streamInfo["width"]}\\\\:src_height={self.ref.streamInfo["height"]}\\\\:heatmaps_path={heatmap_path}'
+
+        else: self.features = f'name=psnr|name=cambi\\\\:full_ref=true\\\\:enc_width={self.main.streamInfo["width"]}\\\\:enc_height={self.main.streamInfo["height"]}\\\\:src_width={self.ref.streamInfo["width"]}\\\\:src_height={self.ref.streamInfo["height"]}'
+
+
+
         print("\n\n=======================================", flush=True)
         print("Computing VMAF... ", flush=True)
         print("=======================================", flush=True)
@@ -409,8 +423,9 @@ class vmaf():
         print("output_fmt:", self.output_fmt, flush=True)
         print("=======================================", flush=True)
 
-        vmafProcess = self.ffmpegQos.getVmaf(model=self.model, phone=self.phone, subsample=self.subsample,
-                                             output_fmt=self.output_fmt, threads=self.threads, print_progress=self.print_progress, end_sync=self.end_sync)
+    
+        vmafProcess = self.ffmpegQos.getVmaf(model=self.model, subsample=self.subsample,
+                                             output_fmt=self.output_fmt, threads=self.threads, print_progress=self.print_progress, end_sync=self.end_sync, features=self.features)
         return vmafProcess
 
 

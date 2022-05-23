@@ -31,6 +31,19 @@ import shlex
 from ffmpeg_progress_yield import FfmpegProgress
 
 
+HD_MODEL_VERSION = 'vmaf_v0.6.1'
+HD_MODEL_NAME= 'vmaf_hd'
+HD_NEG_MODEL_VERSION = 'vmaf_v0.6.1neg'
+HD_NEG_MODEL_NAME = 'vmaf_hd_neg'
+HD_PHONE_MODEL_VERSION = 'vmaf_v0.6.1'
+HD_PHONE_MODEL_NAME = 'vmaf_hd_phone'
+
+_4K_MODEL_VERSION = 'vmaf_4k_v0.6.1'
+_4K_MODEL_NAME = 'vmaf_4k'
+
+
+
+
 class FFprobe:
     '''
     Class to interact with FFprobe. 
@@ -120,7 +133,7 @@ class FFmpegQos:
 
     def _commitFilters(self, filterName='lavfi'):
         """build the cmd for the filters"""
-        filterCmd = f'-{filterName} \"{";".join(self.main.filtersList + self.ref.filtersList + self.psnrFilter + self.vmafFilter)}\"'
+        filterCmd = f'-{filterName} \'{";".join(self.main.filtersList + self.ref.filtersList + self.psnrFilter + self.vmafFilter)}\''
         return filterCmd
 
     def getPsnr(self, stats_file=False):
@@ -146,7 +159,7 @@ class FFmpegQos:
         psnr = [s for s in stdout if "average" in s][0].split(":")[1]
         return float(psnr)
 
-    def getVmaf(self, log_path=None, model='HD', phone=False, subsample=1, output_fmt='json', threads=0, print_progress=False, end_sync=False):
+    def getVmaf(self, log_path=None, model='HD', subsample=1, output_fmt='json', threads=0, print_progress=False, end_sync=False, features = None):
         main = self.main.lastOutputID
         ref = self.ref.lastOutputID
         if output_fmt == 'xml':
@@ -161,14 +174,11 @@ class FFmpegQos:
                     0] + '_vmaf.json'
         self.vmafpath = log_path
         if model == 'HD':
-            model_path = config.vmaf_HD
-            phone_model = int(phone)
-        elif model == 'HDneg':
-            model_path = config.vmaf_HDneg
-            phone_model = int(phone)
+            model_hd = f'version={HD_MODEL_VERSION}\\\\:name={HD_MODEL_NAME}|version={HD_NEG_MODEL_VERSION}\\\\:name={HD_NEG_MODEL_NAME}|version={HD_PHONE_MODEL_VERSION}\\\\:name={HD_PHONE_MODEL_NAME}\\\\:enable_transform=true'
+            model = model_hd
         elif model == '4K':
-            model_path = config.vmaf_4K
-            phone_model = 0
+            model_4k = f'version={_4K_MODEL_VERSION}\\\\:name={_4K_MODEL_NAME}'
+            model = model_4k
         if threads == 0:
             threads = os.cpu_count()
         if end_sync:
@@ -176,7 +186,11 @@ class FFmpegQos:
         else:
             shortest = 0
 
-        self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model_path={model_path}:phone_model={phone_model}:n_subsample={subsample}:log_path={log_path}:n_threads={threads}:shortest={shortest}']
+        if features == None:
+            self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model={model}:n_subsample={subsample}:log_path={log_path}:n_threads={threads}:shortest={shortest}']
+        else:
+            self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model={model}:n_subsample={subsample}:log_path={log_path}:n_threads={threads}:shortest={shortest}:feature={features}']
+
 
         self._commit()
         if self.loglevel == "verbose":
