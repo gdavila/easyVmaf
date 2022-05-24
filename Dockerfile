@@ -4,7 +4,7 @@ FROM python:3.8-slim AS base
 
 ARG	FFMPEG_version=master \
 ARG	VMAF_version=master \
-ARG	easyVmaf_hash=af01f03b451b5f4ab74ddc58dfd264849383f226	
+ARG	easyVmaf_hash=31c59a444445125265044789d0754db8f39f71be	
 
 FROM base as build
 
