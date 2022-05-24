@@ -114,6 +114,7 @@ class FFmpegQos:
         self.vmafFilter = []
         self.invertedSrc = False
         self.vmafpath = None
+        self.vmaf_cambi_heatmap_path = None
 
     def _commit(self):
         """build the final cmd to run"""
@@ -159,7 +160,7 @@ class FFmpegQos:
         psnr = [s for s in stdout if "average" in s][0].split(":")[1]
         return float(psnr)
 
-    def getVmaf(self, log_path=None, model='HD', subsample=1, output_fmt='json', threads=0, print_progress=False, end_sync=False, features = None):
+    def getVmaf(self, log_path=None, model='HD', subsample=1, output_fmt='json', threads=0, print_progress=False, end_sync=False, features = None, cambi_heatmap = False):
         main = self.main.lastOutputID
         ref = self.ref.lastOutputID
         if output_fmt == 'xml':
@@ -173,6 +174,11 @@ class FFmpegQos:
                 log_path = os.path.splitext(self.main.videoSrc)[
                     0] + '_vmaf.json'
         self.vmafpath = log_path
+
+        self.vmaf_cambi_heatmap_path = os.path.splitext(self.main.videoSrc)[0] + '_cambi_heatmap'
+
+
+
         if model == 'HD':
             model_hd = f'version={HD_MODEL_VERSION}\\\\:name={HD_MODEL_NAME}|version={HD_NEG_MODEL_VERSION}\\\\:name={HD_NEG_MODEL_NAME}|version={HD_PHONE_MODEL_VERSION}\\\\:name={HD_PHONE_MODEL_NAME}\\\\:enable_transform=true'
             model = model_hd
@@ -186,10 +192,14 @@ class FFmpegQos:
         else:
             shortest = 0
 
-        if features == None:
+        if not features:
             self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model={model}:n_subsample={subsample}:log_path={log_path}:n_threads={threads}:shortest={shortest}']
-        else:
+        
+        elif features and not cambi_heatmap:
             self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model={model}:n_subsample={subsample}:log_path={log_path}:n_threads={threads}:shortest={shortest}:feature={features}']
+
+        elif features and cambi_heatmap:
+            self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model={model}:n_subsample={subsample}:log_path={log_path}:n_threads={threads}:shortest={shortest}:feature={features}\\\\:heatmaps_path={self.vmaf_cambi_heatmap_path}']
 
 
         self._commit()

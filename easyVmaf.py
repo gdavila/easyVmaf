@@ -29,8 +29,7 @@ import os.path
 import glob
 import xml.etree.ElementTree as ET
 
-from  FFmpeg import HD_MODEL_NAME
-from  FFmpeg import _4K_MODEL_NAME
+from  FFmpeg import HD_MODEL_NAME, HD_NEG_MODEL_NAME, HD_PHONE_MODEL_NAME ,_4K_MODEL_NAME, HD_PHONE_MODEL_VERSION
 
 
 from statistics import mean, harmonic_mean
@@ -150,9 +149,6 @@ if __name__ == '__main__':
               main_pattern, flush=True)
         sys.exit(1)
 
-    if model == 'HD': vmaf_metric_name = HD_MODEL_NAME
-    elif model == '4K': vmaf_metric_name = _4K_MODEL_NAME
-
     for main in mainFiles:
         myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample, model=model,
                       output_fmt=output_fmt, threads=threads, print_progress=print_progress, end_sync=end_sync, manual_fps=fps, cambi_heatmap = cambi_heatmap)
@@ -171,26 +167,44 @@ if __name__ == '__main__':
         vmafProcess = myVmaf.getVmaf()
         vmafpath = myVmaf.ffmpegQos.vmafpath
         vmafScore = []
+        vmafNegScore = []
+        vmafPhoneScore = []
 
         if output_fmt == 'json':
             with open(vmafpath) as jsonFile:
                 jsonData = json.load(jsonFile)
                 for frame in jsonData['frames']:
-                    vmafScore.append(frame["metrics"][vmaf_metric_name])
+                    if model == 'HD':
+                        vmafScore.append(frame["metrics"][HD_MODEL_NAME])
+                        vmafNegScore.append(frame["metrics"][HD_NEG_MODEL_NAME])
+                        vmafPhoneScore.append(frame["metrics"][HD_PHONE_MODEL_NAME])
+                    if model == '4K':
+                        vmafScore.append(frame["metrics"][_4K_MODEL_NAME])
 
         elif output_fmt == 'xml':
             tree = ET.parse(vmafpath)
             root = tree.getroot()
             for frame in root.findall('frames/frame'):
-                value = frame.get(vmaf_metric_name)
-                vmafScore.append(float(value))
+                if model == 'HD':
+                    vmafScore.append(frame["metrics"][HD_MODEL_NAME])
+                    vmafNegScore.append(frame["metrics"][HD_NEG_MODEL_NAME])
+                    vmafPhoneScore.append(frame["metrics"][HD_PHONE_MODEL_NAME])
+                if model == '4K':
+                    vmafScore.append(frame["metrics"][_4K_MODEL_NAME])
 
         print("\n \n \n \n \n ")
         print("=======================================", flush=True)
         print("VMAF computed", flush=True)
         print("=======================================", flush=True)
         print("offset: ", offset, " | psnr: ", psnr)
-        print("VMAF score (arithmetic mean): ", mean(vmafScore))
-        print("VMAF score (harmonic mean): ", harmonic_mean(vmafScore))
-        print("VMAF output File Path: ", myVmaf.ffmpegQos.vmafpath)
+        if model == 'HD':
+            print("VMAF HD: ", mean(vmafScore))
+            print("VMAF Neg: ", mean(vmafNegScore))
+            print("VMAF Phone: ", mean(vmafPhoneScore))
+        if model == '4K':
+            print("VMAF 4K: ", mean(vmafScore))
+        print("VMAF output file path: ", myVmaf.ffmpegQos.vmafpath)
+        if cambi_heatmap:
+            print("CAMBI Heatmap output path: ", myVmaf.ffmpegQos.vmaf_cambi_heatmap_path)
+
         print("\n \n \n \n \n ")

@@ -10,13 +10,21 @@ Details about **How it Works** can be found [here](https://ottverse.com/vmaf-eas
 
 ## Updates
 
-* Cambi features support 
+Since `easyVmaf` `2.0` only FFmpeg versions >= `5.0` will be supported. For using `easyVmaf` with FFmpeg < `5.0`, please consider rollingback to `easyVmaf` `1.3`.
 
-* Added support for ffmpeg 5.0 and their built-in vmaf models
+New feaures and updates:
 
-* Progress indicator added `-progress`. It shows the progress while doing vmaf computations.
+* [Cambi feature](https://github.com/Netflix/vmaf/blob/master/resource/doc/cambi.md#options) - Netflix banding detector, supported. 
 
-* Added the option to explicilty set the number of threads to run `-threads (int)`
+* Command line ussage updated according to [libvmaf docs](https://ffmpeg.org/ffmpeg-filters.html#libvmaf)
+
+* [Cambi heatmap](https://github.com/Netflix/vmaf/issues/936) support added.  The outputs may be visualized with [ffplay](https://github.com/Netflix/vmaf/issues/1016#issuecomment-1099591977)
+
+* Built-in VMAF models are only supported since they are included in FFmpeg  >= `v5.0`. 
+
+* Docker image - better handling of dependencies and built instruccions
+
+* 'HD Neg' and 'HD phone' models are computed by default 
 
 ## Requirements
 

@@ -140,6 +140,7 @@ class vmaf():
         self.end_sync = end_sync
         self.cambi_heatmap = cambi_heatmap
 
+
     def _initResolutions(self):
         """ 
         initialization of resolutions for each vmaf model
@@ -400,12 +401,7 @@ class vmaf():
         """Apply Offset filters, if offset =0 nothing happens """
         self.setOffset()
 
-        if self.cambi_heatmap:
-            heatmap_path = os.path.splitext(self.main.videoSrc)[0] + '_cambi_heatmap'
-            self.features = f'name=psnr|name=cambi\\\\:full_ref=true\\\\:enc_width={self.main.streamInfo["width"]}\\\\:enc_height={self.main.streamInfo["height"]}\\\\:src_width={self.ref.streamInfo["width"]}\\\\:src_height={self.ref.streamInfo["height"]}\\\\:heatmaps_path={heatmap_path}'
-
-        else: self.features = f'name=psnr|name=cambi\\\\:full_ref=true\\\\:enc_width={self.main.streamInfo["width"]}\\\\:enc_height={self.main.streamInfo["height"]}\\\\:src_width={self.ref.streamInfo["width"]}\\\\:src_height={self.ref.streamInfo["height"]}'
-
+        self.features = f'name=psnr|name=cambi\\\\:full_ref=true\\\\:enc_width={self.main.streamInfo["width"]}\\\\:enc_height={self.main.streamInfo["height"]}\\\\:src_width={self.ref.streamInfo["width"]}\\\\:src_height={self.ref.streamInfo["height"]}'
 
 
         print("\n\n=======================================", flush=True)
@@ -425,7 +421,7 @@ class vmaf():
 
     
         vmafProcess = self.ffmpegQos.getVmaf(model=self.model, subsample=self.subsample,
-                                             output_fmt=self.output_fmt, threads=self.threads, print_progress=self.print_progress, end_sync=self.end_sync, features=self.features)
+                                             output_fmt=self.output_fmt, threads=self.threads, print_progress=self.print_progress, end_sync=self.end_sync, features=self.features, cambi_heatmap = self.cambi_heatmap)
         return vmafProcess
 
 

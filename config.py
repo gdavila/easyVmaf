@@ -22,5 +22,5 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
-ffmpeg = '/Users/gabriel/Downloads/ffmpeg'
+ffmpeg = '/usr/local/bin/ffmpeg'
 ffprobe = '/usr/local/bin/ffprobe'
