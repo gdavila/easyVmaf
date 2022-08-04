@@ -22,6 +22,7 @@ RUN \
 		cmake \
 		g++ \
 		gcc \
+		libdav1d-dev \
 		pkg-config \
 		make \
 		nasm \	
@@ -59,7 +60,7 @@ RUN \
 	wget https://github.com/FFmpeg/FFmpeg/archive/refs/heads/master.tar.gz  && \
 	tar -xzf ${FFMPEG_version}.tar.gz && \
 	cd FFmpeg-${FFMPEG_version} && \
-	./configure --enable-libvmaf --enable-version3 --enable-shared && \
+	./configure --enable-libvmaf --enable-version3 --enable-shared --enable-libdav1d && \
 	make -j4 && \
 	make install && \
 	rm -rf /tmp/ffmpeg
@@ -78,6 +79,8 @@ RUN \
 	export TZ='UTC' && \
 	ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone && \
 	apt-get update -yqq && \
+	apt-get install -y --no-install-recommends \
+		dav1d && \
 	apt-get autoremove -y && \
     apt-get clean -y && \
 	pip3 install --user ffmpeg-progress-yield
