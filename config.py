@@ -21,6 +21,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
+import shutil
 
-ffmpeg = '/usr/local/bin/ffmpeg'
-ffprobe = '/usr/local/bin/ffprobe'
+ffmpeg = shutil.which("ffmpeg")
+ffprobe = shutil.which("ffprobe")
