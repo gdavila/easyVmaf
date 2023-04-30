@@ -3,3 +3,10 @@
 __pycache__
 .vscode/
 
+met_2000.ismv
+met_ref.ts
+video_samples/BBB_sampleA_distorted_vmaf.json
+.gitignore
+video_samples/BBB_sampleB_distorted_vmaf.json
+met_2000_vmaf.json
+requirements.txt

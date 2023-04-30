@@ -83,6 +83,8 @@ def get_args():
     
     parser.add_argument(
         '-cambi_heatmap', help='Activate cambi heatmap. (Default: false).', action='store_true')
+    parser.add_argument(
+        '-sync_only', action='store_true', default=False, help='For sync measurement only. No Vmaf processing')
 
     if len(sys.argv) == 1:
         parser.print_help(sys.stderr)
@@ -118,6 +120,7 @@ if __name__ == '__main__':
     print_progress = cmdParser.progress
     end_sync = cmdParser.endsync
     cambi_heatmap = cmdParser.cambi_heatmap
+    sync_only = cmdParser.sync_only
 
     # Setting verbosity
     if verbose:
@@ -156,6 +159,9 @@ if __name__ == '__main__':
 
         if syncWin > 0:
             offset, psnr = myVmaf.syncOffset(syncWin, ss, reverse)
+            if cmdParser.sync_only:
+               print("offset: ", offset, flush=True)
+               sys.exit(1) 
         else:
             offset = ss
             psnr = None

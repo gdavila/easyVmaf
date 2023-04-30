@@ -82,6 +82,7 @@ optional arguments:
   -output_fmt OUTPUT_FMT
                         Output vmaf file format. Options: json or xml (Default: json)
   -cambi_heatmap        Activate cambi heatmap. (Default: false).
+  -sync_only            Sync measurement only. No Vmaf processing (Default: false).
 
 required arguments:
   -d D                  Distorted video
