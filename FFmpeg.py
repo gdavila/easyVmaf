@@ -56,7 +56,7 @@ class FFprobe:
         - getFramesInfo()
         - getPacketsInfo()
     '''
-    cmd = config.ffprobe
+    cmd = os.environ.get('FFPROBE', config.ffprobe)
 
     def __init__(self, videoSrc, loglevel="info"):
         self.videoSrc = videoSrc
@@ -103,7 +103,7 @@ class FFmpegQos:
     Class to interact with FFmpeg QoS Filters: PSNR and VMAF. 
     Particullary, it interacts with libvmaf library through lavfi filter
     '''
-    cmd = config.ffmpeg
+    cmd = os.environ.get('FFMPEG', config.ffmpeg)
 
     def __init__(self,  main, ref, loglevel="info"):
         self.loglevel = loglevel
