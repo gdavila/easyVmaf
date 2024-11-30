@@ -168,11 +168,17 @@ class FFmpegQos:
             if log_path == None:
                 log_path = os.path.splitext(self.main.videoSrc)[
                     0] + '_vmaf.xml'
-        else:
+        elif output_fmt == "csv":
+            log_fmt = "csv"
+            if log_path == None:
+                log_path = os.path.splitext(self.main.videoSrc)[
+                    0] + '_vmaf.csv'
+        else :
             log_fmt = "json"
             if log_path == None:
                 log_path = os.path.splitext(self.main.videoSrc)[
                     0] + '_vmaf.json'
+                
         self.vmafpath = log_path
 
         self.vmaf_cambi_heatmap_path = os.path.splitext(self.main.videoSrc)[0] + '_cambi_heatmap'

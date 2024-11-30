@@ -1,3 +1,4 @@
+*.mp4
 *.log
 *.code-workspace
 __pycache__
