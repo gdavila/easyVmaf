@@ -28,7 +28,7 @@ import sys
 import os.path
 import glob
 import xml.etree.ElementTree as ET
-
+import logging
 from  FFmpeg import HD_MODEL_NAME, HD_NEG_MODEL_NAME, HD_PHONE_MODEL_NAME ,_4K_MODEL_NAME, HD_PHONE_MODEL_VERSION
 
 
@@ -128,6 +128,13 @@ if __name__ == '__main__':
     else:
         loglevel = "info"
 
+    #Add log for results
+    logging.basicConfig(
+        filename='easyVmaf.log',
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+
     # check output format
     if not output_fmt in ["json", "xml"]:
         print("output_fmt: ", output_fmt,
@@ -152,7 +159,11 @@ if __name__ == '__main__':
               main_pattern, flush=True)
         sys.exit(1)
 
+    logging.info("---------------")
+    logging.info("New job")
+    logging.info(f"Reference File: {reference}")
     for main in mainFiles:
+        logging.info(f"Distorted File: {main}")
         myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample, model=model,
                       output_fmt=output_fmt, threads=threads, print_progress=print_progress, end_sync=end_sync, manual_fps=fps, cambi_heatmap = cambi_heatmap)
         '''check if syncWin was set. If true offset is computed automatically, otherwise manual values are used  '''
@@ -203,14 +214,26 @@ if __name__ == '__main__':
         print("VMAF computed", flush=True)
         print("=======================================", flush=True)
         print("offset: ", offset, " | psnr: ", psnr)
+
+        logging.info("=======================================")
+        logging.info("VMAF computed")
+        logging.info("=======================================")
+        logging.info(f"offset: {offset} | psnr: {psnr}")
+
         if model == 'HD':
             print("VMAF HD: ", mean(vmafScore))
             print("VMAF Neg: ", mean(vmafNegScore))
             print("VMAF Phone: ", mean(vmafPhoneScore))
+            logging.info(f"VMAF HD: {mean(vmafScore)}")
+            logging.info(f"VMAF Neg: {mean(vmafNegScore)}")
+            logging.info(f"VMAF Phone: {mean(vmafPhoneScore)}")            
         if model == '4K':
             print("VMAF 4K: ", mean(vmafScore))
+            logging.info(f"VMAF 4K:  {mean(vmafScore)}")
         print("VMAF output file path: ", myVmaf.ffmpegQos.vmafpath)
+        logging.info(f"VMAF output file path: {myVmaf.ffmpegQos.vmafpath}")
         if cambi_heatmap:
             print("CAMBI Heatmap output path: ", myVmaf.ffmpegQos.vmaf_cambi_heatmap_path)
-
+            logging.info(f"CAMBI Heatmap output path: {myVmaf.ffmpegQos.vmaf_cambi_heatmap_path}")
+        logging.info("")
         print("\n \n \n \n \n ")

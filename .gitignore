@@ -10,3 +10,4 @@ video_samples/BBB_sampleA_distorted_vmaf.json
 video_samples/BBB_sampleB_distorted_vmaf.json
 met_2000_vmaf.json
 requirements.txt
+pra_media/
