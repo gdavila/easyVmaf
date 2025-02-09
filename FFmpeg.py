@@ -1,7 +1,7 @@
 """
 MIT License
 
-Copyright (c) 2020 Gabriel Davila - gdavila.revelo@gmail.com
+Copyright (c) 2020 Gabriel Davila - https://github.com/gdavila
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
