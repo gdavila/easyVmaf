@@ -28,8 +28,9 @@ import sys
 import os.path
 import glob
 import xml.etree.ElementTree as ET
+import csv
 
-from  FFmpeg import HD_MODEL_NAME, HD_NEG_MODEL_NAME, HD_PHONE_MODEL_NAME ,_4K_MODEL_NAME, HD_PHONE_MODEL_VERSION
+from FFmpeg import HD_MODEL_NAME, HD_NEG_MODEL_NAME, HD_PHONE_MODEL_NAME, _4K_MODEL_NAME, HD_PHONE_MODEL_VERSION
 
 
 from statistics import mean, harmonic_mean
@@ -62,7 +63,7 @@ def get_args():
                         help='Sync Window: window size in seconds of a subsample of the Reference video. The sync lookup will be done between the first frames of the Distorted input and this Subsample of the Reference. (default=0. No sync).')
     parser.add_argument('-ss', dest='ss', type=float, default=0,
                         help="Sync Start Time. Time in seconds from the beginning of the Reference video to which the Sync Window will be applied from. (default=0).")
-    parser.add_argument('-fps', dest='fps', type=float, default=0, 
+    parser.add_argument('-fps', dest='fps', type=float, default=0,
                         help='Video Frame Rate: force frame rate conversion to <fps> value. Autodeinterlace is disabled when setting this')
     parser.add_argument('-subsample', dest='n', type=int, default=1,
                         help="Specifies the subsampling of frames to speed up calculation. (default=1, None).")
@@ -79,8 +80,8 @@ def get_args():
         '-endsync', help='Activate end sync. This ends the computation when the shortest video ends. (Default: false).', action='store_true')
 
     parser.add_argument('-output_fmt', dest='output_fmt', type=str, default='json',
-                        help='Output vmaf file format. Options: json or xml (Default: json)')
-    
+                        help='Output vmaf file format. Options: json, xml or csv (Default: json)')
+
     parser.add_argument(
         '-cambi_heatmap', help='Activate cambi heatmap. (Default: false).', action='store_true')
     parser.add_argument(
@@ -129,12 +130,10 @@ if __name__ == '__main__':
         loglevel = "info"
 
     # check output format
-    if not output_fmt in ["json", "xml"]:
+    if not output_fmt in ["json", "xml", "csv"]:
         print("output_fmt: ", output_fmt,
               " Not supported. JSON output used instead", flush=True)
         output_fmt = "json"
-
-
 
     '''
     Distorted video path could be loaded as patterns i.e., "myFolder/video-sample-*.mp4"
@@ -143,7 +142,7 @@ if __name__ == '__main__':
     main_pattern = os.path.expanduser(main_pattern)
     mainFiles = glob.glob(main_pattern)
 
-    if not(os.path.isfile(reference)):
+    if not (os.path.isfile(reference)):
         print("Reference Video file not found: ", reference, flush=True)
         sys.exit(1)
 
@@ -154,14 +153,14 @@ if __name__ == '__main__':
 
     for main in mainFiles:
         myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample, model=model,
-                      output_fmt=output_fmt, threads=threads, print_progress=print_progress, end_sync=end_sync, manual_fps=fps, cambi_heatmap = cambi_heatmap)
+                      output_fmt=output_fmt, threads=threads, print_progress=print_progress, end_sync=end_sync, manual_fps=fps, cambi_heatmap=cambi_heatmap)
         '''check if syncWin was set. If true offset is computed automatically, otherwise manual values are used  '''
 
         if syncWin > 0:
             offset, psnr = myVmaf.syncOffset(syncWin, ss, reverse)
             if cmdParser.sync_only:
-               print("offset: ", offset, flush=True)
-               sys.exit(1) 
+                print("offset: ", offset, flush=True)
+                sys.exit(1)
         else:
             offset = ss
             psnr = None
@@ -176,17 +175,17 @@ if __name__ == '__main__':
         vmafNegScore = []
         vmafPhoneScore = []
 
-        if output_fmt == 'json':
-            with open(vmafpath) as jsonFile:
-                jsonData = json.load(jsonFile)
-                for frame in jsonData['frames']:
+        if output_fmt == 'csv':
+            with open(vmafpath, mode='r', newline='') as csvFile:
+                csvReader = csv.DictReader(csvFile)  
+                for row in csvReader:
                     if model == 'HD':
-                        vmafScore.append(frame["metrics"][HD_MODEL_NAME])
-                        vmafNegScore.append(frame["metrics"][HD_NEG_MODEL_NAME])
-                        vmafPhoneScore.append(frame["metrics"][HD_PHONE_MODEL_NAME])
+                        vmafScore.append(float(row[HD_MODEL_NAME]))  
+                        vmafNegScore.append(float(row[HD_NEG_MODEL_NAME]))
+                        vmafPhoneScore.append(float(row[HD_PHONE_MODEL_NAME]))
                     if model == '4K':
-                        vmafScore.append(frame["metrics"][_4K_MODEL_NAME])
-
+                        vmafScore.append(float(row[_4K_MODEL_NAME]))
+                        
         elif output_fmt == 'xml':
             tree = ET.parse(vmafpath)
             root = tree.getroot()
@@ -194,23 +193,37 @@ if __name__ == '__main__':
                 if model == 'HD':
                     vmafScore.append(frame["metrics"][HD_MODEL_NAME])
                     vmafNegScore.append(frame["metrics"][HD_NEG_MODEL_NAME])
-                    vmafPhoneScore.append(frame["metrics"][HD_PHONE_MODEL_NAME])
+                    vmafPhoneScore.append(
+                        frame["metrics"][HD_PHONE_MODEL_NAME])
                 if model == '4K':
                     vmafScore.append(frame["metrics"][_4K_MODEL_NAME])
+        else:
+            with open(vmafpath) as jsonFile:
+                jsonData = json.load(jsonFile)
+                for frame in jsonData['frames']:
+                    if model == 'HD':
+                        vmafScore.append(frame["metrics"][HD_MODEL_NAME])
+                        vmafNegScore.append(
+                            frame["metrics"][HD_NEG_MODEL_NAME])
+                        vmafPhoneScore.append(
+                            frame["metrics"][HD_PHONE_MODEL_NAME])
+                    if model == '4K':
+                        vmafScore.append(frame["metrics"][_4K_MODEL_NAME])
 
-        print("\n \n \n \n \n ")
-        print("=======================================", flush=True)
-        print("VMAF computed", flush=True)
-        print("=======================================", flush=True)
-        print("offset: ", offset, " | psnr: ", psnr)
-        if model == 'HD':
-            print("VMAF HD: ", mean(vmafScore))
-            print("VMAF Neg: ", mean(vmafNegScore))
-            print("VMAF Phone: ", mean(vmafPhoneScore))
-        if model == '4K':
-            print("VMAF 4K: ", mean(vmafScore))
+    print("\n \n \n \n \n ")
+    print("=======================================", flush=True)
+    print("VMAF computed", flush=True)
+    print("=======================================", flush=True)
+    print("offset: ", offset, " | psnr: ", psnr)
+    if model == 'HD':
+        print("VMAF HD: ", mean(vmafScore))
+        print("VMAF Neg: ", mean(vmafNegScore))
+        print("VMAF Phone: ", mean(vmafPhoneScore))
+    if model == '4K':
+        print("VMAF 4K: ", mean(vmafScore))
         print("VMAF output file path: ", myVmaf.ffmpegQos.vmafpath)
-        if cambi_heatmap:
-            print("CAMBI Heatmap output path: ", myVmaf.ffmpegQos.vmaf_cambi_heatmap_path)
+    if cambi_heatmap:
+        print("CAMBI Heatmap output path: ",
+            myVmaf.ffmpegQos.vmaf_cambi_heatmap_path)
 
-        print("\n \n \n \n \n ")
+    print("\n \n \n \n \n ")

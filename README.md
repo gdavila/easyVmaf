@@ -80,7 +80,7 @@ optional arguments:
   -progress             Activate progress indicator for vmaf computation. (Default: false).
   -endsync              Activate end sync. This ends the computation when the shortest video ends. (Default: false).
   -output_fmt OUTPUT_FMT
-                        Output vmaf file format. Options: json or xml (Default: json)
+                        Output vmaf file format. Options: json, xml or csv  (Default: json)
   -cambi_heatmap        Activate cambi heatmap. (Default: false).
   -sync_only            Sync measurement only. No Vmaf processing (Default: false).
 
