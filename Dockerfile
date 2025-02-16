@@ -55,8 +55,8 @@ RUN \
 # install ffmpeg
 WORKDIR     /tmp/ffmpeg
 RUN \
-	export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/lib/" && \
-	export PKG_CONFIG_PATH="${PKG_CONFIG_PATH}:/usr/local/lib/pkgconfig/" && \
+	export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/lib/:/usr/local/lib64/" && \
+	export PKG_CONFIG_PATH="${PKG_CONFIG_PATH}:/usr/local/lib/pkgconfig/:/usr/local/lib64/pkgconfig/" && \
 	wget https://github.com/FFmpeg/FFmpeg/archive/refs/heads/master.tar.gz  && \
 	tar -xzf ${FFMPEG_version}.tar.gz && \
 	cd FFmpeg-${FFMPEG_version} && \
@@ -73,7 +73,7 @@ RUN \
 
 FROM base AS release
 
-ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/lib/"
+ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/lib/:/usr/local/lib64/"
 
 RUN \
 	export TZ='UTC' && \
