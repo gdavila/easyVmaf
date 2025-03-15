@@ -29,7 +29,7 @@ import os.path
 import glob
 import xml.etree.ElementTree as ET
 import csv
-
+import logging
 from FFmpeg import HD_MODEL_NAME, HD_NEG_MODEL_NAME, HD_PHONE_MODEL_NAME, _4K_MODEL_NAME, HD_PHONE_MODEL_VERSION
 
 
@@ -128,6 +128,12 @@ if __name__ == '__main__':
         loglevel = "verbose"
     else:
         loglevel = "info"
+    #Add some logs
+    logging.basicConfig(
+        filename='easy.log',
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
 
     # check output format
     if not output_fmt in ["json", "xml", "csv"]:
@@ -210,20 +216,38 @@ if __name__ == '__main__':
                     if model == '4K':
                         vmafScore.append(frame["metrics"][_4K_MODEL_NAME])
 
-    print("\n \n \n \n \n ")
-    print("=======================================", flush=True)
-    print("VMAF computed", flush=True)
-    print("=======================================", flush=True)
-    print("offset: ", offset, " | psnr: ", psnr)
-    if model == 'HD':
-        print("VMAF HD: ", mean(vmafScore))
-        print("VMAF Neg: ", mean(vmafNegScore))
-        print("VMAF Phone: ", mean(vmafPhoneScore))
-    if model == '4K':
-        print("VMAF 4K: ", mean(vmafScore))
-        print("VMAF output file path: ", myVmaf.ffmpegQos.vmafpath)
-    if cambi_heatmap:
-        print("CAMBI Heatmap output path: ",
-            myVmaf.ffmpegQos.vmaf_cambi_heatmap_path)
+        logging.info("=======================================")
+        logging.info("VMAF computed")
+        logging.info("=======================================")
+        logging.info(f"reference:{reference}")
+        logging.info(f"distorted: {main}")
+        logging.info(f"offset: {offset} | psnr: {psnr}")
+
+        print("\n \n \n \n \n ")
+        print("=======================================", flush=True)
+        print("VMAF computed", flush=True)
+        print("=======================================", flush=True)
+        print("reference:", reference , flush=True)
+        print("distorted:", main, flush=True)
+        print("offset: ", offset, " | psnr: ", psnr)
+
+        if model == 'HD':
+            print("VMAF HD: ", mean(vmafScore))
+            print("VMAF Neg: ", mean(vmafNegScore))
+            print("VMAF Phone: ", mean(vmafPhoneScore))
+                    
+            logging.info(f"VMAF HD: {mean(vmafScore)}")
+            logging.info(f"VMAF Neg: {mean(vmafNegScore)}")
+            logging.info(f"VMAF Phone: {mean(vmafPhoneScore)}")
+        if model == '4K':
+            print("VMAF 4K: ", mean(vmafScore))
+            print("VMAF output file path: ", myVmaf.ffmpegQos.vmafpath)
+            logging.info(f"VMAF 4K: {mean(vmafScore)}")
+            logging.info(f"VMAF output file path: {myVmaf.ffmpegQos.vmafpath}")
+        if cambi_heatmap:
+            print("CAMBI Heatmap output path: ",
+                myVmaf.ffmpegQos.vmaf_cambi_heatmap_path)
+            logging.info(f"CAMBI Heatmap output path: {myVmaf.ffmpegQos.vmaf_cambi_heatmap_path}")
+            
 
     print("\n \n \n \n \n ")
