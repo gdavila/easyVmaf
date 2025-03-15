@@ -89,6 +89,8 @@ required arguments:
   -r R                  Reference video 
 ```
 
+Results are saved in the easy.log file
+
 ## Examples
 
 ### Syncing: Reference Video delayed in regard with the first frame of Distorted one.
