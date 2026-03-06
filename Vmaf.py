@@ -23,7 +23,10 @@ SOFTWARE.
 """
 from FFmpeg import FFprobe
 from FFmpeg import FFmpegQos
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 
 
 class UnsupportedFramerateError(ValueError):
@@ -43,37 +46,58 @@ class video():
 
     def __init__(self, videoSrc, loglevel="info"):
         self.videoSrc = videoSrc
+        self.loglevel = loglevel
         self.streamInfo = None
         self.framesInfo = None
         self.packetsInfo = None
-        self.formatInfo = None
+        self._formatInfo_cached = None
+        self._interlaced_cached = None
         self.interlacedFrames = None
         self.totalFrames = None
         self.bytesFramesTotal = None
-        self.interlaced = None
-        self.loglevel = loglevel
+        # Eager: streamInfo is needed immediately by all consumers
         self.getStreamInfo()
-        self.getFormatInfo()
-        self.getFramesInfo()
+        # duration is computed eagerly since vmaf.__init__ accesses it immediately
         self.duration = self.getDuration()
+        # formatInfo and interlaced are lazy — fetched on first access via properties
 
-    def _updateFramesSummary(self):
+    @property
+    def formatInfo(self):
+        if self._formatInfo_cached is None:
+            self._formatInfo_cached = FFprobe(self.videoSrc, self.loglevel).getFormatInfo()
+        return self._formatInfo_cached
+
+    @formatInfo.setter
+    def formatInfo(self, value):
+        self._formatInfo_cached = value
+
+    @property
+    def interlaced(self):
+        if self._interlaced_cached is None:
+            framesInfo = FFprobe(self.videoSrc, self.loglevel).getFramesInfo()
+            self._updateFramesSummaryFromFrames(framesInfo)
+        return self._interlaced_cached
+
+    @interlaced.setter
+    def interlaced(self, value):
+        self._interlaced_cached = value
+
+    def _updateFramesSummaryFromFrames(self, framesInfo):
+        """Compute interlace summary from a frames list. Called lazily."""
         interlacedFrames_count = 0
         bytesFramesTotal = 0
-        if self.framesInfo == None:
-            return
-        for frame in self.framesInfo:
-            interlacedFrames_count = interlacedFrames_count + \
-                int(frame['interlaced_frame'])
-            bytesFramesTotal = bytesFramesTotal + int(frame['pkt_size'])
+        for frame in framesInfo:
+            interlacedFrames_count += int(frame['interlaced_frame'])
+            bytesFramesTotal += int(frame['pkt_size'])
         self.interlacedFrames = interlacedFrames_count
-        self.totalFrames = len(self.framesInfo)
+        self.totalFrames = len(framesInfo)
         self.bytesFramesTotal = bytesFramesTotal
-        if int(round(self.interlacedFrames/self.totalFrames)):
-            self.interlaced = True
-        else:
-            self.interlaced = False
-        return
+        self.interlaced = bool(round(self.interlacedFrames / self.totalFrames))
+
+    def _updateFramesSummary(self):
+        if self.framesInfo is None:
+            return
+        self._updateFramesSummaryFromFrames(self.framesInfo)
 
     def getDuration(self):
         try:
@@ -89,35 +113,33 @@ class video():
         return duration
 
     def getStreamInfo(self):
-        print("\n\n=======================================", flush=True)
-        print("[easyVmaf] Getting stream info...", self.videoSrc, flush=True)
-        print("=======================================", flush=True)
-
+        logger.info("\n\n=======================================")
+        logger.info("[easyVmaf] Getting stream info... %s", self.videoSrc)
+        logger.info("=======================================")
         self.streamInfo = FFprobe(self.videoSrc, self.loglevel).getStreamInfo()
         return self.streamInfo
 
     def getFramesInfo(self):
-        print("\n\n=======================================", flush=True)
-        print("[easyVmaf] Getting frames info...", self.videoSrc, flush=True)
-        print("=======================================", flush=True)
+        logger.info("\n\n=======================================")
+        logger.info("[easyVmaf] Getting frames info... %s", self.videoSrc)
+        logger.info("=======================================")
         self.framesInfo = FFprobe(self.videoSrc, self.loglevel).getFramesInfo()
         self._updateFramesSummary()
         return self.framesInfo
 
     def getPacketsInfo(self):
-        print("\n\n=======================================", flush=True)
-        print("[easyVmaf] Getting packets info...", self.videoSrc, flush=True)
-        print("=======================================", flush=True)
-        self.packetsInfo = FFprobe(
-            self.videoSrc, self.loglevel).getPacketsInfo()
+        logger.info("\n\n=======================================")
+        logger.info("[easyVmaf] Getting packets info... %s", self.videoSrc)
+        logger.info("=======================================")
+        self.packetsInfo = FFprobe(self.videoSrc, self.loglevel).getPacketsInfo()
         return self.packetsInfo
 
     def getFormatInfo(self):
-        print("\n\n=======================================", flush=True)
-        print("[easyVmaf] Getting format info...", self.videoSrc, flush=True)
-        print("=======================================", flush=True)
+        logger.info("\n\n=======================================")
+        logger.info("[easyVmaf] Getting format info... %s", self.videoSrc)
+        logger.info("=======================================")
         self.formatInfo = FFprobe(self.videoSrc, self.loglevel).getFormatInfo()
-        print (self.formatInfo)
+        logger.debug("%s", self.formatInfo)
         return self.formatInfo
 
 

@@ -24,6 +24,7 @@ SOFTWARE.
 
 import argparse
 import json
+import logging
 import sys
 import os.path
 import glob
@@ -128,6 +129,11 @@ if __name__ == '__main__':
         loglevel = "verbose"
     else:
         loglevel = "info"
+
+    logging.basicConfig(
+        level=logging.DEBUG if verbose else logging.INFO,
+        format='%(message)s'
+    )
 
     # check output format
     if not output_fmt in ["json", "xml", "csv"]:
