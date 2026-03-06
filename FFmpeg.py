@@ -66,25 +66,32 @@ class FFprobe:
         self.streamInfo = None
         self.framesInfo = None
         self.packetsInfo = None
-        self.cmd = None
+        self._cmd = None
 
     ''' private methods '''
 
-    def _commit(self, opt):
+    def _commitBase(self):
         ffprobe_loglevel = self.loglevel if self.loglevel == "verbose" else "quiet"
-        self.cmd = [
-            FFprobe._executable,
-            '-hide_banner', '-loglevel', ffprobe_loglevel,
-            '-print_format', 'json',
-            *opt.split(),
-            '-select_streams', 'v',
-            '-i', self.videoSrc,
-            '-read_intervals', '%+5'
-        ]
+        return [FFprobe._executable, '-hide_banner', '-loglevel', ffprobe_loglevel,
+                '-print_format', 'json']
+
+    def _commitStreamSelection(self):
+        return ['-select_streams', 'v']
+
+    def _commitInput(self):
+        return ['-i', self.videoSrc, '-read_intervals', '%+5']
+
+    def _commit(self, opt):
+        self._cmd = (
+            self._commitBase() +
+            [opt] +
+            self._commitStreamSelection() +
+            self._commitInput()
+        )
 
     def _run(self):
-        logger.debug("FFprobe cmd: %s", self.cmd)
-        return json.loads(subprocess.check_output(self.cmd, shell=False))
+        logger.debug("FFprobe cmd: %s", self._cmd)
+        return json.loads(subprocess.check_output(self._cmd, shell=False))
 
     ''' public methods '''
 
@@ -118,7 +125,7 @@ class FFmpegQos:
 
     def __init__(self,  main, ref, loglevel="info"):
         self.loglevel = loglevel
-        self.cmd = None
+        self._cmd = None
         self.main = inputFFmpeg(main, input_id=0)
         self.ref = inputFFmpeg(ref, input_id=1)
         self.psnrFilter = []
@@ -132,7 +139,7 @@ class FFmpegQos:
 
     def _commit(self):
         """build the final cmd to run"""
-        self.cmd = (
+        self._cmd = (
             self._commitBase() +
             self._commitInputs() +
             self._commitFilters() +
@@ -166,9 +173,9 @@ class FFmpegQos:
         self.psnrFilter = [f'[{main}][{ref}]psnr=stats_file={stats_file}']
         self._commit()
 
-        logger.debug("FFmpeg PSNR cmd: %s", self.cmd)
+        logger.debug("FFmpeg PSNR cmd: %s", self._cmd)
         stdout = subprocess.check_output(
-            self.cmd, stderr=subprocess.STDOUT, shell=False).decode('utf-8')
+            self._cmd, stderr=subprocess.STDOUT, shell=False).decode('utf-8')
         stdout = stdout.split(" ")
         psnr = [s for s in stdout if "average" in s][0].split(":")[1]
         return float(psnr)
@@ -222,17 +229,17 @@ class FFmpegQos:
 
 
         self._commit()
-        logger.debug("FFmpeg VMAF cmd: %s", self.cmd)
+        logger.debug("FFmpeg VMAF cmd: %s", self._cmd)
 
         if print_progress:
-            process = FfmpegProgress(self.cmd)
+            process = FfmpegProgress(self._cmd)
             for progress in process.run_command_with_progress():
                 logger.info("progress = %s%% - %s", progress,
                             "\n".join(str(process.stderr).splitlines()[-9:-8]))
 
         else:
             process = subprocess.Popen(
-                self.cmd, stdout=subprocess.PIPE, shell=False)
+                self._cmd, stdout=subprocess.PIPE, shell=False)
             process.communicate()
 
         return process
