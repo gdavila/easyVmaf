@@ -238,15 +238,13 @@ class vmaf():
                 """
                 frame rate conversion over MAIN video. The lowest framerate is choosed (REF fps).
                 """
-                print(
-                    "[easyVmaf] Warning: Frame rate conversion can produce bad vmaf scores", flush=True)
+                logger.warning("Frame rate conversion can produce bad vmaf scores")
                 self.ffmpegQos.main.setFpsFilter(round(ref_fps, 5))
             elif round(ref_fps) > round(main_fps):
                 """
                 frame rate conversion over REF video. The lowest framerate is choosed (MAIN fps).
                 """
-                print(
-                    "[easyVmaf] Warning: Frame rate conversion can produce bad vmaf scores", flush=True)
+                logger.warning("Frame rate conversion can produce bad vmaf scores")
                 self.ffmpegQos.ref.setFpsFilter(round(main_fps, 5))
             else:
                 """
@@ -302,8 +300,7 @@ class vmaf():
             if round(ref_fps) == round(main_fps*2):
                 # Examples: REF=60p, MAIN=30i
                 # REF=60p, MAIN=29.97i, etc
-                print(
-                    "[easyVmaf] Warning: Frame rate conversion can produce bad vmaf scores", flush=True)
+                logger.warning("Frame rate conversion can produce bad vmaf scores")
                 if not self.ffmpegQos.invertedSrc:
                     self._deinterlaceField(1, self.ffmpegQos.main)
                 else:
@@ -322,8 +319,7 @@ class vmaf():
                 # Examples:
                 # REF=30p, MAIN=60i
                 # REF=29.97p, MAIN=60i, etc
-                print(
-                    "[easyVmaf] Warning: Frame rate conversion can produce bad vmaf scores", flush=True)
+                logger.warning("Frame rate conversion can produce bad vmaf scores")
                 if not self.ffmpegQos.invertedSrc:
                     self._deinterlaceField(0.5, self.ffmpegQos.main)
                 else:
@@ -338,7 +334,7 @@ class vmaf():
                 )
 
     def _forceFps(self):
-        print("[easyVmaf] Warning: Forcing frame rate conversion manually", flush=True)
+        logger.warning("Forcing frame rate conversion manually")
         self.ffmpegQos.main.setFpsFilter(self.manual_fps)
         self.ffmpegQos.main.setFpsFilter(self.manual_fps)
 
@@ -357,15 +353,21 @@ class vmaf():
         It returns the offset value to get REF and MAIN synced and the PSNR computed.
         """
 
-        print("\n\n=======================================", flush=True)
-        print("Syncing... Computing PSNR values... ", flush=True)
-        print("=======================================", flush=True)
-        print("Distorted:", self.main.videoSrc, "@", round(getFrameRate(
-            self.main.streamInfo['r_frame_rate']), 5), "fps", "|", self.main.streamInfo['width'], self.main.streamInfo['height'], flush=True)
-        print("Reference:", self.ref.videoSrc, "@", round(getFrameRate(
-            self.ref.streamInfo['r_frame_rate']), 5), "fps", "|", self.ref.streamInfo['width'], self.ref.streamInfo['height'],  flush=True)
-        print("=======================================", flush=True)
-        print("offset(s)", "\t\t", "psnr[dB]", flush=True)
+        logger.info("=" * 39)
+        logger.info("Syncing... Computing PSNR values...")
+        logger.info("=" * 39)
+        logger.info("Distorted: %s @ %s fps | %s %s",
+                    self.main.videoSrc,
+                    round(getFrameRate(self.main.streamInfo['r_frame_rate']), 5),
+                    self.main.streamInfo['width'],
+                    self.main.streamInfo['height'])
+        logger.info("Reference: %s @ %s fps | %s %s",
+                    self.ref.videoSrc,
+                    round(getFrameRate(self.ref.streamInfo['r_frame_rate']), 5),
+                    self.ref.streamInfo['width'],
+                    self.ref.streamInfo['height'])
+        logger.info("=" * 39)
+        logger.info("%-20s %s", "offset(s)", "psnr[dB]")
 
         if reverse:
             self.ffmpegQos.invertSrcs()
@@ -388,7 +390,7 @@ class vmaf():
                 self._forceFps()
             psnr['value'].append(self.ffmpegQos.getPsnr())
             psnr['time'].append(offset)
-            print(psnr['time'][i], "\t", psnr['value'][i], flush=True)
+            logger.info("%-20s %s", psnr['time'][i], psnr['value'][i])
 
         maxPsnr = max(psnr['value'])
         index = psnr['value'].index(maxPsnr)
@@ -454,20 +456,26 @@ class vmaf():
         self.features = f'name=psnr|name=cambi\\\\:full_ref=true\\\\:enc_width={self.main.streamInfo["width"]}\\\\:enc_height={self.main.streamInfo["height"]}\\\\:src_width={self.ref.streamInfo["width"]}\\\\:src_height={self.ref.streamInfo["height"]}'
 
 
-        print("\n\n=======================================", flush=True)
-        print("Computing VMAF... ", flush=True)
-        print("=======================================", flush=True)
-        print("Distorted:", self.main.videoSrc, "@", round(getFrameRate(
-            self.main.streamInfo['r_frame_rate']), 5), "fps", "|", self.main.streamInfo['width'], self.main.streamInfo['height'], flush=True)
-        print("Reference:", self.ref.videoSrc, "@", round(getFrameRate(
-            self.ref.streamInfo['r_frame_rate']), 5), "fps", "|", self.ref.streamInfo['width'], self.ref.streamInfo['height'],  flush=True)
-        print("Offset:", self.offset, flush=True)
-        print("Model:", self.model, flush=True)
-        print("Phone:", self.phone, flush=True)
-        print("loglevel:", self.loglevel, flush=True)
-        print("subsample:", self.subsample, flush=True)
-        print("output_fmt:", self.output_fmt, flush=True)
-        print("=======================================", flush=True)
+        logger.info("=" * 39)
+        logger.info("Computing VMAF...")
+        logger.info("=" * 39)
+        logger.info("Distorted: %s @ %s fps | %s %s",
+                    self.main.videoSrc,
+                    round(getFrameRate(self.main.streamInfo['r_frame_rate']), 5),
+                    self.main.streamInfo['width'],
+                    self.main.streamInfo['height'])
+        logger.info("Reference: %s @ %s fps | %s %s",
+                    self.ref.videoSrc,
+                    round(getFrameRate(self.ref.streamInfo['r_frame_rate']), 5),
+                    self.ref.streamInfo['width'],
+                    self.ref.streamInfo['height'])
+        logger.info("Offset:     %s", self.offset)
+        logger.info("Model:      %s", self.model)
+        logger.info("Phone:      %s", self.phone)
+        logger.info("loglevel:   %s", self.loglevel)
+        logger.info("subsample:  %s", self.subsample)
+        logger.info("output_fmt: %s", self.output_fmt)
+        logger.info("=" * 39)
 
     
         vmafProcess = self.ffmpegQos.getVmaf(model=self.model, subsample=self.subsample,
