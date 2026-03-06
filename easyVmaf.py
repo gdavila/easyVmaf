@@ -34,7 +34,7 @@ from FFmpeg import HD_MODEL_NAME, HD_NEG_MODEL_NAME, HD_PHONE_MODEL_NAME, _4K_MO
 
 
 from statistics import mean, harmonic_mean
-from Vmaf import vmaf
+from Vmaf import vmaf, UnsupportedFramerateError
 from signal import signal, SIGINT
 
 
@@ -156,21 +156,25 @@ if __name__ == '__main__':
                       output_fmt=output_fmt, threads=threads, print_progress=print_progress, end_sync=end_sync, manual_fps=fps, cambi_heatmap=cambi_heatmap)
         '''check if syncWin was set. If true offset is computed automatically, otherwise manual values are used  '''
 
-        if syncWin > 0:
-            offset, psnr = myVmaf.syncOffset(syncWin, ss, reverse)
-            if cmdParser.sync_only:
-                result = {"offset": offset, "psnr": psnr}
-                print(json.dumps(result))
-                sys.exit(0)
-        else:
-            offset = ss
-            psnr = None
-            if reverse:
-                myVmaf.offset = -offset
+        try:
+            if syncWin > 0:
+                offset, psnr = myVmaf.syncOffset(syncWin, ss, reverse)
+                if cmdParser.sync_only:
+                    result = {"offset": offset, "psnr": psnr}
+                    print(json.dumps(result))
+                    sys.exit(0)
             else:
-                myVmaf.offset = offset
+                offset = ss
+                psnr = None
+                if reverse:
+                    myVmaf.offset = -offset
+                else:
+                    myVmaf.offset = offset
 
-        vmafProcess = myVmaf.getVmaf()
+            vmafProcess = myVmaf.getVmaf()
+        except UnsupportedFramerateError as e:
+            print(f"\n[easyVmaf] ERROR: {e}", flush=True)
+            sys.exit(1)
         vmafpath = myVmaf.ffmpegQos.vmafpath
         vmafScore = []
         vmafNegScore = []

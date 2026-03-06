@@ -26,6 +26,15 @@ from FFmpeg import FFmpegQos
 import os
 
 
+class UnsupportedFramerateError(ValueError):
+    """
+    Raised when ref and distorted framerates cannot be reconciled
+    for the given interlace combination. No deinterlace filter is
+    available for this input pair.
+    """
+    pass
+
+
 class video():
     """
     Video class to parse information of video streams obtained
@@ -257,8 +266,12 @@ class vmaf():
                     self._deinterlaceField(0.5, self.ffmpegQos.main)
 
             else:
-                print(
-                    "[easyVmaf] ERROR: No Filters available for the given Framerates", flush=True)
+                raise UnsupportedFramerateError(
+                    f"No deinterlace filter available for the given framerate combination. "
+                    f"ref={round(ref_fps, 5)}fps (interlaced={self.ref.interlaced}), "
+                    f"main={round(main_fps, 5)}fps (interlaced={self.main.interlaced}). "
+                    f"Consider using the -fps flag to force a frame rate manually."
+                )
 
         elif not self.ref.interlaced and self.main.interlaced:
             """ 
@@ -275,7 +288,7 @@ class vmaf():
                     self._deinterlaceField(1, self.ffmpegQos.ref)
 
             elif round(ref_fps) == round(main_fps):
-                # Examples: 
+                # Examples:
                 # REF=30p, MAIN=30i
                 # REF=30p, MAIN=29.97i, etc
                 if not self.ffmpegQos.invertedSrc:
@@ -283,9 +296,24 @@ class vmaf():
                 else:
                     self._deinterlaceFrame(1, self.ffmpegQos.ref)
 
-            else:
+            elif round(ref_fps) == round(main_fps/2):
+                # Examples:
+                # REF=30p, MAIN=60i
+                # REF=29.97p, MAIN=60i, etc
                 print(
-                    "[easyVmaf] ERROR: No Filters available for the given Framerates", flush=True)
+                    "[easyVmaf] Warning: Frame rate conversion can produce bad vmaf scores", flush=True)
+                if not self.ffmpegQos.invertedSrc:
+                    self._deinterlaceField(0.5, self.ffmpegQos.main)
+                else:
+                    self._deinterlaceField(0.5, self.ffmpegQos.ref)
+
+            else:
+                raise UnsupportedFramerateError(
+                    f"No deinterlace filter available for the given framerate combination. "
+                    f"ref={round(ref_fps, 5)}fps (interlaced={self.ref.interlaced}), "
+                    f"main={round(main_fps, 5)}fps (interlaced={self.main.interlaced}). "
+                    f"Consider using the -fps flag to force a frame rate manually."
+                )
 
     def _forceFps(self):
         print("[easyVmaf] Warning: Forcing frame rate conversion manually", flush=True)
