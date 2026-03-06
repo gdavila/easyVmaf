@@ -181,7 +181,7 @@ class vmaf():
         elif self.model == '4K':
             self.target_resolution = [3840, 2160]
         else:
-            exit("[easyVmaf] ERROR: Invalid vmaf model")
+            raise ValueError(f"Invalid VMAF model: {self.model!r}. Supported: HD, 4K")
 
     def _autoScale(self):
         """ 
@@ -472,7 +472,7 @@ class vmaf():
         logger.info("Offset:     %s", self.offset)
         logger.info("Model:      %s", self.model)
         logger.info("Phone:      %s", self.phone)
-        logger.info("loglevel:   %s", self.loglevel)
+        logger.debug("loglevel:   %s", self.loglevel)
         logger.info("subsample:  %s", self.subsample)
         logger.info("output_fmt: %s", self.output_fmt)
         logger.info("=" * 39)

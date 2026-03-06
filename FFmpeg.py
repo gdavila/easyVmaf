@@ -26,8 +26,11 @@ SOFTWARE.
 import config
 import subprocess
 import json
+import logging
 import os
 from ffmpeg_progress_yield import FfmpegProgress
+
+logger = logging.getLogger(__name__)
 
 
 HD_MODEL_VERSION = 'vmaf_v0.6.1'
@@ -68,9 +71,10 @@ class FFprobe:
     ''' private methods '''
 
     def _commit(self, opt):
+        ffprobe_loglevel = self.loglevel if self.loglevel == "verbose" else "quiet"
         self.cmd = [
             FFprobe._executable,
-            '-hide_banner', '-loglevel', self.loglevel,
+            '-hide_banner', '-loglevel', ffprobe_loglevel,
             '-print_format', 'json',
             *opt.split(),
             '-select_streams', 'v',
@@ -79,8 +83,7 @@ class FFprobe:
         ]
 
     def _run(self):
-        if self.loglevel == "verbose":
-            print(self.cmd, flush=True)
+        logger.debug("FFprobe cmd: %s", self.cmd)
         return json.loads(subprocess.check_output(self.cmd, shell=False))
 
     ''' public methods '''
@@ -163,8 +166,7 @@ class FFmpegQos:
         self.psnrFilter = [f'[{main}][{ref}]psnr=stats_file={stats_file}']
         self._commit()
 
-        if self.loglevel == "verbose":
-            print(self.cmd, flush=True)
+        logger.debug("FFmpeg PSNR cmd: %s", self.cmd)
         stdout = subprocess.check_output(
             self.cmd, stderr=subprocess.STDOUT, shell=False).decode('utf-8')
         stdout = stdout.split(" ")
@@ -220,15 +222,13 @@ class FFmpegQos:
 
 
         self._commit()
-        if self.loglevel == "verbose":
-            print(self.cmd, flush=True)
+        logger.debug("FFmpeg VMAF cmd: %s", self.cmd)
 
         if print_progress:
             process = FfmpegProgress(self.cmd)
             for progress in process.run_command_with_progress():
-                print(f"progress = {progress}% - ",
-                      "\n".join(str(process.stderr).splitlines()[-9:-8]),
-                      flush=True)
+                logger.info("progress = %s%% - %s", progress,
+                            "\n".join(str(process.stderr).splitlines()[-9:-8]))
 
         else:
             process = subprocess.Popen(

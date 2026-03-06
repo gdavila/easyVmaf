@@ -26,6 +26,8 @@ import argparse
 import json
 import logging
 import sys
+
+logger = logging.getLogger(__name__)
 import os.path
 import glob
 import xml.etree.ElementTree as ET
@@ -132,13 +134,13 @@ if __name__ == '__main__':
 
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
-        format='%(message)s'
+        format='%(asctime)s [%(name)s] %(message)s',
+        datefmt='%H:%M:%S'
     )
 
     # check output format
     if not output_fmt in ["json", "xml", "csv"]:
-        print("output_fmt: ", output_fmt,
-              " Not supported. JSON output used instead", flush=True)
+        logger.warning("output_fmt '%s' not supported, using json", output_fmt)
         output_fmt = "json"
 
     '''
@@ -149,20 +151,20 @@ if __name__ == '__main__':
     mainFiles = glob.glob(main_pattern)
 
     if not (os.path.isfile(reference)):
-        print("Reference Video file not found: ", reference, flush=True)
+        print("Reference Video file not found:", reference, file=sys.stderr)
         sys.exit(1)
 
     if len(mainFiles) == 0:
-        print("Distorted Video files not found with the given pattern/name: ",
-              main_pattern, flush=True)
+        print("Distorted Video files not found with the given pattern/name:",
+              main_pattern, file=sys.stderr)
         sys.exit(1)
 
     for main in mainFiles:
-        myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample, model=model,
-                      output_fmt=output_fmt, threads=threads, print_progress=print_progress, end_sync=end_sync, manual_fps=fps, cambi_heatmap=cambi_heatmap)
         '''check if syncWin was set. If true offset is computed automatically, otherwise manual values are used  '''
 
         try:
+            myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample, model=model,
+                          output_fmt=output_fmt, threads=threads, print_progress=print_progress, end_sync=end_sync, manual_fps=fps, cambi_heatmap=cambi_heatmap)
             if syncWin > 0:
                 offset, psnr = myVmaf.syncOffset(syncWin, ss, reverse)
                 if cmdParser.sync_only:
@@ -178,8 +180,8 @@ if __name__ == '__main__':
                     myVmaf.offset = offset
 
             vmafProcess = myVmaf.getVmaf()
-        except UnsupportedFramerateError as e:
-            print(f"\n[easyVmaf] ERROR: {e}", flush=True)
+        except (UnsupportedFramerateError, ValueError) as e:
+            print(f"[easyVmaf] ERROR: {e}", file=sys.stderr)
             sys.exit(1)
         vmafpath = myVmaf.ffmpegQos.vmafpath
         vmafScore = []
