@@ -159,8 +159,9 @@ if __name__ == '__main__':
         if syncWin > 0:
             offset, psnr = myVmaf.syncOffset(syncWin, ss, reverse)
             if cmdParser.sync_only:
-                print("offset: ", offset, flush=True)
-                sys.exit(1)
+                result = {"offset": offset, "psnr": psnr}
+                print(json.dumps(result))
+                sys.exit(0)
         else:
             offset = ss
             psnr = None
@@ -191,12 +192,11 @@ if __name__ == '__main__':
             root = tree.getroot()
             for frame in root.findall('frames/frame'):
                 if model == 'HD':
-                    vmafScore.append(frame["metrics"][HD_MODEL_NAME])
-                    vmafNegScore.append(frame["metrics"][HD_NEG_MODEL_NAME])
-                    vmafPhoneScore.append(
-                        frame["metrics"][HD_PHONE_MODEL_NAME])
+                    vmafScore.append(float(frame.attrib[HD_MODEL_NAME]))
+                    vmafNegScore.append(float(frame.attrib[HD_NEG_MODEL_NAME]))
+                    vmafPhoneScore.append(float(frame.attrib[HD_PHONE_MODEL_NAME]))
                 if model == '4K':
-                    vmafScore.append(frame["metrics"][_4K_MODEL_NAME])
+                    vmafScore.append(float(frame.attrib[_4K_MODEL_NAME]))
         else:
             with open(vmafpath) as jsonFile:
                 jsonData = json.load(jsonFile)
@@ -210,20 +210,22 @@ if __name__ == '__main__':
                     if model == '4K':
                         vmafScore.append(frame["metrics"][_4K_MODEL_NAME])
 
-    print("\n \n \n \n \n ")
-    print("=======================================", flush=True)
-    print("VMAF computed", flush=True)
-    print("=======================================", flush=True)
-    print("offset: ", offset, " | psnr: ", psnr)
-    if model == 'HD':
-        print("VMAF HD: ", mean(vmafScore))
-        print("VMAF Neg: ", mean(vmafNegScore))
-        print("VMAF Phone: ", mean(vmafPhoneScore))
-    if model == '4K':
-        print("VMAF 4K: ", mean(vmafScore))
-        print("VMAF output file path: ", myVmaf.ffmpegQos.vmafpath)
-    if cambi_heatmap:
-        print("CAMBI Heatmap output path: ",
-            myVmaf.ffmpegQos.vmaf_cambi_heatmap_path)
+        print("\n \n \n \n \n ")
+        print("=======================================", flush=True)
+        print("Results:", main, flush=True)
+        print("=======================================", flush=True)
+        print("VMAF computed", flush=True)
+        print("=======================================", flush=True)
+        print("offset: ", offset, " | psnr: ", psnr)
+        if model == 'HD':
+            print("VMAF HD: ", mean(vmafScore))
+            print("VMAF Neg: ", mean(vmafNegScore))
+            print("VMAF Phone: ", mean(vmafPhoneScore))
+        if model == '4K':
+            print("VMAF 4K: ", mean(vmafScore))
+            print("VMAF output file path: ", myVmaf.ffmpegQos.vmafpath)
+        if cambi_heatmap:
+            print("CAMBI Heatmap output path: ",
+                myVmaf.ffmpegQos.vmaf_cambi_heatmap_path)
 
-    print("\n \n \n \n \n ")
+        print("\n \n \n \n \n ")

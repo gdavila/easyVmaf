@@ -27,7 +27,6 @@ import config
 import subprocess
 import json
 import os
-import shlex
 from ffmpeg_progress_yield import FfmpegProgress
 
 
@@ -56,7 +55,7 @@ class FFprobe:
         - getFramesInfo()
         - getPacketsInfo()
     '''
-    cmd = os.environ.get('FFPROBE', config.ffprobe)
+    _executable = os.environ.get('FFPROBE', config.ffprobe)
 
     def __init__(self, videoSrc, loglevel="info"):
         self.videoSrc = videoSrc
@@ -64,16 +63,25 @@ class FFprobe:
         self.streamInfo = None
         self.framesInfo = None
         self.packetsInfo = None
+        self.cmd = None
 
     ''' private methods '''
 
     def _commit(self, opt):
-        self.cmd = f'{FFprobe.cmd} -hide_banner -loglevel {self.loglevel} -print_format json {opt} -select_streams v -i \"{self.videoSrc}\" -read_intervals %+5'
+        self.cmd = [
+            FFprobe._executable,
+            '-hide_banner', '-loglevel', self.loglevel,
+            '-print_format', 'json',
+            *opt.split(),
+            '-select_streams', 'v',
+            '-i', self.videoSrc,
+            '-read_intervals', '%+5'
+        ]
 
     def _run(self):
         if self.loglevel == "verbose":
             print(self.cmd, flush=True)
-        return json.loads(subprocess.check_output(self.cmd, shell=True))
+        return json.loads(subprocess.check_output(self.cmd, shell=False))
 
     ''' public methods '''
 
@@ -103,7 +111,7 @@ class FFmpegQos:
     Class to interact with FFmpeg QoS Filters: PSNR and VMAF. 
     Particullary, it interacts with libvmaf library through lavfi filter
     '''
-    cmd = os.environ.get('FFMPEG', config.ffmpeg)
+    _executable = os.environ.get('FFMPEG', config.ffmpeg)
 
     def __init__(self,  main, ref, loglevel="info"):
         self.loglevel = loglevel
@@ -116,26 +124,29 @@ class FFmpegQos:
         self.vmafpath = None
         self.vmaf_cambi_heatmap_path = None
 
+    def _commitBase(self):
+        return [FFmpegQos._executable, '-y', '-hide_banner', '-stats', '-loglevel', self.loglevel]
+
     def _commit(self):
         """build the final cmd to run"""
-        baseCmd = f'{FFmpegQos.cmd} -y -hide_banner -stats -loglevel {self.loglevel} '
-        inputsCmd = self._commitInputs()
-        filterCmd = self._commitFilters()
-        outputCmd = self._commitOutputs()
-        self.cmd = f'{baseCmd} {inputsCmd} {filterCmd} {outputCmd}'
+        self.cmd = (
+            self._commitBase() +
+            self._commitInputs() +
+            self._commitFilters() +
+            self._commitOutputs()
+        )
 
     def _commitInputs(self):
         """build the cmd for the inputs files"""
-        inputCmd = f'-i \"{self.main.videoSrc}\" -i \"{self.ref.videoSrc}\" -map 0:v -map 1:v'
-        return inputCmd
+        return ['-i', self.main.videoSrc, '-i', self.ref.videoSrc, '-map', '0:v', '-map', '1:v']
 
     def _commitOutputs(self):
-        return "-f null -"
+        return ['-f', 'null', '-']
 
     def _commitFilters(self, filterName='lavfi'):
         """build the cmd for the filters"""
-        filterCmd = f'-{filterName} \'{";".join(self.main.filtersList + self.ref.filtersList + self.psnrFilter + self.vmafFilter)}\''
-        return filterCmd
+        filter_string = ';'.join(self.main.filtersList + self.ref.filtersList + self.psnrFilter + self.vmafFilter)
+        return [f'-{filterName}', filter_string]
 
     def getPsnr(self, stats_file=False):
         """ 
@@ -154,8 +165,8 @@ class FFmpegQos:
 
         if self.loglevel == "verbose":
             print(self.cmd, flush=True)
-        stdout = (subprocess.check_output(
-            self.cmd, stderr=subprocess.STDOUT, shell=True)).decode('utf-8')
+        stdout = subprocess.check_output(
+            self.cmd, stderr=subprocess.STDOUT, shell=False).decode('utf-8')
         stdout = stdout.split(" ")
         psnr = [s for s in stdout if "average" in s][0].split(":")[1]
         return float(psnr)
@@ -213,8 +224,7 @@ class FFmpegQos:
             print(self.cmd, flush=True)
 
         if print_progress:
-            cmd_progress = shlex.split(self.cmd)
-            process = FfmpegProgress(cmd_progress)
+            process = FfmpegProgress(self.cmd)
             for progress in process.run_command_with_progress():
                 print(f"progress = {progress}% - ",
                       "\n".join(str(process.stderr).splitlines()[-9:-8]),
@@ -222,7 +232,7 @@ class FFmpegQos:
 
         else:
             process = subprocess.Popen(
-                self.cmd, stdout=subprocess.PIPE, shell=True)
+                self.cmd, stdout=subprocess.PIPE, shell=False)
             process.communicate()
 
         return process
