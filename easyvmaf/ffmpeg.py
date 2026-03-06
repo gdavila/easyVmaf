@@ -23,7 +23,7 @@ SOFTWARE.
 """
 
 
-import config
+from . import config
 import subprocess
 import json
 import logging
@@ -48,12 +48,12 @@ _4K_MODEL_NAME = 'vmaf_4k'
 
 class FFprobe:
     '''
-    Class to interact with FFprobe. 
+    Class to interact with FFprobe.
     It gets info about stream, frames and mpeg packets
 
     Inputs:
         - videoSrc: path to video
-    Outputs: 
+    Outputs:
         - getStreamInfo()
         - getFramesInfo()
         - getPacketsInfo()
@@ -118,7 +118,7 @@ class FFprobe:
 
 class FFmpegQos:
     '''
-    Class to interact with FFmpeg QoS Filters: PSNR and VMAF. 
+    Class to interact with FFmpeg QoS Filters: PSNR and VMAF.
     Particullary, it interacts with libvmaf library through lavfi filter
     '''
     _executable = os.environ.get('FFMPEG', config.ffmpeg)
@@ -159,7 +159,7 @@ class FFmpegQos:
         return [f'-{filterName}', filter_string]
 
     def getPsnr(self, stats_file=False):
-        """ 
+        """
         It adds PSNR filter to lavfi chain and run the ffmpeg cmd.
         The output is returned and saved as stats_file_psnr.log
         """
@@ -198,7 +198,7 @@ class FFmpegQos:
             if log_path == None:
                 log_path = os.path.splitext(self.main.videoSrc)[
                     0] + '_vmaf.json'
-                
+
         self.vmafpath = log_path
 
         self.vmaf_cambi_heatmap_path = os.path.splitext(self.main.videoSrc)[0] + '_cambi_heatmap'
@@ -220,7 +220,7 @@ class FFmpegQos:
 
         if not features:
             self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model={model}:n_subsample={subsample}:log_path={log_path}:n_threads={threads}:shortest={shortest}']
-        
+
         elif features and not cambi_heatmap:
             self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model={model}:n_subsample={subsample}:log_path={log_path}:n_threads={threads}:shortest={shortest}:feature={features}']
 
@@ -258,7 +258,7 @@ class FFmpegQos:
 
 class inputFFmpeg:
     '''
-    Class to interact with FFmpeg inputs. 
+    Class to interact with FFmpeg inputs.
     It allows to manage Filter chains to each input. i.e., main and ref. Each
     Supported Methods:
     - setScaleFilter()

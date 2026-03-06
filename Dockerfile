@@ -90,4 +90,5 @@ COPY --from=build /app/easyVmaf-${easyVmaf_hash} /app/easyVmaf/
 
 # app setup
 WORKDIR  /app/easyVmaf
-ENTRYPOINT [ "python3", "-u", "easyVmaf.py" ]
+RUN pip3 install --user --no-deps .
+ENTRYPOINT [ "python3", "-u", "-m", "easyvmaf" ]

@@ -12,21 +12,27 @@ reference and distorted video streams.
 ## Setup
 
 ```bash
-pip install ffmpeg-progress-yield
+pip install easyvmaf
+# or from source:
+pip install -e .
 ```
 
 FFmpeg >= 5.0 built with `--enable-libvmaf` must be on PATH, or override via env:
 
 ```bash
-FFMPEG=/path/to/ffmpeg FFPROBE=/path/to/ffprobe python3 easyVmaf.py ...
+FFMPEG=/path/to/ffmpeg FFPROBE=/path/to/ffprobe python3 -m easyvmaf ...
 ```
 
 ## Running the Tool
 
 ```bash
-python3 easyVmaf.py -d distorted.mp4 -r reference.mp4
-python3 easyVmaf.py -d distorted.mp4 -r reference.mp4 -sw 2   # with sync
-python3 easyVmaf.py -d "folder/*.mp4" -r reference.mp4        # batch
+# Installed CLI command
+easyvmaf -d distorted.mp4 -r reference.mp4
+easyvmaf -d distorted.mp4 -r reference.mp4 -sw 2   # with sync
+easyvmaf -d "folder/*.mp4" -r reference.mp4        # batch
+
+# From source without installing
+python3 -m easyvmaf -d distorted.mp4 -r reference.mp4
 ```
 
 ## Three-Layer Architecture
@@ -34,13 +40,13 @@ python3 easyVmaf.py -d "folder/*.mp4" -r reference.mp4        # batch
 Each layer must only talk to the layer directly below it.
 
 ```
-easyVmaf.py   ← Layer 3: CLI only (argparse, glob, print results)
-Vmaf.py       ← Layer 2: VMAF logic (scaling, deinterlace, sync, scoring)
-FFmpeg.py     ← Layer 1: FFmpeg/FFprobe subprocess wrappers
-config.py     ← binary path resolution (ffmpeg, ffprobe via shutil.which)
+easyvmaf/cli.py     ← Layer 3: CLI only (argparse, glob, print results)
+easyvmaf/vmaf.py    ← Layer 2: VMAF logic (scaling, deinterlace, sync, scoring)
+easyvmaf/ffmpeg.py  ← Layer 1: FFmpeg/FFprobe subprocess wrappers
+easyvmaf/config.py  ← binary path resolution (ffmpeg, ffprobe via shutil.which)
 ```
 
-### Layer 1 — FFmpeg.py
+### Layer 1 — easyvmaf/ffmpeg.py
 Thin subprocess wrappers around ffmpeg and ffprobe binaries.
 - `FFprobe`: runs ffprobe, returns stream/frame/packet/format info as dicts
 - `FFmpegQos`: builds and runs ffmpeg filter graph for PSNR and VMAF computation
@@ -48,14 +54,14 @@ Thin subprocess wrappers around ffmpeg and ffprobe binaries.
 
 Must NOT contain any VMAF business logic or user-facing print statements.
 
-### Layer 2 — Vmaf.py
+### Layer 2 — easyvmaf/vmaf.py
 VMAF computation orchestration.
 - `video`: parses stream metadata via FFprobe, detects interlacing
 - `vmaf`: auto-scaling, auto-deinterlace, sync offset search, final VMAF scoring
 
 Must NOT contain CLI argument parsing or result formatting.
 
-### Layer 3 — easyVmaf.py
+### Layer 3 — easyvmaf/cli.py
 CLI entry point only. Argparse, glob pattern expansion for batch processing,
 reading VMAF output files (json/xml/csv), printing final scores.
 
@@ -65,7 +71,7 @@ Must NOT contain FFmpeg filter logic or VMAF computation directly.
 
 ## FFprobe Call Map — Critical Reference
 
-Understand this before touching Vmaf.py or FFmpeg.py.
+Understand this before touching easyvmaf/vmaf.py or easyvmaf/ffmpeg.py.
 
 | Data               | Method            | Consumers in Vmaf.py                          | Cost  |
 |--------------------|-------------------|-----------------------------------------------|-------|

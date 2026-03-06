@@ -38,7 +38,11 @@ New feaures and updates:
 
 ## Installation
 
-* Just clone the repo and run it from the source folder.
+```bash
+pip install easyvmaf
+```
+
+Or clone the repo and run from source:
 
 ```bash
 $ git clone https://github.com/gdavila/easyVmaf.git
@@ -50,7 +54,7 @@ $ cd easyVmaf
 ## Usage
 
 ```console
-$ python3 easyVmaf.py
+$ easyvmaf
 usage: easyVmaf [-h] -d D -r R [-sw SW] [-ss SS] [-fps FPS] [-subsample N] [-reverse] [-model MODEL]
                 [-threads THREADS] [-verbose] [-progress] [-endsync] [-output_fmt OUTPUT_FMT]
                 [-cambi_heatmap]
@@ -98,7 +102,7 @@ required arguments:
 VMAF computation for two video samples, `reference.ts` and `distorted-A.ts`. Both videos are not synced: `reference.ts` is delayed in comparition with `distorted-A.ts`, i.e.,  the first frame of `distorted-A.ts` matchs with the frame located at 0.7007 seconds since the begining of `reference.ts` (blue arrow on the figure). To sync both videos automatically using `easyVmaf`, the next command line is used:
 
     ```bash
-    $ python3 easyVmaf.py -d distorted-A.ts -r reference.ts -sw 2
+    $ python3 -m easyvmaf -d distorted-A.ts -r reference.ts -sw 2
 
 
     ...
@@ -116,7 +120,7 @@ VMAF computation for two video samples, `reference.ts` and `distorted-A.ts`. Bot
 The previus command line takes a synchronisation window `sw` of *2 seconds* , this means that the sync lookup will be done between the first frame of `distorted-A.ts` (actually, in practise it takes into account several frames) and a subsample of `reference.ts` of *2 seconds* lenght since its begin.
 
     ```bash
-    $ python3 easyVmaf.py -d distorted.ts -r reference.ts -sw 2
+    $ python3 -m easyvmaf -d distorted.ts -r reference.ts -sw 2
     ...
     ...
     [Ignored FFmpeg outputs]
@@ -134,7 +138,7 @@ The previus command line takes a synchronisation window `sw` of *2 seconds* , th
 This time,  `distorted-B.ts` is delayed in comparition with `reference.ts`, i.e.,  The first frame of `reference.ts` matchs with the frame located at 8.3003 seconds since the begining of `distorted-B.ts`. To sync the videos automatically, the next command line is used:
 
     ```bash
-    $ python3 easyVmaf.py -d distorted-B.ts -r reference.ts -sw 3 -ss 6 -reverse
+    $ python3 -m easyvmaf -d distorted-B.ts -r reference.ts -sw 3 -ss 6 -reverse
 
 
     ...

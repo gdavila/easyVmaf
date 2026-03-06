@@ -21,8 +21,8 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
-from FFmpeg import FFprobe
-from FFmpeg import FFmpegQos
+from .ffmpeg import FFprobe
+from .ffmpeg import FFmpegQos
 import logging
 import os
 
@@ -148,7 +148,7 @@ class vmaf():
     Video class to manage VMAF computation of video streams. This class allows:
         - Upscale or downscale the MAIN or REF videos automatically according to the Vmaf model (1080, 4K, etc)
         - Deinterlace automatically the MAIN and REF videos if needed
-        - To SYNC (in time) the MAIN and REF videos using psnr computation 
+        - To SYNC (in time) the MAIN and REF videos using psnr computation
         - Frame rate conversion (if needed)
     """
 
@@ -173,7 +173,7 @@ class vmaf():
 
 
     def _initResolutions(self):
-        """ 
+        """
         initialization of resolutions for each vmaf model
         """
         if self.model == 'HD':
@@ -184,7 +184,7 @@ class vmaf():
             raise ValueError(f"Invalid VMAF model: {self.model!r}. Supported: HD, 4K")
 
     def _autoScale(self):
-        """ 
+        """
         scaling MAIN and REF if they dont match with the resolution requiered by the vmaf model (target resolution)
         """
         refResolution = [self.ref.streamInfo['width'],
@@ -225,7 +225,7 @@ class vmaf():
             stream.setFpsFilter(round(main_fps, 5))
 
     def _autoDeinterlace(self):
-        """ 
+        """
         This functions normalizes the framerate between MAIN and REF video streams (if needed)
         """
         ref_fps = getFrameRate(self.ref.streamInfo['r_frame_rate'])
@@ -256,7 +256,7 @@ class vmaf():
                 self.ffmpegQos.ref.setFpsFilter(round(ref_fps, 5))
 
         elif self.ref.interlaced and not self.main.interlaced:
-            """ 
+            """
             REF interlaced  | MAIN progressive
             """
             if round(ref_fps) == round(main_fps*2):
@@ -268,7 +268,7 @@ class vmaf():
                     self._deinterlaceFrame(2, self.ffmpegQos.main)
 
             elif round(ref_fps) == round(main_fps):
-                # Examples: 
+                # Examples:
                 # REF=30i, MAIN=30p
                 # REF=29.97i, MAIN=30p, etc
                 if not self.ffmpegQos.invertedSrc:
@@ -277,7 +277,7 @@ class vmaf():
                     self._deinterlaceFrame(1, self.ffmpegQos.main)
 
             elif round(ref_fps) == round(main_fps/2):
-                # Examples: 
+                # Examples:
                 # REF=30i, MAIN=60p
                 # REF=29.97i, MAIN=60p, etc
                 if not self.ffmpegQos.invertedSrc:
@@ -294,7 +294,7 @@ class vmaf():
                 )
 
         elif not self.ref.interlaced and self.main.interlaced:
-            """ 
+            """
             Input Progressive (REF) | Output Interlaced (MAIN)
             """
             if round(ref_fps) == round(main_fps*2):
@@ -340,15 +340,15 @@ class vmaf():
 
     def syncOffset(self, syncWindow=3, start=0, reverse=False):
         """
-        Method to get the offset needed to sync REF and MAIN (if any). 
+        Method to get the offset needed to sync REF and MAIN (if any).
             syncWindow -->  Window Size in seconds to try to sync REF and MAIN videos. i.e., if the video to sync
                             last 600 seconds, the sync look up will be done just within a subsample of syncWindow size.
                             By default, the syncWindow is applied to REF.
-            start -->  start time in seconds from the begining of the video where the syncWindow begin. 
+            start -->  start time in seconds from the begining of the video where the syncWindow begin.
                         By default, the start time applies to REF.
-            reverse --> If this option is set to TRUE. It is considered that MAIN is delayed in comparition to REF: 'syncWindow' and 'start' variables will be 
+            reverse --> If this option is set to TRUE. It is considered that MAIN is delayed in comparition to REF: 'syncWindow' and 'start' variables will be
                         applied to MAIN.
-                        By default, it is supposed that the REF video is delayed in comparition with the MAIN video. 
+                        By default, it is supposed that the REF video is delayed in comparition with the MAIN video.
 
         It returns the offset value to get REF and MAIN synced and the PSNR computed.
         """
@@ -397,7 +397,7 @@ class vmaf():
         offset = psnr['time'][index]
         """
          The reverse variable/flag indicates if the offset (for time syncing ) was applied over the MAIN or over the REF.
-         It is FALSE if it was applied over REF (default) and TRUE if it was applied over the MAIN. 
+         It is FALSE if it was applied over REF (default) and TRUE if it was applied over the MAIN.
          If it is TRUE, it means that REF and MAIN where "interchanged" (REF -> MAIN, MAIN -> REF) to compute the PSNR for sync. Once the PSNR is
          computed, it is requiered to come back to the original MAIN/REF.
         """
@@ -410,7 +410,7 @@ class vmaf():
 
     def setOffset(self, value=None):
         """
-        Apply Offset to trim Filter. 
+        Apply Offset to trim Filter.
             If offset > 0: Ref delayed compared to  Main. Trimfilter cuts Ref
             if offset < 0: Main delayed compared to Ref. Trimfilter cuts Main
         """
@@ -477,7 +477,7 @@ class vmaf():
         logger.info("output_fmt: %s", self.output_fmt)
         logger.info("=" * 39)
 
-    
+
         vmafProcess = self.ffmpegQos.getVmaf(model=self.model, subsample=self.subsample,
                                              output_fmt=self.output_fmt, threads=self.threads, print_progress=self.print_progress, end_sync=self.end_sync, features=self.features, cambi_heatmap = self.cambi_heatmap)
         return vmafProcess

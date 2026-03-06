@@ -23,22 +23,20 @@ SOFTWARE.
 """
 
 import argparse
+import csv
+import glob
 import json
 import logging
+import os.path
 import sys
+import xml.etree.ElementTree as ET
+from signal import signal, SIGINT
+from statistics import mean, harmonic_mean
+
+from .ffmpeg import HD_MODEL_NAME, HD_NEG_MODEL_NAME, HD_PHONE_MODEL_NAME, _4K_MODEL_NAME, HD_PHONE_MODEL_VERSION
+from .vmaf import vmaf, UnsupportedFramerateError
 
 logger = logging.getLogger(__name__)
-import os.path
-import glob
-import xml.etree.ElementTree as ET
-import csv
-
-from FFmpeg import HD_MODEL_NAME, HD_NEG_MODEL_NAME, HD_PHONE_MODEL_NAME, _4K_MODEL_NAME, HD_PHONE_MODEL_VERSION
-
-
-from statistics import mean, harmonic_mean
-from Vmaf import vmaf, UnsupportedFramerateError
-from signal import signal, SIGINT
 
 
 def handler(signal_received, frame):
@@ -103,7 +101,7 @@ class MyParser(argparse.ArgumentParser):
         sys.exit(2)
 
 
-if __name__ == '__main__':
+def main():
     signal(SIGINT, handler)
 
     '''reading values from cmdParser'''
@@ -190,15 +188,15 @@ if __name__ == '__main__':
 
         if output_fmt == 'csv':
             with open(vmafpath, mode='r', newline='') as csvFile:
-                csvReader = csv.DictReader(csvFile)  
+                csvReader = csv.DictReader(csvFile)
                 for row in csvReader:
                     if model == 'HD':
-                        vmafScore.append(float(row[HD_MODEL_NAME]))  
+                        vmafScore.append(float(row[HD_MODEL_NAME]))
                         vmafNegScore.append(float(row[HD_NEG_MODEL_NAME]))
                         vmafPhoneScore.append(float(row[HD_PHONE_MODEL_NAME]))
                     if model == '4K':
                         vmafScore.append(float(row[_4K_MODEL_NAME]))
-                        
+
         elif output_fmt == 'xml':
             tree = ET.parse(vmafpath)
             root = tree.getroot()
@@ -241,3 +239,7 @@ if __name__ == '__main__':
                 myVmaf.ffmpegQos.vmaf_cambi_heatmap_path)
 
         print("\n \n \n \n \n ")
+
+
+if __name__ == '__main__':
+    main()
