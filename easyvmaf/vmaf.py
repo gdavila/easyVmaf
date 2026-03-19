@@ -24,10 +24,32 @@ SOFTWARE.
 from .ffmpeg import FFprobe
 from .ffmpeg import FFmpegQos
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
 import logging
+import math
 import os
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class FeatureConfig:
+    """
+    Represents a single libvmaf feature and its parameters.
+
+    Example:
+        FeatureConfig('cambi', {'full_ref': 'true', 'enc_width': '1920'})
+        → 'name=cambi\\\\:full_ref=true\\\\:enc_width=1920'
+    """
+    name: str
+    params: Dict[str, str] = field(default_factory=dict)
+
+    def to_string(self) -> str:
+        parts = [f'name={self.name}']
+        for k, v in self.params.items():
+            parts.append(f'{k}={v}')
+        return '\\\\:'.join(parts)
 
 
 class UnsupportedFramerateError(ValueError):
@@ -101,17 +123,18 @@ class video():
         self._updateFramesSummaryFromFrames(self.framesInfo)
 
     def getDuration(self):
+        _EPSILON = 0.001  # 1ms guard against float imprecision
         try:
-            duration = round(
-                float(self.streamInfo['duration'])-float(self.streamInfo['start_time']))
+            duration = (float(self.streamInfo['duration'])
+                        - float(self.streamInfo['start_time']))
             if duration < 0:
-                duration = round(float(self.streamInfo['duration']))
+                duration = float(self.streamInfo['duration'])
         except KeyError:
-            duration = round(
-                float(self.formatInfo['duration'])-float(self.formatInfo['start_time']))
+            duration = (float(self.formatInfo['duration'])
+                        - float(self.formatInfo['start_time']))
             if duration < 0:
-                duration = round(float(self.formatInfo['duration']))
-        return duration
+                duration = float(self.formatInfo['duration'])
+        return math.floor(duration * 1000) / 1000  # floor to nearest millisecond
 
     def getStreamInfo(self):
         logger.info("\n\n=======================================")
@@ -171,6 +194,7 @@ class vmaf():
         self.print_progress = print_progress
         self.end_sync = end_sync
         self.cambi_heatmap = cambi_heatmap
+        self._filters_applied = False
 
 
     def _initResolutions(self):
@@ -210,7 +234,13 @@ class vmaf():
         """
         scaling MAIN and REF if they dont match with the resolution requiered by the vmaf model (target resolution)
         """
+        if self._filters_applied:
+            logger.warning(
+                "_autoScale() called without clearFilters() since last application. "
+                "Filter chains may contain duplicates. Call clearFilters() first."
+            )
         self._applyScaleFilters(self.ffmpegQos)
+        self._filters_applied = True
 
     def _deinterlaceFrame(self, factor, stream):
         ref_fps = getFrameRate(self.ref.streamInfo['r_frame_rate'])
@@ -420,9 +450,17 @@ class vmaf():
 
     def setOffset(self, value=None):
         """
-        Apply Offset to trim Filter.
-            If offset > 0: Ref delayed compared to  Main. Trimfilter cuts Ref
-            if offset < 0: Main delayed compared to Ref. Trimfilter cuts Main
+        Apply trim filters to synchronize main and distorted streams.
+
+        Precondition: _autoScale() and _autoDeinterlace() (or _forceFps())
+        must have been applied to self.ffmpegQos before calling this method.
+        Trim filters are appended to the existing filter chain — they must
+        come last in the sequence.
+
+        If offset == 0, no filters are applied (streams are already in sync).
+
+        If offset > 0: Ref delayed compared to Main. Trimfilter cuts Ref.
+        If offset < 0: Main delayed compared to Ref. Trimfilter cuts Main.
         """
 
         if value != None:
@@ -441,11 +479,57 @@ class vmaf():
             self.ffmpegQos.main.setTrimFilter(offset, duration)
             self.ffmpegQos.ref.setTrimFilter(0, duration)
 
+    def _build_feature_string(self) -> Optional[str]:
+        """
+        Build the libvmaf feature string from the current configuration.
+        Returns None if no additional features are requested (uses model defaults).
+
+        Features are pipe-separated: 'name=A\\\\:p=v|name=B\\\\:p=v'
+        """
+        features: List[FeatureConfig] = []
+
+        # PSNR is always included — used for sync offset reporting
+        features.append(FeatureConfig('psnr'))
+
+        # CAMBI only when requested by the user
+        if self.cambi_heatmap:
+            cambi_params = {
+                'full_ref':   'true',
+                'enc_width':  str(self.main.streamInfo['width']),
+                'enc_height': str(self.main.streamInfo['height']),
+                'src_width':  str(self.ref.streamInfo['width']),
+                'src_height': str(self.ref.streamInfo['height']),
+            }
+            features.append(FeatureConfig('cambi', cambi_params))
+
+        if not features:
+            return None
+
+        return '|'.join(f.to_string() for f in features)
+
     def getVmaf(self, autoSync=False):
-        """ clean all filters first """
+        """
+        Run VMAF computation between main (distorted) and ref (reference) streams.
+
+        Filter application contract — always in this order:
+            1. clearFilters()     — reset all filter chains on ffmpegQos
+            2. _autoScale()       — scale both streams to model target resolution
+            3. _autoDeinterlace() — normalize frame rate and deinterlace if needed
+               OR _forceFps()     — if manual_fps is set
+            4. setOffset()        — apply trim filters for temporal sync
+
+        Note: syncOffset() (when autoSync=True) is called between steps 3 and 4.
+        After task-07, syncOffset() uses independent FFmpegQos instances per
+        worker and does not mutate self.ffmpegQos filter chains, so step 3
+        filters remain intact when setOffset() runs.
+
+        Calling _autoScale() or _autoDeinterlace() without a preceding
+        clearFilters() will stack duplicate filters — always clear first.
+        """
         self.ffmpegQos.clearFilters()
         self.ffmpegQos.main.clearFilters()
         self.ffmpegQos.ref.clearFilters()
+        self._filters_applied = False
 
         """AutoScale according to vmaf model and deinterlace the source if needed """
         self._autoScale()
@@ -463,7 +547,7 @@ class vmaf():
         """Apply Offset filters, if offset =0 nothing happens """
         self.setOffset()
 
-        self.features = f'name=psnr|name=cambi\\\\:full_ref=true\\\\:enc_width={self.main.streamInfo["width"]}\\\\:enc_height={self.main.streamInfo["height"]}\\\\:src_width={self.ref.streamInfo["width"]}\\\\:src_height={self.ref.streamInfo["height"]}'
+        self.features = self._build_feature_string()
 
 
         logger.info("=" * 39)
