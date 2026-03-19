@@ -2,6 +2,9 @@
 *.log
 *.code-workspace
 __pycache__
+*.egg-info/
+dist/
+build/
 .vscode/
 
 met_2000.ismv
