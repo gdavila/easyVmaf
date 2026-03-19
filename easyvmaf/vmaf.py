@@ -23,6 +23,7 @@ SOFTWARE.
 """
 from .ffmpeg import FFprobe
 from .ffmpeg import FFmpegQos
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 import os
 
@@ -183,29 +184,33 @@ class vmaf():
         else:
             raise ValueError(f"Invalid VMAF model: {self.model!r}. Supported: HD, 4K")
 
-    def _autoScale(self):
-        """
-        scaling MAIN and REF if they dont match with the resolution requiered by the vmaf model (target resolution)
-        """
+    def _applyScaleFilters(self, qos):
+        """Apply scale filters to the given FFmpegQos instance."""
         refResolution = [self.ref.streamInfo['width'],
                          self.ref.streamInfo['height']]
         mainResolution = [self.main.streamInfo['width'],
                           self.main.streamInfo['height']]
         if refResolution != self.target_resolution:
-            if not self.ffmpegQos.invertedSrc:
-                self.ffmpegQos.ref.setScaleFilter(
+            if not qos.invertedSrc:
+                qos.ref.setScaleFilter(
                     self.target_resolution[0], self.target_resolution[1])
-            if self.ffmpegQos.invertedSrc:
-                self.ffmpegQos.main.setScaleFilter(
+            if qos.invertedSrc:
+                qos.main.setScaleFilter(
                     self.target_resolution[0], self.target_resolution[1])
 
         if mainResolution != self.target_resolution:
-            if not self.ffmpegQos.invertedSrc:
-                self.ffmpegQos.main.setScaleFilter(
+            if not qos.invertedSrc:
+                qos.main.setScaleFilter(
                     self.target_resolution[0], self.target_resolution[1])
-            if self.ffmpegQos.invertedSrc:
-                self.ffmpegQos.ref.setScaleFilter(
+            if qos.invertedSrc:
+                qos.ref.setScaleFilter(
                     self.target_resolution[0], self.target_resolution[1])
+
+    def _autoScale(self):
+        """
+        scaling MAIN and REF if they dont match with the resolution requiered by the vmaf model (target resolution)
+        """
+        self._applyScaleFilters(self.ffmpegQos)
 
     def _deinterlaceFrame(self, factor, stream):
         ref_fps = getFrameRate(self.ref.streamInfo['r_frame_rate'])
@@ -224,10 +229,8 @@ class vmaf():
         if round(ref_fps, 2) != round(factor*main_fps, 2):
             stream.setFpsFilter(round(main_fps, 5))
 
-    def _autoDeinterlace(self):
-        """
-        This functions normalizes the framerate between MAIN and REF video streams (if needed)
-        """
+    def _applyDeinterlaceFilters(self, qos):
+        """Apply deinterlace/fps filters to the given FFmpegQos instance."""
         ref_fps = getFrameRate(self.ref.streamInfo['r_frame_rate'])
         main_fps = getFrameRate(self.main.streamInfo['r_frame_rate'])
 
@@ -235,55 +238,36 @@ class vmaf():
             """ Not Deinterlace would be required. So this functions normalizes the fps between REF and MAIN
             """
             if round(ref_fps) < round(main_fps):
-                """
-                frame rate conversion over MAIN video. The lowest framerate is choosed (REF fps).
-                """
                 logger.warning("Frame rate conversion can produce bad vmaf scores")
-                self.ffmpegQos.main.setFpsFilter(round(ref_fps, 5))
+                qos.main.setFpsFilter(round(ref_fps, 5))
             elif round(ref_fps) > round(main_fps):
-                """
-                frame rate conversion over REF video. The lowest framerate is choosed (MAIN fps).
-                """
                 logger.warning("Frame rate conversion can produce bad vmaf scores")
-                self.ffmpegQos.ref.setFpsFilter(round(main_fps, 5))
+                qos.ref.setFpsFilter(round(main_fps, 5))
             else:
-                """
-                This just pass the original framerate to the ffmpeg filter (lavfi) when no frame rate
-                conversion is requiered. For some reason it is mandatory by lavfi in order to work properly.
-                """
-
-                self.ffmpegQos.main.setFpsFilter(round(main_fps, 5))
-                self.ffmpegQos.ref.setFpsFilter(round(ref_fps, 5))
+                qos.main.setFpsFilter(round(main_fps, 5))
+                qos.ref.setFpsFilter(round(ref_fps, 5))
 
         elif self.ref.interlaced and not self.main.interlaced:
             """
             REF interlaced  | MAIN progressive
             """
             if round(ref_fps) == round(main_fps*2):
-                # Examples: REF=60i, MAIN=30p
-                # REF=59.97i, MAIN=30p, etc
-                if not self.ffmpegQos.invertedSrc:
-                    self._deinterlaceFrame(2, self.ffmpegQos.ref)
+                if not qos.invertedSrc:
+                    self._deinterlaceFrame(2, qos.ref)
                 else:
-                    self._deinterlaceFrame(2, self.ffmpegQos.main)
+                    self._deinterlaceFrame(2, qos.main)
 
             elif round(ref_fps) == round(main_fps):
-                # Examples:
-                # REF=30i, MAIN=30p
-                # REF=29.97i, MAIN=30p, etc
-                if not self.ffmpegQos.invertedSrc:
-                    self._deinterlaceFrame(1, self.ffmpegQos.ref)
+                if not qos.invertedSrc:
+                    self._deinterlaceFrame(1, qos.ref)
                 else:
-                    self._deinterlaceFrame(1, self.ffmpegQos.main)
+                    self._deinterlaceFrame(1, qos.main)
 
             elif round(ref_fps) == round(main_fps/2):
-                # Examples:
-                # REF=30i, MAIN=60p
-                # REF=29.97i, MAIN=60p, etc
-                if not self.ffmpegQos.invertedSrc:
-                    self._deinterlaceField(0.5, self.ffmpegQos.ref)
+                if not qos.invertedSrc:
+                    self._deinterlaceField(0.5, qos.ref)
                 else:
-                    self._deinterlaceField(0.5, self.ffmpegQos.main)
+                    self._deinterlaceField(0.5, qos.main)
 
             else:
                 raise UnsupportedFramerateError(
@@ -298,32 +282,24 @@ class vmaf():
             Input Progressive (REF) | Output Interlaced (MAIN)
             """
             if round(ref_fps) == round(main_fps*2):
-                # Examples: REF=60p, MAIN=30i
-                # REF=60p, MAIN=29.97i, etc
                 logger.warning("Frame rate conversion can produce bad vmaf scores")
-                if not self.ffmpegQos.invertedSrc:
-                    self._deinterlaceField(1, self.ffmpegQos.main)
+                if not qos.invertedSrc:
+                    self._deinterlaceField(1, qos.main)
                 else:
-                    self._deinterlaceField(1, self.ffmpegQos.ref)
+                    self._deinterlaceField(1, qos.ref)
 
             elif round(ref_fps) == round(main_fps):
-                # Examples:
-                # REF=30p, MAIN=30i
-                # REF=30p, MAIN=29.97i, etc
-                if not self.ffmpegQos.invertedSrc:
-                    self._deinterlaceFrame(1, self.ffmpegQos.main)
+                if not qos.invertedSrc:
+                    self._deinterlaceFrame(1, qos.main)
                 else:
-                    self._deinterlaceFrame(1, self.ffmpegQos.ref)
+                    self._deinterlaceFrame(1, qos.ref)
 
             elif round(ref_fps) == round(main_fps/2):
-                # Examples:
-                # REF=30p, MAIN=60i
-                # REF=29.97p, MAIN=60i, etc
                 logger.warning("Frame rate conversion can produce bad vmaf scores")
-                if not self.ffmpegQos.invertedSrc:
-                    self._deinterlaceField(0.5, self.ffmpegQos.main)
+                if not qos.invertedSrc:
+                    self._deinterlaceField(0.5, qos.main)
                 else:
-                    self._deinterlaceField(0.5, self.ffmpegQos.ref)
+                    self._deinterlaceField(0.5, qos.ref)
 
             else:
                 raise UnsupportedFramerateError(
@@ -333,10 +309,46 @@ class vmaf():
                     f"Consider using the -fps flag to force a frame rate manually."
                 )
 
+    def _autoDeinterlace(self):
+        """
+        This functions normalizes the framerate between MAIN and REF video streams (if needed)
+        """
+        self._applyDeinterlaceFilters(self.ffmpegQos)
+
     def _forceFps(self):
         logger.warning("Forcing frame rate conversion manually")
         self.ffmpegQos.main.setFpsFilter(self.manual_fps)
         self.ffmpegQos.main.setFpsFilter(self.manual_fps)
+
+    def _computePsnrAtOffset(self, offset, reverse):
+        """
+        Compute PSNR between ref and main at a given time offset.
+        Creates an independent FFmpegQos instance — safe to call concurrently.
+
+        Args:
+            offset:  time in seconds to trim the ref (or main if reverse) stream
+            reverse: if True, main and ref roles are swapped
+
+        Returns:
+            (offset, psnr_value) tuple
+        """
+        if not reverse:
+            qos = FFmpegQos(self.main.videoSrc, self.ref.videoSrc, self.loglevel)
+        else:
+            qos = FFmpegQos(self.ref.videoSrc, self.main.videoSrc, self.loglevel)
+            qos.invertedSrc = True
+
+        qos.ref.setTrimFilter(offset, 0.5)
+        qos.main.setTrimFilter(0, 0.5)
+        self._applyScaleFilters(qos)
+        if self.manual_fps == 0:
+            self._applyDeinterlaceFilters(qos)
+        else:
+            qos.main.setFpsFilter(self.manual_fps)
+            qos.ref.setFpsFilter(self.manual_fps)
+
+        psnr_value = qos.getPsnr()
+        return (offset, psnr_value)
 
     def syncOffset(self, syncWindow=3, start=0, reverse=False):
         """
@@ -369,44 +381,42 @@ class vmaf():
         logger.info("=" * 39)
         logger.info("%-20s %s", "offset(s)", "psnr[dB]")
 
-        if reverse:
-            self.ffmpegQos.invertSrcs()
         fps = getFrameRate(self.ref.streamInfo['r_frame_rate'])
-        frameDuration = 1/fps
-        startFrame = int(round(start/frameDuration))
-        framesInSyncWindow = int(round(syncWindow/frameDuration))
-        psnr = {'value': [], 'time': []}
+        frameDuration = 1 / fps
+        startFrame = int(round(start / frameDuration))
+        framesInSyncWindow = int(round(syncWindow / frameDuration))
 
-        for i in range(0, framesInSyncWindow):
-            offset = (startFrame + i) * frameDuration
-            self.ffmpegQos.main.clearFilters()
-            self.ffmpegQos.ref.clearFilters()
-            self.ffmpegQos.ref.setTrimFilter(offset, 0.5)
-            self.ffmpegQos.main.setTrimFilter(0, 0.5)
-            self._autoScale()
-            if self.manual_fps == 0:
-                self._autoDeinterlace()
-            else:
-                self._forceFps()
-            psnr['value'].append(self.ffmpegQos.getPsnr())
-            psnr['time'].append(offset)
-            logger.info("%-20s %s", psnr['time'][i], psnr['value'][i])
+        offsets = [
+            (startFrame + i) * frameDuration
+            for i in range(framesInSyncWindow)
+        ]
 
-        maxPsnr = max(psnr['value'])
-        index = psnr['value'].index(maxPsnr)
-        offset = psnr['time'][index]
-        """
-         The reverse variable/flag indicates if the offset (for time syncing ) was applied over the MAIN or over the REF.
-         It is FALSE if it was applied over REF (default) and TRUE if it was applied over the MAIN.
-         If it is TRUE, it means that REF and MAIN where "interchanged" (REF -> MAIN, MAIN -> REF) to compute the PSNR for sync. Once the PSNR is
-         computed, it is requiered to come back to the original MAIN/REF.
-        """
+        max_workers = self.threads if self.threads > 0 else os.cpu_count()
+
+        # Results arrive in completion order (not offset order) — logged as they finish
+        results = []
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(self._computePsnrAtOffset, offset, reverse): offset
+                for offset in offsets
+            }
+            for future in as_completed(futures):
+                offset, psnr_value = future.result()
+                results.append((offset, psnr_value))
+                logger.info("%-20s %s", offset, psnr_value)
+
+        # Sort to guarantee deterministic best-offset selection
+        results.sort(key=lambda x: x[0])
+        best_offset, best_psnr = max(results, key=lambda x: x[1])
+
+        # Restore invertedSrc state on shared ffmpegQos so that getVmaf() works correctly
         if reverse:
-            self.ffmpegQos.invertSrcs()
-            offset = -1 * offset
-        self.offset = offset
+            self.ffmpegQos.invertedSrc = True
+            self.ffmpegQos.main.videoSrc, self.ffmpegQos.ref.videoSrc = \
+                self.ffmpegQos.ref.videoSrc, self.ffmpegQos.main.videoSrc
 
-        return [self.offset, maxPsnr]
+        self.offset = -best_offset if reverse else best_offset
+        return [self.offset, best_psnr]
 
     def setOffset(self, value=None):
         """
