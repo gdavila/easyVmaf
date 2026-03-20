@@ -35,6 +35,21 @@ RUN wget https://github.com/Netflix/vmaf/archive/v${VMAF_version}.tar.gz && \
     cp -R ../model/* /usr/local/share/model && \
     rm -rf /tmp/vmaf
 
+# Diagnose libvmaf install layout
+RUN echo "=== find .pc files ===" && \
+    find /usr/local -name "*.pc" 2>/dev/null && \
+    echo "=== find libvmaf.so* ===" && \
+    find /usr/local -name "libvmaf*" 2>/dev/null && \
+    echo "=== pkg-config default search path ===" && \
+    pkg-config --variable pc_path pkg-config && \
+    echo "=== PKG_CONFIG_PATH env ===" && \
+    echo "${PKG_CONFIG_PATH}" && \
+    echo "=== pkg-config libvmaf (no extra path) ===" && \
+    pkg-config --libs libvmaf 2>&1 || true && \
+    echo "=== pkg-config libvmaf (with /usr/local paths) ===" && \
+    PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/local/lib/x86_64-linux-gnu/pkgconfig" \
+    pkg-config --libs libvmaf 2>&1 || true
+
 # Build FFmpeg with libvmaf
 WORKDIR /tmp/ffmpeg
 RUN export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/lib/" && \
