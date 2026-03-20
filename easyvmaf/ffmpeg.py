@@ -24,6 +24,7 @@ SOFTWARE.
 
 
 from . import config
+import re
 import subprocess
 import json
 import logging
@@ -33,15 +34,30 @@ from ffmpeg_progress_yield import FfmpegProgress
 logger = logging.getLogger(__name__)
 
 
-HD_MODEL_VERSION = 'vmaf_v0.6.1'
-HD_MODEL_NAME= 'vmaf_hd'
-HD_NEG_MODEL_VERSION = 'vmaf_v0.6.1neg'
-HD_NEG_MODEL_NAME = 'vmaf_hd_neg'
-HD_PHONE_MODEL_VERSION = 'vmaf_v0.6.1'
-HD_PHONE_MODEL_NAME = 'vmaf_hd_phone'
+# Structured model definitions
+# Each entry: (version_string, name_alias, extra_params_dict)
+VMAF_MODELS = {
+    'HD': [
+        ('vmaf_v0.6.1',     'vmaf_hd',       {}),
+        ('vmaf_v0.6.1neg',  'vmaf_hd_neg',   {}),
+        ('vmaf_v0.6.1',     'vmaf_hd_phone', {'enable_transform': 'true'}),
+    ],
+    '4K': [
+        ('vmaf_4k_v0.6.1',  'vmaf_4k',       {}),
+    ],
+}
 
-_4K_MODEL_VERSION = 'vmaf_4k_v0.6.1'
-_4K_MODEL_NAME = 'vmaf_4k'
+# Keep existing names as aliases for cli.py imports — do not remove these
+HD_MODEL_NAME       = VMAF_MODELS['HD'][0][1]   # 'vmaf_hd'
+HD_NEG_MODEL_NAME   = VMAF_MODELS['HD'][1][1]   # 'vmaf_hd_neg'
+HD_PHONE_MODEL_NAME = VMAF_MODELS['HD'][2][1]   # 'vmaf_hd_phone'
+_4K_MODEL_NAME      = VMAF_MODELS['4K'][0][1]   # 'vmaf_4k'
+
+# Version aliases (used in vmaf.py for the phone model version check)
+HD_MODEL_VERSION        = VMAF_MODELS['HD'][0][0]
+HD_NEG_MODEL_VERSION    = VMAF_MODELS['HD'][1][0]
+HD_PHONE_MODEL_VERSION  = VMAF_MODELS['HD'][2][0]
+_4K_MODEL_VERSION       = VMAF_MODELS['4K'][0][0]
 
 
 
@@ -158,6 +174,37 @@ class FFmpegQos:
         filter_string = ';'.join(self.main.filtersList + self.ref.filtersList + self.psnrFilter + self.vmafFilter)
         return [f'-{filterName}', filter_string]
 
+    @staticmethod
+    def _build_model_string(model: str) -> str:
+        """
+        Build the libvmaf model= filter parameter string for the given model.
+
+        Format: version=X\\:name=Y\\:param=val|version=X\\:name=Y
+        Pipe-separates multiple models (HD computes vmaf_hd, vmaf_hd_neg,
+        vmaf_hd_phone in a single pass).
+
+        Args:
+            model: 'HD' or '4K'
+
+        Returns:
+            model string ready to pass as the model= parameter to libvmaf
+
+        Raises:
+            ValueError: if model is not a known key in VMAF_MODELS
+        """
+        if model not in VMAF_MODELS:
+            raise ValueError(
+                f"Unknown VMAF model '{model}'. "
+                f"Supported models: {list(VMAF_MODELS.keys())}"
+            )
+        parts = []
+        for version, name, params in VMAF_MODELS[model]:
+            tokens = [f'version={version}', f'name={name}']
+            for k, v in params.items():
+                tokens.append(f'{k}={v}')
+            parts.append('\\\\:'.join(tokens))
+        return '|'.join(parts)
+
     def getPsnr(self, stats_file=False):
         """
         It adds PSNR filter to lavfi chain and run the ffmpeg cmd.
@@ -205,12 +252,7 @@ class FFmpegQos:
 
 
 
-        if model == 'HD':
-            model_hd = f'version={HD_MODEL_VERSION}\\\\:name={HD_MODEL_NAME}|version={HD_NEG_MODEL_VERSION}\\\\:name={HD_NEG_MODEL_NAME}|version={HD_PHONE_MODEL_VERSION}\\\\:name={HD_PHONE_MODEL_NAME}\\\\:enable_transform=true'
-            model = model_hd
-        elif model == '4K':
-            model_4k = f'version={_4K_MODEL_VERSION}\\\\:name={_4K_MODEL_NAME}'
-            model = model_4k
+        model_str = FFmpegQos._build_model_string(model)
         if threads == 0:
             threads = os.cpu_count()
         if end_sync:
@@ -219,13 +261,13 @@ class FFmpegQos:
             shortest = 0
 
         if not features:
-            self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model={model}:n_subsample={subsample}:log_path={log_path}:n_threads={threads}:shortest={shortest}']
+            self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model={model_str}:n_subsample={subsample}:log_path={log_path}:n_threads={threads}:shortest={shortest}']
 
         elif features and not cambi_heatmap:
-            self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model={model}:n_subsample={subsample}:log_path={log_path}:n_threads={threads}:shortest={shortest}:feature={features}']
+            self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model={model_str}:n_subsample={subsample}:log_path={log_path}:n_threads={threads}:shortest={shortest}:feature={features}']
 
         elif features and cambi_heatmap:
-            self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model={model}:n_subsample={subsample}:log_path={log_path}:n_threads={threads}:shortest={shortest}:feature={features}\\\\:heatmaps_path={self.vmaf_cambi_heatmap_path}']
+            self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model={model_str}:n_subsample={subsample}:log_path={log_path}:n_threads={threads}:shortest={shortest}:feature={features}\\\\:heatmaps_path={self.vmaf_cambi_heatmap_path}']
 
 
         self._commit()
@@ -344,3 +386,85 @@ class inputFFmpeg:
     def clearFilters(self):
         self.filtersList = []
         self.lastOutputID = f'{str(self.id)}:v'
+
+
+def check_ffmpeg() -> dict:
+    """
+    Detect FFmpeg version and libvmaf built-in model availability.
+
+    Returns a dict with:
+        {
+            'version': (major, minor, patch),  # e.g. (7, 1, 0)
+            'version_str': '7.1',
+            'meets_minimum': bool,              # >= 5.0
+            'builtin_models': bool,             # libvmaf built-in models available
+        }
+
+    Raises:
+        RuntimeError: if ffmpeg binary is not found or version cannot be parsed
+    """
+    result = {
+        'version': (0, 0, 0),
+        'version_str': 'unknown',
+        'meets_minimum': False,
+        'builtin_models': False,
+    }
+
+    # --- Version detection ---
+    try:
+        proc = subprocess.run(
+            [FFmpegQos._executable, '-version'],
+            capture_output=True,
+            text=True
+        )
+        output = proc.stdout
+    except FileNotFoundError:
+        raise RuntimeError(
+            f"FFmpeg binary not found at '{FFmpegQos._executable}'. "
+            f"Install FFmpeg >= 5.0 built with --enable-libvmaf."
+        )
+
+    # Parse "ffmpeg version X.Y.Z" or "ffmpeg version N-YYYYMMDD-..."
+    # Dev builds look like: "ffmpeg version N-111825-gabcdef123"
+    # Release builds: "ffmpeg version 7.1" or "ffmpeg version 7.1.1"
+    match = re.search(r'ffmpeg version (\d+)\.(\d+)', output)
+    if not match:
+        # Dev build — cannot determine version reliably, warn and continue
+        result['version_str'] = 'dev-build'
+        result['meets_minimum'] = True   # assume dev builds are recent enough
+    else:
+        major, minor = int(match.group(1)), int(match.group(2))
+        result['version'] = (major, minor, 0)
+        result['version_str'] = f'{major}.{minor}'
+        result['meets_minimum'] = (major, minor) >= (5, 0)
+
+    # --- Built-in model probe ---
+    # Run a minimal libvmaf command that uses a built-in model.
+    # Use nullsrc as input — FFmpeg will fail, but the error message
+    # tells us whether the model was found or not.
+    # A "could not load libvmaf model" error = built-in models not compiled in.
+    # Any other error (invalid input, etc.) = models are fine, input is the problem.
+    probe_cmd = [
+        FFmpegQos._executable,
+        '-hide_banner', '-loglevel', 'error',
+        '-f', 'lavfi', '-i', 'nullsrc=s=64x64:r=1:d=0.1',
+        '-f', 'lavfi', '-i', 'nullsrc=s=64x64:r=1:d=0.1',
+        '-lavfi', f'libvmaf=model=version=vmaf_v0.6.1:log_fmt=json:log_path={os.devnull}',
+        '-f', 'null', '-'
+    ]
+    try:
+        probe = subprocess.run(
+            probe_cmd,
+            capture_output=True,
+            text=True
+        )
+        probe_output = probe.stderr + probe.stdout
+        if 'could not load libvmaf model' in probe_output:
+            result['builtin_models'] = False
+        else:
+            result['builtin_models'] = True
+    except Exception:
+        # Probe failed entirely — conservative assumption
+        result['builtin_models'] = False
+
+    return result

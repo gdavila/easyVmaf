@@ -33,7 +33,7 @@ import xml.etree.ElementTree as ET
 from signal import signal, SIGINT
 from statistics import mean, harmonic_mean
 
-from .ffmpeg import HD_MODEL_NAME, HD_NEG_MODEL_NAME, HD_PHONE_MODEL_NAME, _4K_MODEL_NAME, HD_PHONE_MODEL_VERSION
+from .ffmpeg import check_ffmpeg, HD_MODEL_NAME, HD_NEG_MODEL_NAME, HD_PHONE_MODEL_NAME, _4K_MODEL_NAME, HD_PHONE_MODEL_VERSION
 from .vmaf import vmaf, UnsupportedFramerateError
 
 logger = logging.getLogger(__name__)
@@ -134,6 +134,36 @@ def main():
         level=logging.DEBUG if verbose else logging.INFO,
         format='%(asctime)s [%(name)s] %(message)s',
         datefmt='%H:%M:%S'
+    )
+
+    # --- FFmpeg compatibility check ---
+    try:
+        ffmpeg_info = check_ffmpeg()
+    except RuntimeError as e:
+        print(f"[easyVmaf] ERROR: {e}", flush=True)
+        sys.exit(1)
+
+    if not ffmpeg_info['meets_minimum']:
+        print(
+            f"[easyVmaf] ERROR: FFmpeg {ffmpeg_info['version_str']} detected. "
+            f"easyVmaf requires FFmpeg >= 5.0 built with --enable-libvmaf. "
+            f"The 'model=' parameter for libvmaf was introduced in FFmpeg 5.0.",
+            flush=True
+        )
+        sys.exit(1)
+
+    if not ffmpeg_info['builtin_models']:
+        print(
+            f"[easyVmaf] ERROR: FFmpeg {ffmpeg_info['version_str']} is installed "
+            f"but libvmaf built-in models are not available. "
+            f"Rebuild libvmaf with '-Dbuilt_in_models=true' and recompile FFmpeg.",
+            flush=True
+        )
+        sys.exit(1)
+
+    logger.info(
+        "FFmpeg %s detected. Built-in models: available.",
+        ffmpeg_info['version_str']
     )
 
     # check output format
