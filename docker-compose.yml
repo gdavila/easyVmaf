@@ -1,0 +1,40 @@
+# docker-compose.yml
+# Usage:
+#   VIDEO_DIR=/path/to/videos docker compose run easyvmaf \
+#     -d /videos/distorted.mp4 -r /videos/reference.mp4
+#
+# Or use the default video_samples directory:
+#   docker compose run easyvmaf \
+#     -d /videos/BBB_sampleA_distorted.mp4 -r /videos/BBB_reference_10s.mp4
+
+services:
+  easyvmaf:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        FFMPEG_version: "8.1"
+        VMAF_version: "3.0.0"
+    image: easyvmaf:latest
+    volumes:
+      - ${VIDEO_DIR:-./video_samples}:/videos
+    # Default command — override at runtime
+    # Example: docker compose run easyvmaf -d /videos/dist.mp4 -r /videos/ref.mp4
+
+  easyvmaf-cuda:
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda
+      args:
+        FFMPEG_version: "8.1"
+        VMAF_version: "3.0.0"
+    image: easyvmaf:cuda
+    volumes:
+      - ${VIDEO_DIR:-./video_samples}:/videos
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

@@ -159,41 +159,44 @@ Note the use of the  `reverse`  flag (that was not used on the first example). T
 
 
 
-## Docker Image usage
+## Docker Usage
 
-A [docker image](https://hub.docker.com/repository/docker/gfdavila/easyvmaf) is available on docker hub to run easyVmaf in a straightforward way.
-
-The Docker Image is basically an ubuntu image with `ffmpeg` and `libvmaf` already installed. You can check the [Dockerfile](https://hub.docker.com/r/gfdavila/easyvmaf/dockerfile) for more details.
-
-The easiest way to run easyVmaf through Docker is mounting a shared volume between your host machine and the container. This volume should have inside it all the video files you want to analyze. The outputs (vmaf information files) will be putting in this shared folder also.
-
-Example
+### Build
 
 ```bash
-docker run --rm -v <local-path-to-your-video-files>:/<custom-name-folder> gfdavila/easyvmaf -r /<custom-name-folder>/video-1.mp4 -d /<custom-name-folder>/video-2.mp4
+# Standard CPU build
+docker build -t easyvmaf .
+
+# GPU/CUDA build
+docker build -f Dockerfile.cuda -t easyvmaf:cuda .
 ```
 
-Some video samples located on the docker image:
+### Run
 
 ```bash
-NAME                        TIME
+# Mount local video directory and run
+docker run --rm -v /path/to/videos:/videos \
+  easyvmaf -d /videos/distorted.mp4 -r /videos/reference.mp4
 
-                           t=0
-                            |
-BBB_reference_10s.mp4       */-----------------------------*/
-BBB_sampleA_distorted.mp4           */---------------------*/
-BBB_sampleB_distorted.mp4       */-------------------------*/
+# With sync window
+docker run --rm -v /path/to/videos:/videos \
+  easyvmaf -d /videos/distorted.mp4 -r /videos/reference.mp4 -sw 2
 
+# With docker compose (VIDEO_DIR defaults to ./video_samples)
+VIDEO_DIR=/path/to/videos docker compose run easyvmaf \
+  -d /videos/distorted.mp4 -r /videos/reference.mp4
+
+# GPU run (requires NVIDIA Container Toolkit)
+docker run --rm --gpus all -v /path/to/videos:/videos \
+  easyvmaf:cuda -d /videos/distorted.mp4 -r /videos/reference.mp4
 ```
 
-Run docker container to get VMAF between `BBB_reference_10s.mp4` and `BBB_sampleA_distorted.mp4`:
+### Build arguments
 
-```bash
-:~$ docker run --rm  gfdavila/easyvmaf -r video_samples/BBB_reference_10s.mp4 -d video_samples/BBB_sampleA_distorted.mp4 -sw 1 -ss 1
-```
+Both Dockerfiles accept these build-time arguments:
 
-Run docker container to get VMAF between `BBB_sampleA_distorted.mp4` and `BBB_sampleB_distorted.mp4`:
-
-```bash
-:~$ docker run --rm  gfdavila/easyvmaf -r video_samples/BBB_sampleA_distorted.mp4 -d video_samples/BBB_sampleB_distorted.mp4 -sw 2 -ss 0 -reverse
-```
+| ARG | Default | Description |
+|---|---|---|
+| `FFMPEG_version` | `8.1` | FFmpeg release tag |
+| `VMAF_version` | `3.0.0` | libvmaf release tag |
+| `EASYVMAF_VERSION` | `2.1.0` | easyVmaf version label |

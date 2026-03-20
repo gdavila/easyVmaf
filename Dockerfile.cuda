@@ -1,36 +1,39 @@
-FROM python:3.12-slim AS base
+# Dockerfile.cuda — GPU-accelerated VMAF with libvmaf_cuda
+FROM nvidia/cuda:12.3.2-devel-ubuntu22.04 AS base-cuda
 
 ARG FFMPEG_version=8.1
 ARG VMAF_version=3.0.0
 ARG EASYVMAF_VERSION=2.1.0
+ARG PYTHON_VERSION=3.12
 
-FROM base AS build
+FROM base-cuda AS build-cuda
 
-RUN export TZ='UTC' && \
-    ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
-    echo $TZ > /etc/timezone && \
-    apt-get update -yqq && \
+RUN apt-get update -yqq && \
     apt-get install --no-install-recommends \
+        python3 python3-pip \
         ninja-build wget doxygen autoconf automake cmake \
-        g++ gcc libdav1d-dev pkg-config make nasm xxd yasm -y && \
+        g++ gcc libdav1d-dev pkg-config make nasm yasm \
+        cuda-nvcc-12-3 libnpp-dev-12-3 -y && \
     apt-get autoremove -y && \
     apt-get clean -y && \
-    pip3 install --user meson
+    pip3 install meson
 
-# Build libvmaf
+# Build libvmaf with CUDA support
 WORKDIR /tmp/vmaf
 RUN wget https://github.com/Netflix/vmaf/archive/v${VMAF_version}.tar.gz && \
     tar -xzf v${VMAF_version}.tar.gz && \
     cd vmaf-${VMAF_version}/libvmaf/ && \
-    export PATH="${HOME}/.local/bin:${PATH}" && \
-    meson build --buildtype release -Dbuilt_in_models=true && \
+    meson build --buildtype release \
+        -Dbuilt_in_models=true \
+        -Denable_cuda=true \
+        -Denable_float=true && \
     ninja -vC build && \
     ninja -vC build install && \
     mkdir -p /usr/local/share/model && \
     cp -R ../model/* /usr/local/share/model && \
     rm -rf /tmp/vmaf
 
-# Build FFmpeg with libvmaf
+# Build FFmpeg with libvmaf + CUDA
 WORKDIR /tmp/ffmpeg
 RUN export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/lib/" && \
     export PKG_CONFIG_PATH="${PKG_CONFIG_PATH}:/usr/local/lib/pkgconfig/" && \
@@ -41,16 +44,19 @@ RUN export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/lib/" && \
         --enable-libvmaf \
         --enable-version3 \
         --enable-shared \
-        --enable-libdav1d && \
+        --enable-libdav1d \
+        --enable-cuda-nvcc \
+        --enable-libnpp \
+        --extra-cflags="-I/usr/local/cuda/include" \
+        --extra-ldflags="-L/usr/local/cuda/lib64" && \
     make -j$(nproc) && \
     make install && \
     rm -rf /tmp/ffmpeg
 
-# Copy easyVmaf source for installation
 WORKDIR /app
 COPY . /app/easyvmaf/
 
-FROM base AS release
+FROM nvidia/cuda:12.3.2-runtime-ubuntu22.04 AS release-cuda
 
 ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/lib/"
 
@@ -58,24 +64,22 @@ ARG FFMPEG_version=8.1
 ARG VMAF_version=3.0.0
 ARG EASYVMAF_VERSION=2.1.0
 
-LABEL org.opencontainers.image.title="easyVmaf"
+LABEL org.opencontainers.image.title="easyVmaf-cuda"
 LABEL org.opencontainers.image.version="${EASYVMAF_VERSION}"
-LABEL org.opencontainers.image.description="FFmpeg-based VMAF computation with auto deinterlace, scale and sync"
+LABEL org.opencontainers.image.description="GPU-accelerated FFmpeg-based VMAF computation"
 LABEL org.opencontainers.image.licenses="MIT"
 LABEL ffmpeg.version="${FFMPEG_version}"
 LABEL libvmaf.version="${VMAF_version}"
 
-RUN export TZ='UTC' && \
-    ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
-    echo $TZ > /etc/timezone && \
-    apt-get update -yqq && \
-    apt-get install -y --no-install-recommends dav1d && \
+RUN apt-get update -yqq && \
+    apt-get install -y --no-install-recommends \
+        python3 python3-pip dav1d && \
     apt-get autoremove -y && \
     apt-get clean -y && \
-    pip3 install --user ffmpeg-progress-yield
+    pip3 install ffmpeg-progress-yield
 
-COPY --from=build /usr/local /usr/local/
-COPY --from=build /app/easyvmaf /app/easyvmaf/
+COPY --from=build-cuda /usr/local /usr/local/
+COPY --from=build-cuda /app/easyvmaf /app/easyvmaf/
 
 WORKDIR /app/easyvmaf
 RUN pip3 install --no-deps .

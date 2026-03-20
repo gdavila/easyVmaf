@@ -1,0 +1,36 @@
+# .dockerignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.git/
+.gitignore
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Video files — large, not needed in build context
+*.mp4
+*.ts
+*.mkv
+*.mov
+*.avi
+*.y4m
+*.yuv
+*.ismv
+
+# Log and output files
+*.log
+*.json
+*.xml
+*.csv
+
+# Task files and docs — not needed in image
+tasks/
+CLAUDE.md
+readme/
+
+# Test files
+tests/
+video_samples/
