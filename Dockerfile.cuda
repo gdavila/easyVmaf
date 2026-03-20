@@ -10,13 +10,21 @@ FROM base-cuda AS build-cuda
 
 RUN apt-get update -yqq && \
     apt-get install --no-install-recommends \
-        python3 python3-pip \
+        python3 python3-pip git \
         ninja-build wget doxygen autoconf automake cmake \
         g++ gcc libdav1d-dev pkg-config make nasm yasm \
         cuda-nvcc-12-3 libnpp-dev-12-3 -y && \
     apt-get autoremove -y && \
     apt-get clean -y && \
     pip3 install meson
+
+# Install NVIDIA Video Codec SDK headers (required by --enable-ffnvcodec)
+# These are separate from the CUDA toolkit — maintained by VideoLAN
+WORKDIR /tmp/nv-codec
+RUN git clone --depth 1 https://git.videolan.org/git/ffmpeg/nv-codec-headers.git && \
+    cd nv-codec-headers && \
+    make install && \
+    rm -rf /tmp/nv-codec
 
 # Build libvmaf with CUDA support
 WORKDIR /tmp/vmaf
@@ -45,6 +53,8 @@ RUN export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/lib/" && \
         --enable-version3 \
         --enable-shared \
         --enable-libdav1d \
+        --enable-nonfree \
+        --enable-ffnvcodec \
         --enable-cuda-nvcc \
         --enable-libnpp \
         --extra-cflags="-I/usr/local/cuda/include" \
@@ -64,6 +74,7 @@ ARG FFMPEG_version=8.1
 ARG VMAF_version=3.0.0
 ARG EASYVMAF_VERSION=2.1.0
 
+LABEL distribution.restriction="nonfree — binary contains nonfree components (nvcc/CUDA). Cannot be legally redistributed. Build and use locally only."
 LABEL org.opencontainers.image.title="easyVmaf-cuda"
 LABEL org.opencontainers.image.version="${EASYVMAF_VERSION}"
 LABEL org.opencontainers.image.description="GPU-accelerated FFmpeg-based VMAF computation"

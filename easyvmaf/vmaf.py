@@ -176,15 +176,17 @@ class vmaf():
         - Frame rate conversion (if needed)
     """
 
-    def __init__(self, mainSrc, refSrc, output_fmt, model="HD", phone=False, loglevel="info", subsample=1, threads=0, print_progress=False, end_sync=False,  manual_fps=0, cambi_heatmap=False):
+    def __init__(self, mainSrc, refSrc, output_fmt, model="HD", phone=False, loglevel="info", subsample=1, threads=0, print_progress=False, end_sync=False,  manual_fps=0, cambi_heatmap=False, gpu_mode=False):
         self.loglevel = loglevel
         self.main = video(mainSrc, self.loglevel)
         self.ref = video(refSrc, self.loglevel)
         self.model = model
         self.phone = phone
         self.subsample = subsample
+        self.gpu_mode = gpu_mode
         self.ffmpegQos = FFmpegQos(
-            self.main.videoSrc, self.ref.videoSrc, self.loglevel)
+            self.main.videoSrc, self.ref.videoSrc, self.loglevel,
+            gpu_mode=gpu_mode)
         self.target_resolution = None
         self.offset = 0
         self.manual_fps = manual_fps
@@ -362,10 +364,13 @@ class vmaf():
         Returns:
             (offset, psnr_value) tuple
         """
+        # Always use CPU for PSNR sync computation regardless of self.gpu_mode
         if not reverse:
-            qos = FFmpegQos(self.main.videoSrc, self.ref.videoSrc, self.loglevel)
+            qos = FFmpegQos(self.main.videoSrc, self.ref.videoSrc, self.loglevel,
+                            gpu_mode=False)
         else:
-            qos = FFmpegQos(self.ref.videoSrc, self.main.videoSrc, self.loglevel)
+            qos = FFmpegQos(self.ref.videoSrc, self.main.videoSrc, self.loglevel,
+                            gpu_mode=False)
             qos.invertedSrc = True
 
         qos.ref.setTrimFilter(offset, 0.5)
@@ -573,7 +578,7 @@ class vmaf():
 
 
         vmafProcess = self.ffmpegQos.getVmaf(model=self.model, subsample=self.subsample,
-                                             output_fmt=self.output_fmt, threads=self.threads, print_progress=self.print_progress, end_sync=self.end_sync, features=self.features, cambi_heatmap = self.cambi_heatmap)
+                                             output_fmt=self.output_fmt, threads=self.threads, print_progress=self.print_progress, end_sync=self.end_sync, features=self.features, cambi_heatmap=self.cambi_heatmap, gpu=self.gpu_mode)
         return vmafProcess
 
 

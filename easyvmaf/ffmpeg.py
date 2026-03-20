@@ -139,16 +139,17 @@ class FFmpegQos:
     '''
     _executable = os.environ.get('FFMPEG', config.ffmpeg)
 
-    def __init__(self,  main, ref, loglevel="info"):
+    def __init__(self,  main, ref, loglevel="info", gpu_mode=False):
         self.loglevel = loglevel
         self._cmd = None
-        self.main = inputFFmpeg(main, input_id=0)
-        self.ref = inputFFmpeg(ref, input_id=1)
+        self.main = inputFFmpeg(main, input_id=0, gpu_mode=gpu_mode)
+        self.ref  = inputFFmpeg(ref,  input_id=1, gpu_mode=gpu_mode)
         self.psnrFilter = []
         self.vmafFilter = []
         self.invertedSrc = False
         self.vmafpath = None
         self.vmaf_cambi_heatmap_path = None
+        self.gpu_mode = gpu_mode
 
     def _commitBase(self):
         return [FFmpegQos._executable, '-y', '-hide_banner', '-stats', '-loglevel', self.loglevel]
@@ -227,7 +228,7 @@ class FFmpegQos:
         psnr = [s for s in stdout if "average" in s][0].split(":")[1]
         return float(psnr)
 
-    def getVmaf(self, log_path=None, model='HD', subsample=1, output_fmt='json', threads=0, print_progress=False, end_sync=False, features = None, cambi_heatmap = False):
+    def getVmaf(self, log_path=None, model='HD', subsample=1, output_fmt='json', threads=0, print_progress=False, end_sync=False, features=None, cambi_heatmap=False, gpu=False):
         main = self.main.lastOutputID
         ref = self.ref.lastOutputID
         if output_fmt == 'xml':
@@ -255,19 +256,34 @@ class FFmpegQos:
         model_str = FFmpegQos._build_model_string(model)
         if threads == 0:
             threads = os.cpu_count()
-        if end_sync:
-            shortest = 1
-        else:
-            shortest = 0
+        shortest = 1 if end_sync else 0
+
+        # Select filter name: libvmaf_cuda requires GPU frames from scale_cuda
+        vmaf_filter_name = 'libvmaf_cuda' if gpu else 'libvmaf'
+
+        base_params = (
+            f'log_fmt={log_fmt}'
+            f':model={model_str}'
+            f':n_subsample={subsample}'
+            f':log_path={log_path}'
+            f':n_threads={threads}'
+            f':shortest={shortest}'
+        )
 
         if not features:
-            self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model={model_str}:n_subsample={subsample}:log_path={log_path}:n_threads={threads}:shortest={shortest}']
-
+            self.vmafFilter = [
+                f'[{main}][{ref}]{vmaf_filter_name}={base_params}'
+            ]
         elif features and not cambi_heatmap:
-            self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model={model_str}:n_subsample={subsample}:log_path={log_path}:n_threads={threads}:shortest={shortest}:feature={features}']
-
+            self.vmafFilter = [
+                f'[{main}][{ref}]{vmaf_filter_name}={base_params}'
+                f':feature={features}'
+            ]
         elif features and cambi_heatmap:
-            self.vmafFilter = [f'[{main}][{ref}]libvmaf=log_fmt={log_fmt}:model={model_str}:n_subsample={subsample}:log_path={log_path}:n_threads={threads}:shortest={shortest}:feature={features}\\\\:heatmaps_path={self.vmaf_cambi_heatmap_path}']
+            self.vmafFilter = [
+                f'[{main}][{ref}]{vmaf_filter_name}={base_params}'
+                f':feature={features}\\\\:heatmaps_path={self.vmaf_cambi_heatmap_path}'
+            ]
 
 
         self._commit()
@@ -312,13 +328,15 @@ class inputFFmpeg:
     - clearFilters()
     '''
 
-    def __init__(self, videoSrc, input_id):
+    def __init__(self, videoSrc, input_id, gpu_mode=False):
         self.name = f'input{input_id}_'
         self.id = input_id
         self.videoSrc = videoSrc
         self.filtersList = []
         self.extraOptions = []
         self.lastOutputID = f'{str(self.id)}:v'
+        self.gpu_mode = gpu_mode
+        self._hwupload_done = False   # tracks whether hwupload has been inserted
 
     def _setFilter(self, filter):
         self.filtersList.append(filter)
@@ -336,10 +354,39 @@ class inputFFmpeg:
     def _updateOutputId(self, outputID):
         self.lastOutputID = outputID
 
-    def setScaleFilter(self, width, height, algo='bicubic'):
-        """Filter options for Upscale or Downscale"""
+    def _insertHwupload(self):
+        """
+        Insert hwupload filter to transfer frames from CPU to GPU memory.
+        Must be called after all CPU filters (trim, fps, yadif) and before
+        any GPU filters (scale_cuda).
+        Only inserts once — subsequent calls are no-ops.
+        """
+        if self._hwupload_done:
+            return
         inputID, outputID = self._newInOutForFilter()
-        scaleFilter = f'[{inputID}]scale={width}:{height}:flags={algo}[{outputID}]'
+        hwuploadFilter = f'[{inputID}]hwupload[{outputID}]'
+        self._setFilter(hwuploadFilter)
+        self._updateOutputId(outputID)
+        self._hwupload_done = True
+
+    def setScaleFilter(self, width, height, algo='bicubic'):
+        """
+        Filter options for upscale or downscale.
+        In GPU mode: inserts hwupload then uses scale_cuda with yuv420p format.
+        In CPU mode: uses software scale with specified algorithm.
+        CPU filters (trim, fps, yadif) must be applied before this method —
+        hwupload is inserted here as the CPU→GPU boundary.
+        """
+        inputID, outputID = self._newInOutForFilter()
+        if self.gpu_mode:
+            self._insertHwupload()
+            # Re-fetch inputID after hwupload was inserted
+            inputID = self.lastOutputID
+            outputID = f'{self.name}{len(self.filtersList)}'
+            # scale_cuda format=yuv420p required by libvmaf_cuda
+            scaleFilter = f'[{inputID}]scale_cuda={width}:{height}:format=yuv420p[{outputID}]'
+        else:
+            scaleFilter = f'[{inputID}]scale={width}:{height}:flags={algo}[{outputID}]'
         self._setFilter(scaleFilter)
         self._updateOutputId(outputID)
 
@@ -386,6 +433,7 @@ class inputFFmpeg:
     def clearFilters(self):
         self.filtersList = []
         self.lastOutputID = f'{str(self.id)}:v'
+        self._hwupload_done = False   # reset so hwupload can be re-inserted
 
 
 def check_ffmpeg() -> dict:
@@ -408,6 +456,7 @@ def check_ffmpeg() -> dict:
         'version_str': 'unknown',
         'meets_minimum': False,
         'builtin_models': False,
+        'cuda_vmaf': False,      # libvmaf_cuda filter available
     }
 
     # --- Version detection ---
@@ -466,5 +515,18 @@ def check_ffmpeg() -> dict:
     except Exception:
         # Probe failed entirely — conservative assumption
         result['builtin_models'] = False
+
+    # --- CUDA VMAF probe ---
+    # Ask FFmpeg to list compiled-in filters. A CUDA-enabled build will
+    # show 'libvmaf_cuda'; a CPU-only build will not. Fast and reliable.
+    try:
+        probe_cuda = subprocess.run(
+            [FFmpegQos._executable, '-hide_banner', '-filters'],
+            capture_output=True,
+            text=True
+        )
+        result['cuda_vmaf'] = 'libvmaf_cuda' in probe_cuda.stdout
+    except Exception:
+        result['cuda_vmaf'] = False
 
     return result

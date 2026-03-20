@@ -134,6 +134,16 @@ def get_args():
         action='store_true',
         default=False
     )
+    parser.add_argument(
+        '-gpu',
+        help='Use GPU-accelerated VMAF computation via libvmaf_cuda. '
+             'Requires FFmpeg built with --enable-nonfree --enable-ffnvcodec '
+             '--enable-libvmaf and libvmaf built with -Denable_cuda=true. '
+             'Use the provided Dockerfile.cuda to build a compatible image. '
+             '(Default: false).',
+        action='store_true',
+        default=False
+    )
 
     if len(sys.argv) == 1:
         parser.print_help(sys.stderr)
@@ -171,6 +181,7 @@ def main():
     cambi_heatmap = cmdParser.cambi_heatmap
     sync_only = cmdParser.sync_only
     use_json = cmdParser.json
+    gpu_mode = cmdParser.gpu
 
     # Setting verbosity
     if verbose:
@@ -215,6 +226,19 @@ def main():
         ffmpeg_info['version_str']
     )
 
+    if gpu_mode:
+        if not ffmpeg_info['cuda_vmaf']:
+            print(
+                "[easyVmaf] ERROR: --gpu requested but libvmaf_cuda filter "
+                "is not available in the detected FFmpeg build. "
+                "Build FFmpeg using Dockerfile.cuda with "
+                "--enable-nonfree --enable-ffnvcodec --enable-libvmaf "
+                "and libvmaf with -Denable_cuda=true.",
+                flush=True
+            )
+            sys.exit(1)
+        logger.info("GPU mode enabled — using libvmaf_cuda filter.")
+
     # check output format
     if not output_fmt in ["json", "xml", "csv"]:
         logger.warning("output_fmt '%s' not supported, using json", output_fmt)
@@ -241,7 +265,7 @@ def main():
 
         try:
             myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample, model=model,
-                          output_fmt=output_fmt, threads=threads, print_progress=print_progress, end_sync=end_sync, manual_fps=fps, cambi_heatmap=cambi_heatmap)
+                          output_fmt=output_fmt, threads=threads, print_progress=print_progress, end_sync=end_sync, manual_fps=fps, cambi_heatmap=cambi_heatmap, gpu_mode=gpu_mode)
             if syncWin > 0:
                 offset, psnr = myVmaf.syncOffset(syncWin, ss, reverse)
                 if cmdParser.sync_only:
