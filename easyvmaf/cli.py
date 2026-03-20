@@ -39,6 +39,45 @@ from .vmaf import vmaf, UnsupportedFramerateError
 logger = logging.getLogger(__name__)
 
 
+def _build_result(distorted, reference, offset, psnr, model,
+                  vmaf_scores=None, vmaf_output_file=None,
+                  cambi_heatmap_path=None):
+    """
+    Build the structured result dict for one distorted/reference pair.
+
+    Args:
+        distorted:          path to distorted file
+        reference:          path to reference file
+        offset:             sync offset in seconds (float)
+        psnr:               sync PSNR value (float or None)
+        model:              'HD' or '4K'
+        vmaf_scores:        dict of metric_name → mean score, or None
+                            for --sync_only runs
+        vmaf_output_file:   path to VMAF output file, or None
+        cambi_heatmap_path: path to CAMBI heatmap output, or None
+
+    Returns:
+        dict ready for json.dumps()
+    """
+    result = {
+        'distorted': distorted,
+        'reference': reference,
+        'sync': {
+            'offset': round(offset, 6) if offset is not None else 0.0,
+            'psnr':   round(psnr, 6)   if psnr   is not None else None,
+        },
+    }
+    if vmaf_scores is not None:
+        vmaf_block = {'model': model}
+        vmaf_block.update({k: round(v, 6) for k, v in vmaf_scores.items()})
+        if vmaf_output_file:
+            vmaf_block['output_file'] = vmaf_output_file
+        if cambi_heatmap_path:
+            vmaf_block['cambi_heatmap_path'] = cambi_heatmap_path
+        result['vmaf'] = vmaf_block
+    return result
+
+
 def handler(signal_received, frame):
     print('SIGINT or CTRL-C detected. Exiting gracefully')
     sys.exit(0)
@@ -87,6 +126,14 @@ def get_args():
         '-cambi_heatmap', help='Activate cambi heatmap. (Default: false).', action='store_true')
     parser.add_argument(
         '-sync_only', action='store_true', default=False, help='For sync measurement only. No Vmaf processing')
+    parser.add_argument(
+        '-json',
+        help='Output final results as JSON to stdout. '
+             'Compatible with --sync_only and full VMAF runs. '
+             '(Default: false).',
+        action='store_true',
+        default=False
+    )
 
     if len(sys.argv) == 1:
         parser.print_help(sys.stderr)
@@ -123,6 +170,7 @@ def main():
     end_sync = cmdParser.endsync
     cambi_heatmap = cmdParser.cambi_heatmap
     sync_only = cmdParser.sync_only
+    use_json = cmdParser.json
 
     # Setting verbosity
     if verbose:
@@ -133,7 +181,8 @@ def main():
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
         format='%(asctime)s [%(name)s] %(message)s',
-        datefmt='%H:%M:%S'
+        datefmt='%H:%M:%S',
+        stream=sys.stderr,    # explicit — stdout is reserved for JSON output
     )
 
     # --- FFmpeg compatibility check ---
@@ -196,8 +245,17 @@ def main():
             if syncWin > 0:
                 offset, psnr = myVmaf.syncOffset(syncWin, ss, reverse)
                 if cmdParser.sync_only:
-                    result = {"offset": offset, "psnr": psnr}
-                    print(json.dumps(result))
+                    if use_json:
+                        result = _build_result(
+                            distorted=main,
+                            reference=reference,
+                            offset=offset,
+                            psnr=psnr,
+                            model=model,
+                        )
+                        print(json.dumps(result))
+                    else:
+                        print(f"offset: {offset} | psnr: {psnr}", flush=True)
                     sys.exit(0)
             else:
                 offset = ss
@@ -250,25 +308,52 @@ def main():
                     if model == '4K':
                         vmafScore.append(frame["metrics"][_4K_MODEL_NAME])
 
-        print("\n \n \n \n \n ")
-        print("=======================================", flush=True)
-        print("Results:", main, flush=True)
-        print("=======================================", flush=True)
-        print("VMAF computed", flush=True)
-        print("=======================================", flush=True)
-        print("offset: ", offset, " | psnr: ", psnr)
-        if model == 'HD':
-            print("VMAF HD: ", mean(vmafScore))
-            print("VMAF Neg: ", mean(vmafNegScore))
-            print("VMAF Phone: ", mean(vmafPhoneScore))
-        if model == '4K':
-            print("VMAF 4K: ", mean(vmafScore))
+        if use_json:
+            vmaf_scores = {}
+            if model == 'HD':
+                vmaf_scores = {
+                    HD_MODEL_NAME:       mean(vmafScore),
+                    HD_NEG_MODEL_NAME:   mean(vmafNegScore),
+                    HD_PHONE_MODEL_NAME: mean(vmafPhoneScore),
+                }
+            elif model == '4K':
+                vmaf_scores = {
+                    _4K_MODEL_NAME: mean(vmafScore),
+                }
+            result = _build_result(
+                distorted=main,
+                reference=reference,
+                offset=offset,
+                psnr=psnr,
+                model=model,
+                vmaf_scores=vmaf_scores,
+                vmaf_output_file=myVmaf.ffmpegQos.vmafpath,
+                cambi_heatmap_path=(
+                    myVmaf.ffmpegQos.vmaf_cambi_heatmap_path
+                    if cambi_heatmap else None
+                ),
+            )
+            print(json.dumps(result))
+        else:
+            print("\n \n \n \n \n ")
+            print("=======================================", flush=True)
+            print("Results:", main, flush=True)
+            print("=======================================", flush=True)
+            print("VMAF computed", flush=True)
+            print("=======================================", flush=True)
+            print("offset: ", offset, " | psnr: ", psnr)
+            if model == 'HD':
+                print("VMAF HD: ", mean(vmafScore))
+                print("VMAF Neg: ", mean(vmafNegScore))
+                print("VMAF Phone: ", mean(vmafPhoneScore))
+            if model == '4K':
+                print("VMAF 4K: ", mean(vmafScore))
             print("VMAF output file path: ", myVmaf.ffmpegQos.vmafpath)
-        if cambi_heatmap:
-            print("CAMBI Heatmap output path: ",
-                myVmaf.ffmpegQos.vmaf_cambi_heatmap_path)
+            if cambi_heatmap:
+                print("CAMBI Heatmap output path: ",
+                    myVmaf.ffmpegQos.vmaf_cambi_heatmap_path)
 
-        print("\n \n \n \n \n ")
+            print("\n \n \n \n \n ")
 
 
 if __name__ == '__main__':
