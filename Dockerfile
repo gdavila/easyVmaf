@@ -30,6 +30,7 @@ RUN wget https://github.com/Netflix/vmaf/archive/v${VMAF_version}.tar.gz && \
     meson build --buildtype release -Dbuilt_in_models=true && \
     ninja -vC build && \
     ninja -vC build install && \
+    ldconfig && \
     mkdir -p /usr/local/share/model && \
     cp -R ../model/* /usr/local/share/model && \
     rm -rf /tmp/vmaf
@@ -37,7 +38,7 @@ RUN wget https://github.com/Netflix/vmaf/archive/v${VMAF_version}.tar.gz && \
 # Build FFmpeg with libvmaf
 WORKDIR /tmp/ffmpeg
 RUN export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/lib/" && \
-    export PKG_CONFIG_PATH="${PKG_CONFIG_PATH}:/usr/local/lib/pkgconfig/" && \
+    export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/local/lib/x86_64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH}" && \
     wget https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n${FFMPEG_version}.tar.gz && \
     tar -xzf n${FFMPEG_version}.tar.gz && \
     cd FFmpeg-n${FFMPEG_version} && \
