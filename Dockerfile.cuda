@@ -4,7 +4,7 @@
 ARG FFMPEG_version=8.1
 ARG VMAF_version=3.0.0
 ARG DAV1D_version=1.4.3
-ARG EASYVMAF_VERSION=2.1.0
+ARG EASYVMAF_VERSION=3.0.0
 ARG PYTHON_VERSION=3.12
 
 FROM nvidia/cuda:12.3.2-devel-ubuntu22.04 AS base-cuda

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "easyvmaf"
-version = "2.1.0"
+version = "3.0.0"
 description = "FFmpeg-based VMAF computation with automatic deinterlacing, scaling and sync"
 readme = "README.md"
 license = { text = "MIT" }
