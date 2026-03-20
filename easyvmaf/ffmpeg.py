@@ -229,8 +229,6 @@ class FFmpegQos:
         return float(psnr)
 
     def getVmaf(self, log_path=None, model='HD', subsample=1, output_fmt='json', threads=0, print_progress=False, end_sync=False, features=None, cambi_heatmap=False, gpu=False):
-        main = self.main.lastOutputID
-        ref = self.ref.lastOutputID
         if output_fmt == 'xml':
             log_fmt = "xml"
             if log_path == None:
@@ -258,7 +256,16 @@ class FFmpegQos:
             threads = os.cpu_count()
         shortest = 1 if end_sync else 0
 
-        # Select filter name: libvmaf_cuda requires GPU frames from scale_cuda
+        # Upload frames to GPU immediately before libvmaf_cuda.
+        # All CPU filters (scale, fps, trim, deinterlace) must run before this.
+        if gpu:
+            self.main._insertHwupload()
+            self.ref._insertHwupload()
+
+        # Re-read lastOutputID after hwupload may have updated it
+        main = self.main.lastOutputID
+        ref = self.ref.lastOutputID
+
         vmaf_filter_name = 'libvmaf_cuda' if gpu else 'libvmaf'
 
         base_params = (
@@ -356,37 +363,23 @@ class inputFFmpeg:
 
     def _insertHwupload(self):
         """
-        Insert hwupload filter to transfer frames from CPU to GPU memory.
-        Must be called after all CPU filters (trim, fps, yadif) and before
-        any GPU filters (scale_cuda).
+        Insert hwupload_cuda filter to transfer frames from CPU to GPU memory.
+        Called from FFmpegQos.getVmaf() after all CPU filters (trim, fps, yadif,
+        scale) have been appended, immediately before libvmaf_cuda is connected.
         Only inserts once — subsequent calls are no-ops.
         """
         if self._hwupload_done:
             return
         inputID, outputID = self._newInOutForFilter()
-        hwuploadFilter = f'[{inputID}]hwupload[{outputID}]'
+        hwuploadFilter = f'[{inputID}]hwupload_cuda[{outputID}]'
         self._setFilter(hwuploadFilter)
         self._updateOutputId(outputID)
         self._hwupload_done = True
 
     def setScaleFilter(self, width, height, algo='bicubic'):
-        """
-        Filter options for upscale or downscale.
-        In GPU mode: inserts hwupload then uses scale_cuda with yuv420p format.
-        In CPU mode: uses software scale with specified algorithm.
-        CPU filters (trim, fps, yadif) must be applied before this method —
-        hwupload is inserted here as the CPU→GPU boundary.
-        """
+        """Filter options for upscale or downscale using software scale."""
         inputID, outputID = self._newInOutForFilter()
-        if self.gpu_mode:
-            self._insertHwupload()
-            # Re-fetch inputID after hwupload was inserted
-            inputID = self.lastOutputID
-            outputID = f'{self.name}{len(self.filtersList)}'
-            # scale_cuda format=yuv420p required by libvmaf_cuda
-            scaleFilter = f'[{inputID}]scale_cuda={width}:{height}:format=yuv420p[{outputID}]'
-        else:
-            scaleFilter = f'[{inputID}]scale={width}:{height}:flags={algo}[{outputID}]'
+        scaleFilter = f'[{inputID}]scale={width}:{height}:flags={algo}[{outputID}]'
         self._setFilter(scaleFilter)
         self._updateOutputId(outputID)
 

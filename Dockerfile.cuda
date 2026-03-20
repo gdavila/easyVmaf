@@ -3,6 +3,7 @@
 # Global ARGs — available to all stages via empty redeclaration
 ARG FFMPEG_version=8.1
 ARG VMAF_version=3.0.0
+ARG DAV1D_version=1.4.3
 ARG EASYVMAF_VERSION=2.1.0
 ARG PYTHON_VERSION=3.12
 
@@ -12,12 +13,13 @@ FROM base-cuda AS build-cuda
 
 ARG FFMPEG_version
 ARG VMAF_version
+ARG DAV1D_version
 
 RUN apt-get update -yqq && \
     apt-get install --no-install-recommends \
         python3 python3-pip git \
         ninja-build wget doxygen autoconf automake cmake \
-        g++ gcc libdav1d-dev pkg-config make nasm xxd yasm \
+        g++ gcc pkg-config make nasm xxd yasm \
         cuda-nvcc-12-3 libnpp-dev-12-3 -y && \
     apt-get autoremove -y && \
     apt-get clean -y && \
@@ -30,6 +32,17 @@ RUN git clone --depth 1 https://git.videolan.org/git/ffmpeg/nv-codec-headers.git
     cd nv-codec-headers && \
     make install && \
     rm -rf /tmp/nv-codec
+
+# Build dav1d from source — Ubuntu 22.04 ships 0.9.2, FFmpeg 8.1 requires >= 1.0.0
+WORKDIR /tmp/dav1d
+RUN wget https://code.videolan.org/videolan/dav1d/-/archive/${DAV1D_version}/dav1d-${DAV1D_version}.tar.gz && \
+    tar -xzf dav1d-${DAV1D_version}.tar.gz && \
+    cd dav1d-${DAV1D_version} && \
+    meson build --buildtype release --libdir=lib && \
+    ninja -vC build && \
+    ninja -vC build install && \
+    ldconfig && \
+    rm -rf /tmp/dav1d
 
 # Build libvmaf with CUDA support
 # --libdir=lib pins the install to /usr/local/lib on all platforms (meson defaults
@@ -50,14 +63,23 @@ RUN wget https://github.com/Netflix/vmaf/archive/v${VMAF_version}.tar.gz && \
     cp -R ../model/* /usr/local/share/model && \
     rm -rf /tmp/vmaf
 
+# libcuda.so.1 is only injected at runtime by the host GPU driver; the devel image
+# ships only the stub at lib64/stubs/libcuda.so. Create the versioned symlink so
+# the linker can resolve CUDA symbols from libvmaf.so during the FFmpeg build.
+RUN ln -sf /usr/local/cuda/lib64/stubs/libcuda.so \
+           /usr/local/cuda/lib64/stubs/libcuda.so.1
+
 # Build FFmpeg with libvmaf + CUDA
 WORKDIR /tmp/ffmpeg
-RUN export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}" && \
+RUN export LD_LIBRARY_PATH="/usr/local/lib:/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH}" && \
     export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}" && \
+    echo "=== PKG_CONFIG_PATH ===" && echo "${PKG_CONFIG_PATH}" && \
+    echo "=== libvmaf.pc ===" && find /usr/local -name "libvmaf.pc" && \
+    echo "=== pkg-config libvmaf ===" && pkg-config --libs libvmaf 2>&1 || true && \
     wget https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n${FFMPEG_version}.tar.gz && \
     tar -xzf n${FFMPEG_version}.tar.gz && \
     cd FFmpeg-n${FFMPEG_version} && \
-    ./configure \
+    ( ./configure \
         --enable-libvmaf \
         --enable-version3 \
         --enable-shared \
@@ -67,7 +89,8 @@ RUN export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}" && \
         --enable-cuda-nvcc \
         --enable-libnpp \
         --extra-cflags="-I/usr/local/cuda/include" \
-        --extra-ldflags="-L/usr/local/cuda/lib64" && \
+        --extra-ldflags="-L/usr/local/cuda/lib64 -L/usr/local/cuda/lib64/stubs" \
+    || ( echo "=== ffbuild/config.log (last 80 lines) ===" && tail -80 ffbuild/config.log && exit 1 ) ) && \
     make -j$(nproc) && \
     make install && \
     rm -rf /tmp/ffmpeg
@@ -93,7 +116,7 @@ LABEL libvmaf.version="${VMAF_version}"
 
 RUN apt-get update -yqq && \
     apt-get install -y --no-install-recommends \
-        python3 python3-pip dav1d && \
+        python3 python3-pip && \
     apt-get autoremove -y && \
     apt-get clean -y && \
     pip3 install ffmpeg-progress-yield
