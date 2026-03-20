@@ -17,7 +17,7 @@ RUN apt-get update -yqq && \
     apt-get install --no-install-recommends \
         python3 python3-pip git \
         ninja-build wget doxygen autoconf automake cmake \
-        g++ gcc libdav1d-dev pkg-config make nasm yasm \
+        g++ gcc libdav1d-dev pkg-config make nasm xxd yasm \
         cuda-nvcc-12-3 libnpp-dev-12-3 -y && \
     apt-get autoremove -y && \
     apt-get clean -y && \
