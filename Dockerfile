@@ -1,10 +1,14 @@
-FROM python:3.12-slim AS base
-
+# Global ARGs — available to all stages via empty redeclaration
 ARG FFMPEG_version=8.1
 ARG VMAF_version=3.0.0
 ARG EASYVMAF_VERSION=2.1.0
 
+FROM python:3.12-slim AS base
+
 FROM base AS build
+
+ARG FFMPEG_version
+ARG VMAF_version
 
 RUN export TZ='UTC' && \
     ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
@@ -54,9 +58,9 @@ FROM base AS release
 
 ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/lib/"
 
-ARG FFMPEG_version=8.1
-ARG VMAF_version=3.0.0
-ARG EASYVMAF_VERSION=2.1.0
+ARG FFMPEG_version
+ARG VMAF_version
+ARG EASYVMAF_VERSION
 
 LABEL org.opencontainers.image.title="easyVmaf"
 LABEL org.opencontainers.image.version="${EASYVMAF_VERSION}"

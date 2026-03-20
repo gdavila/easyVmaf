@@ -1,12 +1,17 @@
 # Dockerfile.cuda — GPU-accelerated VMAF with libvmaf_cuda
-FROM nvidia/cuda:12.3.2-devel-ubuntu22.04 AS base-cuda
 
+# Global ARGs — available to all stages via empty redeclaration
 ARG FFMPEG_version=8.1
 ARG VMAF_version=3.0.0
 ARG EASYVMAF_VERSION=2.1.0
 ARG PYTHON_VERSION=3.12
 
+FROM nvidia/cuda:12.3.2-devel-ubuntu22.04 AS base-cuda
+
 FROM base-cuda AS build-cuda
+
+ARG FFMPEG_version
+ARG VMAF_version
 
 RUN apt-get update -yqq && \
     apt-get install --no-install-recommends \
@@ -70,9 +75,9 @@ FROM nvidia/cuda:12.3.2-runtime-ubuntu22.04 AS release-cuda
 
 ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/lib/"
 
-ARG FFMPEG_version=8.1
-ARG VMAF_version=3.0.0
-ARG EASYVMAF_VERSION=2.1.0
+ARG FFMPEG_version
+ARG VMAF_version
+ARG EASYVMAF_VERSION
 
 LABEL distribution.restriction="nonfree — binary contains nonfree components (nvcc/CUDA). Cannot be legally redistributed. Build and use locally only."
 LABEL org.opencontainers.image.title="easyVmaf-cuda"
