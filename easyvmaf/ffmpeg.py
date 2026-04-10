@@ -384,7 +384,7 @@ class inputFFmpeg:
         self._setFilter(f'[{inputID}]format=yuv420p[{outputID}]')
         self._updateOutputId(outputID)
         inputID, outputID = self._newInOutForFilter()
-        self._setFilter(f'[{inputID}]setparams=colorspace=unspecified:range=unspecified[{outputID}]')
+        self._setFilter(f'[{inputID}]setparams=colorspace=unknown:range=unknown[{outputID}]')
         self._updateOutputId(outputID)
         inputID, outputID = self._newInOutForFilter()
         self._setFilter(f'[{inputID}]hwupload_cuda[{outputID}]')

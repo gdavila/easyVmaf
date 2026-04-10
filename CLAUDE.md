@@ -150,10 +150,10 @@ properties — they trigger FFprobe only on first access and cache the result.
 When `--gpu` is used, `getVmaf()` calls `_insertHwupload()` on both `main` and `ref`
 inputs **after** all CPU filters have been appended:
 ```
-[scale (CPU)] → [fps (CPU)] → [trim (CPU)] → [format=yuv420p] → [setparams=colorspace=unspecified:range=unspecified] → [hwupload_cuda] → [libvmaf_cuda]
+[scale (CPU)] → [fps (CPU)] → [trim (CPU)] → [format=yuv420p] → [setparams=colorspace=unknown:range=unknown] → [hwupload_cuda] → [libvmaf_cuda]
 ```
 `format=yuv420p` normalises the pixel format but does **not** strip color-space metadata.
-`setparams=colorspace=unspecified:range=unspecified` resets the csp/range tags so both
+`setparams=colorspace=unknown:range=unknown` resets the csp/range tags so both
 inputs present identical properties to `libvmaf_cuda`. Without it, inputs tagged
 `bt709/tv` cause `libvmaf_cuda` to auto-insert a CPU `auto_scale` for color
 normalization, which crashes because `auto_scale` cannot accept CUDA frames.
