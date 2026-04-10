@@ -374,8 +374,17 @@ class inputFFmpeg:
         """
         if self._hwupload_done:
             return
+        # Reset color-space and range metadata before uploading to GPU.
+        # format=yuv420p changes pixel format but does NOT strip csp/range tags.
+        # setparams resets them to unspecified so both inputs present identical
+        # properties to libvmaf_cuda — without this, inputs tagged bt709/tv cause
+        # libvmaf_cuda to auto-insert a CPU auto_scale for color normalization,
+        # which then crashes because auto_scale cannot accept CUDA frames.
         inputID, outputID = self._newInOutForFilter()
         self._setFilter(f'[{inputID}]format=yuv420p[{outputID}]')
+        self._updateOutputId(outputID)
+        inputID, outputID = self._newInOutForFilter()
+        self._setFilter(f'[{inputID}]setparams=colorspace=unspecified:range=unspecified[{outputID}]')
         self._updateOutputId(outputID)
         inputID, outputID = self._newInOutForFilter()
         self._setFilter(f'[{inputID}]hwupload_cuda[{outputID}]')
