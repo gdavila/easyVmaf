@@ -363,16 +363,22 @@ class inputFFmpeg:
 
     def _insertHwupload(self):
         """
-        Insert hwupload_cuda filter to transfer frames from CPU to GPU memory.
+        Insert format=yuv420p + hwupload_cuda before libvmaf_cuda.
         Called from FFmpegQos.getVmaf() after all CPU filters (trim, fps, yadif,
         scale) have been appended, immediately before libvmaf_cuda is connected.
         Only inserts once — subsequent calls are no-ops.
+
+        format=yuv420p strips color-space metadata (bt709, tv/pc range, etc.)
+        so FFmpeg does not auto-insert a CPU auto_scale between hwupload_cuda
+        and libvmaf_cuda when inputs carry differing color-space tags.
         """
         if self._hwupload_done:
             return
         inputID, outputID = self._newInOutForFilter()
-        hwuploadFilter = f'[{inputID}]hwupload_cuda[{outputID}]'
-        self._setFilter(hwuploadFilter)
+        self._setFilter(f'[{inputID}]format=yuv420p[{outputID}]')
+        self._updateOutputId(outputID)
+        inputID, outputID = self._newInOutForFilter()
+        self._setFilter(f'[{inputID}]hwupload_cuda[{outputID}]')
         self._updateOutputId(outputID)
         self._hwupload_done = True
 

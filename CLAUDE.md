@@ -150,8 +150,12 @@ properties — they trigger FFprobe only on first access and cache the result.
 When `--gpu` is used, `getVmaf()` calls `_insertHwupload()` on both `main` and `ref`
 inputs **after** all CPU filters have been appended:
 ```
-[scale (CPU)] → [fps (CPU)] → [trim (CPU)] → [hwupload_cuda] → [libvmaf_cuda]
+[scale (CPU)] → [fps (CPU)] → [trim (CPU)] → [format=yuv420p] → [hwupload_cuda] → [libvmaf_cuda]
 ```
+`format=yuv420p` strips color-space metadata (bt709, tv/pc range) before the GPU
+upload — without it, FFmpeg auto-inserts a CPU `auto_scale` between `hwupload_cuda`
+and `libvmaf_cuda` when inputs carry differing color-space tags, which fails because
+`auto_scale` cannot accept CUDA frames as input.
 `_insertHwupload()` is idempotent — the `_hwupload_done` flag prevents double insertion.
 `clearFilters()` resets this flag so the sequence is repeatable.
 
