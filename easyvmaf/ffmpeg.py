@@ -151,6 +151,38 @@ class FFmpegQos:
         self.vmaf_cambi_heatmap_path = None
         self.gpu_mode = gpu_mode
 
+    @staticmethod
+    def _escape_filter_value(value: str) -> str:
+        r'''
+        Escape a string so it can be safely embedded in an FFmpeg filter option
+        value.
+
+        Applies Level 1 (filter option) then Level 2 (filtergraph) escaping as
+        defined in the FFmpeg filtergraph documentation.  Intended for values
+        that appear after `=` in a filter assignment, e.g.
+        `psnr=stats_file=VALUE` or `libvmaf=log_path=VALUE`.
+
+        See https://ffmpeg.org/ffmpeg-filters.html#Notes-on-filtergraph-escaping.
+
+        **Level 1** — filter option value special characters: `\':`
+
+        **Level 2** — filtergraph special characters: `\'[],;`
+
+        The two passes are applied in order: L1 first, then L2 on the result.
+        This naturally handles the interaction where L1 introduces backslashes
+        that L2 must then double.
+        '''
+        def _escape_chars(value: str, chars: str) -> str:
+            for c in chars:
+                value = value.replace(c, "\\" + c)
+            return value
+
+        # Level 1: escape filter option value special chars
+        value = _escape_chars(value, r"\':")
+        # Level 2: escape filtergraph special chars (including \ and ' again)
+        value = _escape_chars(value, r"\'[],;")
+        return value
+
     def _commitBase(self):
         return [FFmpegQos._executable, '-y', '-hide_banner', '-stats', '-loglevel', self.loglevel]
 
@@ -218,7 +250,7 @@ class FFmpegQos:
         else:
             stats_file = 'stats_file_psnr.log'
 
-        self.psnrFilter = [f'[{main}][{ref}]psnr=stats_file={stats_file}']
+        self.psnrFilter = [f'[{main}][{ref}]psnr=stats_file={self._escape_filter_value(stats_file)}']
         self._commit()
 
         logger.debug("FFmpeg PSNR cmd: %s", self._cmd)
@@ -272,7 +304,7 @@ class FFmpegQos:
             f'log_fmt={log_fmt}'
             f':model={model_str}'
             f':n_subsample={subsample}'
-            f':log_path={log_path}'
+            f':log_path={self._escape_filter_value(log_path)}'
             f':n_threads={threads}'
             f':shortest={shortest}'
         )
@@ -289,7 +321,7 @@ class FFmpegQos:
         elif features and cambi_heatmap:
             self.vmafFilter = [
                 f'[{main}][{ref}]{vmaf_filter_name}={base_params}'
-                f':feature={features}\\\\:heatmaps_path={self.vmaf_cambi_heatmap_path}'
+                f':feature={features}\\\\:heatmaps_path={self._escape_filter_value(self.vmaf_cambi_heatmap_path)}'
             ]
 
 

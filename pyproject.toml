@@ -27,3 +27,6 @@ include = ["easyvmaf*"]
 
 [tool.setuptools.package-data]
 easyvmaf = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
