@@ -358,12 +358,14 @@ class TestEscapeFilterValueRoundTripPosix:
         must make them round-trip."""
         _assert_file_written(str(tmp_path / f"p{char}x.log"))
 
-    def test_case_sensitive_round_trip(self, tmp_path):
-        """On a case-sensitive POSIX filesystem, ``Mixed.Case.LOG`` must
-        land at the exact requested case — no silent normalization."""
-        raw = str(tmp_path / "Mixed.Case.LOG")
+    def test_case_preserving_round_trip(self, tmp_path):
+        """The output filename must preserve the requested letter case."""
+        filename = "Mixed.Case.LOG"
+        raw = str(tmp_path / filename)
+
         _assert_file_written(raw)
-        swapped = os.path.join(os.path.dirname(raw), os.path.basename(raw).swapcase())
-        assert not os.path.exists(swapped), (
-            f"case was silently normalized: {swapped} should not exist"
+
+        assert filename in os.listdir(tmp_path), (
+            f"filename case was not preserved: expected {filename!r}, "
+            f"found {os.listdir(tmp_path)!r}"
         )
