@@ -1,76 +1,91 @@
-# Enhanced fork of easyVmaf (https://github.com/gdavila/easyVmaf.git)
+# easyVmafPlus
 
-Python tool based on ffmpeg and ffprobe to deal with the video preprocesing required for VMAF inputs:
+easyVmafPlus is an enhanced fork of [easyVmaf](https://github.com/gdavila/easyVmaf) by Gabriel Davila. It is a Python tool built on FFmpeg and ffprobe that prepares a reference and a distorted video for [VMAF](https://github.com/Netflix/vmaf). It handles deinterlacing, upscaling and downscaling, frame-to-frame syncing and frame rate adaptation.
 
-* Deinterlacing
-* Upscaling/downscaling
-* Frame-to-Frame Syncing
-* Frame rate adaptation
+Details about how the original tool works can be found in [this OTTVerse article](https://ottverse.com/vmaf-easyvmaf/).
 
-Details about **How it Works** can be found [here](https://ottverse.com/vmaf-easyvmaf/).
+## What easyVmafPlus adds
 
-## Updates
+| Change | Details |
+|---|---|
+| Hardware accelerated decoding | Every ffmpeg run passes `-hwaccel auto` to both the distorted and the reference input. When no hardware decoder is available, FFmpeg decodes in software. |
+| `easyVmafPlus` command | `easyVmafPlus.sh` starts the tool from any directory. `install_symlink.sh` and `uninstall_symlink.sh` add and remove an `easyVmafPlus` symlink on your `PATH`. |
+| Own Docker image | The Dockerfile builds FFmpeg and libvmaf from source and copies the code from this repository. A GitHub Actions workflow publishes the image to the GitHub Container Registry for `linux/amd64` and `linux/arm64`. |
 
-Since `easyVmaf` `2.0` only FFmpeg versions >= `5.0` will be supported. For using `easyVmaf` with FFmpeg < `5.0`, please consider rollingback to `easyVmaf` `1.3`.
+### Fixes
 
-**This is an enhanced fork of the original version that introduces:**
+| Area | Fix |
+|---|---|
+| Relative paths | `easyVmafPlus.sh` runs the tool from the directory you call it in, so relative `-d` and `-r` paths work. |
+| Installer | `install_symlink.sh` stops with an error when no writable directory is found, instead of trying to create `/easyVmafPlus`. |
+| Uninstaller | `uninstall_symlink.sh` also searches the `PATH` directories the installer can fall back to. |
+| Docker build on `linux/amd64` | libvmaf is installed to `/usr/local/lib` on every platform, so the FFmpeg build finds it. Before, it landed in `/usr/local/lib64` on amd64 and FFmpeg's configure step failed. |
 
-- Automatiic hardware accelerated decoding where available and applicable
-- Start script and symlink installer to make system-wide usage of single 'easyVmaf' command possible
+## Features from easyVmaf
 
-New feaures and updates:
+easyVmafPlus keeps the features of the original tool:
 
-* [Cambi feature](https://github.com/Netflix/vmaf/blob/master/resource/doc/cambi.md#options) - Netflix banding detector, supported.
-* Command line ussage updated according to [libvmaf docs](https://ffmpeg.org/ffmpeg-filters.html#libvmaf)
-* [Cambi heatmap](https://github.com/Netflix/vmaf/issues/936) support added.  The outputs may be visualized with [ffplay](https://github.com/Netflix/vmaf/issues/1016#issuecomment-1099591977)
-* Built-in VMAF models are only supported since they are included in FFmpeg  >= `v5.0`.
-* Docker image - better handling of dependencies and built instruccions
-* 'HD Neg' and 'HD phone' models are computed by default
+* [Cambi](https://github.com/Netflix/vmaf/blob/master/resource/doc/cambi.md#options), the Netflix banding detector, is computed on every run.
+* [Cambi heatmaps](https://github.com/Netflix/vmaf/issues/936) can be written with `-cambi_heatmap`. They can be viewed with [ffplay](https://github.com/Netflix/vmaf/issues/1016#issuecomment-1099591977).
+* The command line follows the [libvmaf filter documentation](https://ffmpeg.org/ffmpeg-filters.html#libvmaf).
+* The VMAF models are the built-in models of FFmpeg 5.0 and later.
+* With the HD model, the HD, HD Neg and HD Phone scores are computed in one run.
 
 ## Requirements
 
-* `Linux`/`OSX`
-* Python `>= v3.0`
-* Python module [ffmpeg_progress_yield](https://github.com/slhck/ffmpeg-progress-yield)
-* FFmpeg >= `5.0` build with `libvmaf`. More details [here](http://underpop.online.fr/f/ffmpeg/help/libvmaf.htm.gz)
+| Requirement | Notes |
+|---|---|
+| Linux or macOS | |
+| Python 3 | Verified with Python 3.8 (Docker image) and Python 3.14 (macOS) |
+| Python module [ffmpeg-progress-yield](https://github.com/slhck/ffmpeg-progress-yield) | `pip3 install ffmpeg-progress-yield` |
+| FFmpeg 5.0 or later, built with libvmaf | Since easyVmaf 2.0 only FFmpeg 5.0 and later is supported. For older FFmpeg versions, use easyVmaf 1.3. |
 
 ## Installation
 
-* Just clone the repo and run it from the source folder or anywhere in your local system
-
 ```bash
-$ git clone https://github.com/marcelpoelstra/easyVmaf_enhanced.git
-$ cd easyVmaf
-# optional, create symlink in local binary path to provide systemwide command of easyVmaf
-$ chmod +x easyVmaf.sh install_symlink.sh uninstall_symlink.sh
-$ ./install_symlink.sh
-# optional, remove the symlink to uninstall:
-$ ./uninstall_symlink.sh
+git clone https://github.com/marcelpoelstra/easyVmafPlus.git
+cd easyVmafPlus
+pip3 install ffmpeg-progress-yield
 ```
 
-* Run from [docker image](https://hub.docker.com/repository/docker/gfdavila/easyvmaf). More info at the [end of this document](#Docker-Image-usage).
+You can now run `python3 easyVmafPlus.py` from the repository directory.
+
+To use the `easyVmafPlus` command from any directory, run the installer from the repository root. It links to `easyVmafPlus.sh` in the current directory.
+
+```bash
+./install_symlink.sh
+```
+
+The installer uses the first writable directory of `/usr/local/bin`, `/usr/bin`, `~/bin` and `~/.local/bin`. If none of these is writable, it uses the first writable directory on your `PATH`, skipping `/bin`, `/sbin`, `/usr/bin` and `/usr/sbin`. It refuses to overwrite an existing `easyVmafPlus` file or link.
+
+To remove the command again, run the uninstaller. It asks for confirmation before it removes the link.
+
+```bash
+./uninstall_symlink.sh
+```
 
 ## Usage
 
 ```console
-$ python3 easyVmaf.py
-usage: easyVmaf [-h] -d D -r R [-sw SW] [-ss SS] [-fps FPS] [-subsample N] [-reverse] [-model MODEL]
-                [-threads THREADS] [-verbose] [-progress] [-endsync] [-output_fmt OUTPUT_FMT]
-                [-cambi_heatmap]
+$ easyVmafPlus -h
+usage: easyVmafPlus [-h] -d D -r R [-sw SW] [-ss SS] [-fps FPS] [-subsample N]
+                    [-reverse] [-model MODEL] [-threads THREADS] [-verbose]
+                    [-progress] [-endsync] [-output_fmt OUTPUT_FMT]
+                    [-cambi_heatmap] [-sync_only]
 
-Script to easy compute VMAF using FFmpeg. It allows to deinterlace, scale and sync Ref and Distorted video samples automatically:                   
+Script to easy compute VMAF using FFmpeg. It allows to deinterlace, scale and sync Ref and Distorted video samples automatically:
 
- 	 Autodeinterlace: If the Reference or Distorted samples are interlaced, deinterlacing is applied                  
+ 	 Autodeinterlace: If the Reference or Distorted samples are interlaced, deinterlacing is applied
 
- 	 Autoscale: Reference and Distorted samples are scaled automatically to 1920x1080 or 3840x2160 depending on the VMAF model to use                  
+ 	 Autoscale: Reference and Distorted samples are scaled automatically to 1920x1080 or 3840x2160 depending on the VMAF model to use
 
- 	 Autosync: The first frames of the distorted video are used as reference to a sync look up with the Reference video.                   
- 	 	 The sync is doing by a frame-by-frame look up of the best PSNR                  
- 	 	 See [-reverse] for more options of syncing                  
+ 	 Autosync: The first frames of the distorted video are used as reference to a sync look up with the Reference video.
+ 	 	 The sync is doing by a frame-by-frame look up of the best PSNR
+ 	 	 See [-reverse] for more options of syncing
 
  As output, a json file with VMAF score is created
 
-optional arguments:
+options:
   -h, --help            show this help message and exit
   -sw SW                Sync Window: window size in seconds of a subsample of the Reference video. The sync lookup will be done between the first frames of the Distorted input and this Subsample of the Reference. (default=0. No sync).
   -ss SS                Sync Start Time. Time in seconds from the beginning of the Reference video to which the Sync Window will be applied from. (default=0).
@@ -85,82 +100,82 @@ optional arguments:
   -output_fmt OUTPUT_FMT
                         Output vmaf file format. Options: json or xml (Default: json)
   -cambi_heatmap        Activate cambi heatmap. (Default: false).
-  -sync_only            Sync measurement only. No Vmaf processing (Default: false).
+  -sync_only            For sync measurement only. No Vmaf processing
 
 required arguments:
   -d D                  Distorted video
-  -r R                  Reference video 
+  -r R                  Reference video
 ```
 
-## Examples
+`-d` accepts a glob pattern, for example `"myFolder/video-sample-*.mp4"`. easyVmafPlus then computes VMAF for every matching file against the same reference.
 
-### Syncing: Reference Video delayed in regard with the first frame of Distorted one.
+### Output files
 
-![](readme/easyVmaf1.svg)
+| File | Location |
+|---|---|
+| VMAF log, `<distorted name>_vmaf.json` (or `_vmaf.xml` with `-output_fmt xml`) | Next to the distorted video |
+| CAMBI heatmap, `<distorted name>_cambi_heatmap` (with `-cambi_heatmap`) | Next to the distorted video |
+| `stats_file_psnr.log`, written during sync | The directory you run the command from |
 
-VMAF computation for two video samples, `reference.ts` and `distorted-A.ts`. Both videos are not synced: `reference.ts` is delayed in comparition with `distorted-A.ts`, i.e.,  the first frame of `distorted-A.ts` matchs with the frame located at 0.7007 seconds since the begining of `reference.ts` (blue arrow on the figure). To sync both videos automatically using `easyVmaf`, the next command line is used:
+## Sync examples
 
-    ```bash
-    $ python3 easyVmaf.py -d distorted-A.ts -r reference.ts -sw 2
+The examples use the samples in `video_samples/`. Run them from that directory.
 
-    ...
-    ...
-    [Ignored outputs]
-    ...
-    ...
+### Reference delayed against the distorted video
 
-    Sync Info:
-    offset:  0.7007000000000001 psnr:  48.863779
-    VMAF score:  89.37913542219542
-    VMAF json File Path:  distorted-A_vmaf.json
-    ```
+![Sync window applied to the reference video](readme/easyVmaf1.svg)
 
-The previus command line takes a synchronisation window `sw` of *2 seconds* , this means that the sync lookup will be done between the first frame of `distorted-A.ts` (actually, in practise it takes into account several frames) and a subsample of `reference.ts` of *2 seconds* lenght since its begin.
+The first frame of `BBB_sampleA_distorted.mp4` matches the frame at 1.5 seconds in `BBB_reference_10s.mp4`. With `-sw 1 -ss 1`, easyVmafPlus searches a sync window of 1 second, starting 1 second into the reference. It picks the offset with the highest PSNR.
 
-    ``bash     $ python3 easyVmaf.py -d distorted.ts -r reference.ts -sw 2     ...     ...     [Ignored FFmpeg outputs]     ...     ...     Sync Info:     offset:  0.7007000000000001 psnr:  48.863779     VMAF score:  89.37913542219542     VMAF json File Path:  distorted.json     ``
-
-### Syncing: Distorted Video delayed in regard with the first frame of Reference one.
-
-![](readme/easyVmaf2.svg)
-
-This time,  `distorted-B.ts` is delayed in comparition with `reference.ts`, i.e.,  The first frame of `reference.ts` matchs with the frame located at 8.3003 seconds since the begining of `distorted-B.ts`. To sync the videos automatically, the next command line is used:
-
-    ```bash
-    $ python3 easyVmaf.py -d distorted-B.ts -r reference.ts -sw 3 -ss 6 -reverse
-
-    ...
-    ...
-    [Ignored FFmpeg outputs]
-    ...
-    ...
-
-    Sync Info:
-    offset:  8.300300000000000 psnr:  34.897866
-    VMAF score:  92.34452778643345
-    VMAF json File Path:  distorted-B_vmaf.json
-    ```
-
- The previous command line applies a syncronization window `sw` of *3 seconds*,  a *sync start time* `ss` *of 6 seconds* and the `reverse` flag.
-
-Note the use of the  `reverse`  flag (that was not used on the first example). This flag allows to interchange to which video the `syncWindow` will be applied (reference or distorted).
-
-## Docker Image usage
-
-A [docker image](https://hub.docker.com/repository/docker/gfdavila/easyvmaf) is available on docker hub to run easyVmaf in a straightforward way.
-
-The Docker Image is basically an ubuntu image with `ffmpeg` and `libvmaf` already installed. You can check the [Dockerfile](https://hub.docker.com/r/gfdavila/easyvmaf/dockerfile) for more details.
-
-The easiest way to run easyVmaf through Docker is mounting a shared volume between your host machine and the container. This volume should have inside it all the video files you want to analyze. The outputs (vmaf information files) will be putting in this shared folder also.
-
-Example
-
-```bash
-docker run --rm -v <local-path-to-your-video-files>:/<custom-name-folder> gfdavila/easyvmaf -r /<custom-name-folder>/video-1.mp4 -d /<custom-name-folder>/video-2.mp4
+```console
+$ easyVmafPlus -r BBB_reference_10s.mp4 -d BBB_sampleA_distorted.mp4 -sw 1 -ss 1
+...
+VMAF computed
+=======================================
+offset:  1.5  | psnr:  40.032121
+VMAF HD:  90.8878725125
+VMAF Neg:  89.00986847916667
+VMAF Phone:  99.91903107083333
+VMAF output file path:  BBB_sampleA_distorted_vmaf.json
 ```
 
-Some video samples located on the docker image:
+### Distorted video delayed against the reference
+
+![Sync window applied to the distorted video](readme/easyVmaf2.svg)
+
+Here the first frame of the reference `BBB_sampleA_distorted.mp4` matches the frame at 1.0 second in the distorted `BBB_sampleB_distorted.mp4`. The `-reverse` flag applies the sync window to the distorted video instead of the reference. The offset is then reported as a negative value.
+
+```console
+$ easyVmafPlus -r BBB_sampleA_distorted.mp4 -d BBB_sampleB_distorted.mp4 -sw 2 -ss 0 -reverse
+...
+VMAF computed
+=======================================
+offset:  -1.0  | psnr:  37.254979
+VMAF HD:  56.162353304166665
+VMAF Neg:  54.50033624583333
+VMAF Phone:  74.858480325
+VMAF output file path:  BBB_sampleB_distorted_vmaf.json
+```
+
+## Docker image
+
+The image `ghcr.io/marcelpoelstra/easyvmafplus` is published to the GitHub Container Registry for `linux/amd64` and `linux/arm64`. It is based on `python:3.8-slim`, with FFmpeg and libvmaf built from source. See the [Dockerfile](Dockerfile) for details.
+
+| Tag | Published on |
+|---|---|
+| `latest` | Every push to `master` |
+| `sha-<commit>` | Every push to `master`, with the short commit hash |
+| `<version>` | Every version tag `v*`, for example `v1.2.3` publishes `1.2.3` |
+
+To analyse your own files, mount the folder that holds them. The VMAF log is written next to the distorted video, so it ends up in the same folder.
 
 ```bash
+docker run --rm -v <local-path-to-your-video-files>:/<custom-name-folder> ghcr.io/marcelpoelstra/easyvmafplus -r /<custom-name-folder>/video-1.mp4 -d /<custom-name-folder>/video-2.mp4
+```
+
+The image contains the samples from `video_samples/`:
+
+```text
 NAME                        TIME
 
                            t=0
@@ -168,17 +183,38 @@ NAME                        TIME
 BBB_reference_10s.mp4       */-----------------------------*/
 BBB_sampleA_distorted.mp4           */---------------------*/
 BBB_sampleB_distorted.mp4       */-------------------------*/
-
 ```
 
-Run docker container to get VMAF between `BBB_reference_10s.mp4` and `BBB_sampleA_distorted.mp4`:
+VMAF between `BBB_reference_10s.mp4` and `BBB_sampleA_distorted.mp4`:
 
 ```bash
-:~$ docker run --rm  gfdavila/easyvmaf -r video_samples/BBB_reference_10s.mp4 -d video_samples/BBB_sampleA_distorted.mp4 -sw 1 -ss 1
+docker run --rm ghcr.io/marcelpoelstra/easyvmafplus -r video_samples/BBB_reference_10s.mp4 -d video_samples/BBB_sampleA_distorted.mp4 -sw 1 -ss 1
 ```
 
-Run docker container to get VMAF between `BBB_sampleA_distorted.mp4` and `BBB_sampleB_distorted.mp4`:
+VMAF between `BBB_sampleA_distorted.mp4` and `BBB_sampleB_distorted.mp4`:
 
 ```bash
-:~$ docker run --rm  gfdavila/easyvmaf -r video_samples/BBB_sampleA_distorted.mp4 -d video_samples/BBB_sampleB_distorted.mp4 -sw 2 -ss 0 -reverse
+docker run --rm ghcr.io/marcelpoelstra/easyvmafplus -r video_samples/BBB_sampleA_distorted.mp4 -d video_samples/BBB_sampleB_distorted.mp4 -sw 2 -ss 0 -reverse
 ```
+
+### Building the image yourself
+
+```bash
+docker build -t easyvmafplus .
+docker build --platform linux/amd64 -t easyvmafplus:amd64 .
+```
+
+On an Apple silicon Mac, the `linux/amd64` build runs under QEMU emulation and takes much longer than a native build. QEMU 7.0.0 crashed the compiler during this build. QEMU 10.2.3 from `tonistiigi/binfmt` builds it correctly:
+
+```bash
+docker run --privileged --rm tonistiigi/binfmt --uninstall qemu-x86_64
+docker run --privileged --rm tonistiigi/binfmt --install amd64
+```
+
+### Publishing
+
+The workflow `.github/workflows/docker-publish.yml` builds and pushes the image. It uses Docker's reusable [github-builder](https://github.com/docker/github-builder) workflow, which builds each platform on a native GitHub-hosted runner. A newly published GitHub package is private by default. Set its visibility in the package settings on GitHub.
+
+## Licence
+
+MIT, see [LICENSE](LICENSE). The original easyVmaf is written by Gabriel Davila.

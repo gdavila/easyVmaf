@@ -1,0 +1,35 @@
+name: docker-publish
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - 'master'
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    uses: docker/github-builder/.github/workflows/build.yml@v1
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    with:
+      output: image
+      push: true
+      platforms: linux/amd64,linux/arm64
+      meta-images: ghcr.io/marcelpoelstra/easyvmafplus
+      meta-flavor: |
+        latest=false
+      meta-tags: |
+        type=raw,value=latest,enable={{is_default_branch}}
+        type=sha,enable={{is_default_branch}}
+        type=semver,pattern={{version}}
+    secrets:
+      registry-auths: |
+        - registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}

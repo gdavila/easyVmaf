@@ -2,9 +2,8 @@ FROM python:3.8-slim AS base
 
 # setup dependencies versions
 
-ARG	FFMPEG_version=master \
-ARG	VMAF_version=master \
-ARG	easyVmaf_hash=31c59a444445125265044789d0754db8f39f71be	
+ARG	FFMPEG_version=master
+ARG	VMAF_version=master
 
 FROM base as build
 
@@ -44,7 +43,7 @@ RUN \
 	 tar -xzf  v${VMAF_version}.tar.gz ; \ 
 	fi && \
 	cd vmaf-${VMAF_version}/libvmaf/ && \
-	meson build --buildtype release -Dbuilt_in_models=true && \
+	meson build --buildtype release -Dbuilt_in_models=true --libdir=lib && \
 	ninja -vC build && \
 	ninja -vC build test && \
 	ninja -vC build install && \ 
@@ -65,12 +64,6 @@ RUN \
 	make install && \
 	rm -rf /tmp/ffmpeg
 
-# install  easyVmaf
-WORKDIR  /app
-RUN \
-	wget https://github.com/gdavila/easyVmaf/archive/${easyVmaf_hash}.tar.gz && \
-	tar -xzf  ${easyVmaf_hash}.tar.gz
-
 FROM base AS release
 
 ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/lib/"
@@ -86,8 +79,9 @@ RUN \
 	pip3 install --user ffmpeg-progress-yield
 
 COPY --from=build /usr/local /usr/local/
-COPY --from=build /app/easyVmaf-${easyVmaf_hash} /app/easyVmaf/
+COPY easyVmafPlus.py FFmpeg.py Vmaf.py config.py LICENSE /app/easyVmafPlus/
+COPY video_samples /app/easyVmafPlus/video_samples
 
 # app setup
-WORKDIR  /app/easyVmaf
-ENTRYPOINT [ "python3", "-u", "easyVmaf.py" ]
+WORKDIR  /app/easyVmafPlus
+ENTRYPOINT [ "python3", "-u", "easyVmafPlus.py" ]

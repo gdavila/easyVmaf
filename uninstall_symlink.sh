@@ -1,10 +1,19 @@
 #!/bin/bash
 
 main() {
-    local link_name="easyVmaf"
+    local link_name="easyVmafPlus"
     local paths=("/usr/local/bin" "/usr/bin" "$HOME/bin" "$HOME/.local/bin")
+    local system_path
     local found_path=""
     local response
+
+    # Also check the PATH directories install_symlink.sh falls back to
+    IFS=: read -ra system_path <<< "$PATH"
+    for path in "${system_path[@]}"; do
+        if [[ "$path" != "/bin" && "$path" != "/sbin" && "$path" != "/usr/bin" && "$path" != "/usr/sbin" ]]; then
+            paths+=("$path")
+        fi
+    done
 
     # Check each path for the existence of the symlink and prompt for its removal
     for path in "${paths[@]}"; do

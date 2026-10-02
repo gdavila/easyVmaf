@@ -13,14 +13,8 @@ main() {
     # Determine the directory where the Python script is located
     script_dir=$(dirname "$(readlink -f "$0")")
 
-    # Change to the directory containing the Python script
-    cd "$script_dir" || {
-        printf "Failed to change directory to '%s'.\n" "$script_dir" >&2
-        return 1
-    }
-
-    # Execute the Python script, forwarding all arguments
-    "$python_cmd" "./easyVmaf.py" "$@"
+    # Execute the Python script from the caller's directory, forwarding all arguments
+    "$python_cmd" "$script_dir/easyVmafPlus.py" "$@"
 }
 
 main "$@"

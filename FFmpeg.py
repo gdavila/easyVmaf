@@ -118,7 +118,7 @@ class FFmpegQos:
 
     def _commit(self):
         """build the final cmd to run"""
-        baseCmd = f'{FFmpegQos.cmd} -y -hide_banner -stats -loglevel {self.loglevel} -hwaccel auto'
+        baseCmd = f'{FFmpegQos.cmd} -y -hide_banner -stats -loglevel {self.loglevel}'
         inputsCmd = self._commitInputs()
         filterCmd = self._commitFilters()
         outputCmd = self._commitOutputs()
@@ -126,7 +126,7 @@ class FFmpegQos:
 
     def _commitInputs(self):
         """build the cmd for the inputs files"""
-        inputCmd = f'-i \"{self.main.videoSrc}\" -i \"{self.ref.videoSrc}\" -map 0:v -map 1:v'
+        inputCmd = f'-hwaccel auto -i \"{self.main.videoSrc}\" -hwaccel auto -i \"{self.ref.videoSrc}\" -map 0:v -map 1:v'
         return inputCmd
 
     def _commitOutputs(self):

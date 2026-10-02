@@ -1,8 +1,8 @@
 #!/bin/bash
 
 main() {
-    local target_script="$PWD/easyVmaf.sh"
-    local link_name="easyVmaf"
+    local target_script="$PWD/easyVmafPlus.sh"
+    local link_name="easyVmafPlus"
     local link_path
 
     # Function to find a suitable bin directory
@@ -28,7 +28,7 @@ main() {
         done
 
         # No writable path found
-        echo ""
+        return 1
     }
 
     # Locate an appropriate directory to place the symlink

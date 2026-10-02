@@ -44,7 +44,7 @@ def handler(signal_received, frame):
 
 def get_args():
     '''This function parses and return arguments passed in'''
-    parser = MyParser(prog='easyVmaf',
+    parser = MyParser(prog='easyVmafPlus',
                       description="Script to easy compute VMAF using FFmpeg. It allows to deinterlace, scale and sync Ref and Distorted video samples automatically: \
                         \n\n \t Autodeinterlace: If the Reference or Distorted samples are interlaced, deinterlacing is applied\
                         \n\n \t Autoscale: Reference and Distorted samples are scaled automatically to 1920x1080 or 3840x2160 depending on the VMAF model to use\
