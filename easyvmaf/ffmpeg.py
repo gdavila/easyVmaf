@@ -504,18 +504,19 @@ class inputFFmpeg:
 
 def check_ffmpeg() -> dict:
     """
-    Detect FFmpeg version and libvmaf built-in model availability.
+    Detect FFmpeg version and probe the built-in vmaf_v0.6.1 model.
 
     Returns a dict with:
         {
             'version': (major, minor, patch),  # e.g. (7, 1, 0)
             'version_str': '7.1',
             'meets_minimum': bool,              # >= 5.0
-            'builtin_models': bool,             # libvmaf built-in models available
+            'builtin_models': bool,             # vmaf_v0.6.1 probe succeeded
+            'cuda_vmaf': bool,                  # compiled filter, not GPU runtime
         }
 
     Raises:
-        RuntimeError: if ffmpeg binary is not found or version cannot be parsed
+        RuntimeError: if FFmpeg cannot run or its version cannot be parsed
     """
     result = {
         'version': (0, 0, 0),
@@ -526,25 +527,38 @@ def check_ffmpeg() -> dict:
     }
 
     # --- Version detection ---
+    if not FFmpegQos._executable:
+        raise RuntimeError(
+            "FFmpeg binary not found. Install FFmpeg >= 5.0 built with --enable-libvmaf."
+        )
     try:
         proc = subprocess.run(
             [FFmpegQos._executable, '-version'],
             capture_output=True,
-            text=True
+            text=True,
+            shell=False
         )
         output = proc.stdout
-    except FileNotFoundError:
+    except OSError as error:
         raise RuntimeError(
-            f"FFmpeg binary not found at '{FFmpegQos._executable}'. "
+            f"FFmpeg binary could not be executed at '{FFmpegQos._executable}': {error}. "
             f"Install FFmpeg >= 5.0 built with --enable-libvmaf."
+        ) from error
+
+    if proc.returncode != 0:
+        detail = proc.stderr.strip() or output.strip() or 'no diagnostic output'
+        raise RuntimeError(
+            f"FFmpeg version command failed (exit code {proc.returncode}): {detail}"
         )
 
     # Parse "ffmpeg version X.Y.Z" or "ffmpeg version N-YYYYMMDD-..."
     # Dev builds look like: "ffmpeg version N-111825-gabcdef123"
     # Release builds: "ffmpeg version 7.1" or "ffmpeg version 7.1.1"
-    match = re.search(r'ffmpeg version (\d+)\.(\d+)', output)
+    match = re.match(r'ffmpeg version (\d+)\.(\d+)(?=[\s.\-]|$)', output)
     if not match:
-        # Dev build — cannot determine version reliably, warn and continue
+        if not re.match(r'ffmpeg version (?:N-\d+-g[0-9a-f]+|git-[0-9a-f]+)(?=[\s-]|$)', output):
+            raise RuntimeError("FFmpeg version could not be parsed from command output.")
+        # Recognized dev build — retain the existing minimum-version assumption.
         result['version_str'] = 'dev-build'
         result['meets_minimum'] = True   # assume dev builds are recent enough
     else:
@@ -554,16 +568,13 @@ def check_ffmpeg() -> dict:
         result['meets_minimum'] = (major, minor) >= (5, 0)
 
     # --- Built-in model probe ---
-    # Run a minimal libvmaf command that uses a built-in model.
-    # Use nullsrc as input — FFmpeg will fail, but the error message
-    # tells us whether the model was found or not.
-    # A "could not load libvmaf model" error = built-in models not compiled in.
-    # Any other error (invalid input, etc.) = models are fine, input is the problem.
+    # A successful calculation confirms this model only, not every HD/4K model.
+    # Use one finite synthetic frame per input and require a successful exit.
     probe_cmd = [
         FFmpegQos._executable,
         '-hide_banner', '-loglevel', 'error',
-        '-f', 'lavfi', '-i', 'nullsrc=s=64x64:r=1:d=0.1',
-        '-f', 'lavfi', '-i', 'nullsrc=s=64x64:r=1:d=0.1',
+        '-f', 'lavfi', '-i', 'color=black:s=64x64:r=1:d=1',
+        '-f', 'lavfi', '-i', 'color=black:s=64x64:r=1:d=1',
         '-lavfi', f'libvmaf=model=version=vmaf_v0.6.1:log_fmt=json:log_path={os.devnull}',
         '-f', 'null', '-'
     ]
@@ -571,28 +582,29 @@ def check_ffmpeg() -> dict:
         probe = subprocess.run(
             probe_cmd,
             capture_output=True,
-            text=True
+            text=True,
+            shell=False
         )
-        probe_output = probe.stderr + probe.stdout
-        if 'could not load libvmaf model' in probe_output:
-            result['builtin_models'] = False
-        else:
-            result['builtin_models'] = True
-    except Exception:
+        result['builtin_models'] = probe.returncode == 0
+    except OSError:
         # Probe failed entirely — conservative assumption
         result['builtin_models'] = False
 
     # --- CUDA VMAF probe ---
     # Ask FFmpeg to list compiled-in filters. A CUDA-enabled build will
-    # show 'libvmaf_cuda'; a CPU-only build will not. Fast and reliable.
+    # show 'libvmaf_cuda'; this does not validate a GPU device or CUDA runtime.
     try:
         probe_cuda = subprocess.run(
             [FFmpegQos._executable, '-hide_banner', '-filters'],
             capture_output=True,
-            text=True
+            text=True,
+            shell=False
         )
-        result['cuda_vmaf'] = 'libvmaf_cuda' in probe_cuda.stdout
-    except Exception:
+        result['cuda_vmaf'] = probe_cuda.returncode == 0 and any(
+            len(fields) >= 2 and fields[1] == 'libvmaf_cuda'
+            for fields in (line.split() for line in probe_cuda.stdout.splitlines())
+        )
+    except OSError:
         result['cuda_vmaf'] = False
 
     return result
