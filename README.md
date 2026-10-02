@@ -136,6 +136,19 @@ easyvmaf -d distorted.mp4 -r reference.mp4 -sw 2 -json
 }
 ```
 
+Each result is strict JSON. Logs, progress, diagnostics, and help associated with
+usage errors go to stderr. Explicit `-h` help goes to stdout. If a file fails,
+the command stops with a nonzero exit code and emits no result for that file;
+successful records from earlier files in a batch remain on stdout.
+
+Finite sync PSNR values keep their numeric value, rounded to six decimal places.
+When sync PSNR was not calculated, `sync.psnr` is `null` with no status field.
+For nonfinite PSNR, `sync.psnr` is also `null`, and `sync.psnr_status` identifies
+the value as `"positive_infinity"`, `"negative_infinity"`, or `"nan"`. Identical
+frames legitimately produce positive infinity. This representation affects only
+JSON output; the Python API and sync calculation retain the numeric value.
+Nonfinite offsets or VMAF scores cause an error before the result is emitted.
+
 ### Batch processing
 
 ```bash

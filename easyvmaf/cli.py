@@ -68,6 +68,12 @@ def _build_result(distorted, reference, offset, psnr, model,
             'psnr':   round(psnr, 6)   if psnr   is not None else None,
         },
     }
+    if psnr is not None and not math.isfinite(psnr):
+        result['sync']['psnr'] = None
+        result['sync']['psnr_status'] = (
+            'nan' if math.isnan(psnr) else
+            'positive_infinity' if psnr > 0 else 'negative_infinity'
+        )
     if vmaf_scores is not None:
         vmaf_block = {'model': model}
         vmaf_block.update({k: round(v, 6) for k, v in vmaf_scores.items()})
@@ -79,8 +85,19 @@ def _build_result(distorted, reference, offset, psnr, model,
     return result
 
 
+def _print_json_result(result):
+    """Serialize the entire record before writing any of it to stdout."""
+    try:
+        serialized = json.dumps(result, allow_nan=False)
+    except ValueError as e:
+        print(f"[easyVmaf] ERROR: Cannot serialize result as strict JSON: {e}",
+              file=sys.stderr)
+        sys.exit(1)
+    print(serialized)
+
+
 def handler(signal_received, frame):
-    print('SIGINT or CTRL-C detected. Exiting gracefully')
+    print('SIGINT or CTRL-C detected. Exiting gracefully', file=sys.stderr)
     sys.exit(0)
 
 
@@ -156,7 +173,7 @@ def get_args():
 class MyParser(argparse.ArgumentParser):
     def error(self, message):
         sys.stderr.write('error: %s\n' % message)
-        self.print_help()
+        self.print_help(sys.stderr)
         sys.exit(2)
 
 
@@ -206,7 +223,7 @@ def main():
     try:
         ffmpeg_info = check_ffmpeg()
     except RuntimeError as e:
-        print(f"[easyVmaf] ERROR: {e}", flush=True)
+        print(f"[easyVmaf] ERROR: {e}", file=sys.stderr, flush=True)
         sys.exit(1)
 
     if not ffmpeg_info['meets_minimum']:
@@ -214,7 +231,7 @@ def main():
             f"[easyVmaf] ERROR: FFmpeg {ffmpeg_info['version_str']} detected. "
             f"easyVmaf requires FFmpeg >= 5.0 built with --enable-libvmaf. "
             f"The 'model=' parameter for libvmaf was introduced in FFmpeg 5.0.",
-            flush=True
+            file=sys.stderr, flush=True
         )
         sys.exit(1)
 
@@ -223,7 +240,7 @@ def main():
             f"[easyVmaf] ERROR: FFmpeg {ffmpeg_info['version_str']} is installed "
             f"but libvmaf built-in models are not available. "
             f"Rebuild libvmaf with '-Dbuilt_in_models=true' and recompile FFmpeg.",
-            flush=True
+            file=sys.stderr, flush=True
         )
         sys.exit(1)
 
@@ -240,7 +257,7 @@ def main():
                 "Build FFmpeg using Dockerfile.cuda with "
                 "--enable-nonfree --enable-ffnvcodec --enable-libvmaf "
                 "and libvmaf with -Denable_cuda=true.",
-                flush=True
+                file=sys.stderr, flush=True
             )
             sys.exit(1)
         logger.info("GPU mode enabled — using libvmaf_cuda filter.")
@@ -283,7 +300,7 @@ def main():
                             psnr=psnr,
                             model=model,
                         )
-                        print(json.dumps(result))
+                        _print_json_result(result)
                     else:
                         print(f"offset: {offset} | psnr: {psnr}", flush=True)
                     continue
@@ -363,7 +380,7 @@ def main():
                     if cambi_heatmap else None
                 ),
             )
-            print(json.dumps(result))
+            _print_json_result(result)
         else:
             print("\n \n \n \n \n ")
             print("=======================================", flush=True)
