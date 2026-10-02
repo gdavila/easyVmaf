@@ -34,6 +34,23 @@ from ffmpeg_progress_yield import FfmpegProgress
 logger = logging.getLogger(__name__)
 
 
+def _cleanup_interrupted_process(process):
+    """Stop and reap only the child owned by the interrupted calculation."""
+    if process is None:
+        return
+    try:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=5)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        # Preserve the interruption, even if the OS cannot complete cleanup.
+        logger.warning("Could not reap interrupted FFmpeg process: %s", error)
+    finally:
+        for stream in (process.stdin, process.stdout, process.stderr):
+            if stream is not None:
+                stream.close()
+
+
 class FFmpegExecutionError(RuntimeError):
     """An FFmpeg calculation failed; its output must not be used as a result."""
 
@@ -348,10 +365,16 @@ class FFmpegQos:
 
         if print_progress:
             process = FfmpegProgress(self._cmd)
+            child = None
             try:
                 for progress in process.run_command_with_progress():
+                    # Retain ownership even when the dependency clears .process.
+                    child = getattr(process, 'process', None)
                     logger.info("progress = %s%% - %s", progress,
                                 "\n".join(str(process.stderr).splitlines()[-9:-8]))
+            except (KeyboardInterrupt, SystemExit):
+                _cleanup_interrupted_process(child or getattr(process, 'process', None))
+                raise
             except RuntimeError as error:
                 # ffmpeg-progress-yield signals failure with RuntimeError.
                 # Recent versions clear their Popen instance during cleanup.
@@ -361,7 +384,11 @@ class FFmpegQos:
         else:
             process = subprocess.Popen(
                 self._cmd, stdout=subprocess.PIPE, shell=False)
-            process.communicate()
+            try:
+                process.communicate()
+            except (KeyboardInterrupt, SystemExit):
+                _cleanup_interrupted_process(process)
+                raise
             if process.returncode != 0:
                 raise FFmpegExecutionError(self._cmd, process.returncode)
 

@@ -97,8 +97,8 @@ def _print_json_result(result):
 
 
 def handler(signal_received, frame):
-    print('SIGINT or CTRL-C detected. Exiting gracefully', file=sys.stderr)
-    sys.exit(0)
+    print('SIGINT or CTRL-C detected. Calculation interrupted.', file=sys.stderr)
+    sys.exit(130)
 
 
 def get_args():

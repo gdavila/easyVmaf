@@ -196,10 +196,10 @@ def test_explicit_help_still_uses_stdout(monkeypatch, capsys):
     assert captured.err == ""
 
 
-def test_interrupt_diagnostic_uses_stderr_and_preserves_exit_code(capsys):
+def test_interrupt_diagnostic_uses_stderr_and_exits_130(capsys):
     with pytest.raises(SystemExit) as exc:
         cli.handler(None, None)
-    assert exc.value.code == 0
+    assert exc.value.code == 130
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "SIGINT" in captured.err

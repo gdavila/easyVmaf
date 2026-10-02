@@ -149,6 +149,12 @@ usage errors go to stderr. Explicit `-h` help goes to stdout. If a file fails,
 the command stops with a nonzero exit code and emits no result for that file;
 successful records from earlier files in a batch remain on stdout.
 
+SIGINT (Ctrl-C) exits with code 130 and reports the interruption on stderr.
+The interrupted calculation emits no result; completed batch records remain on
+stdout. An active VMAF scoring process is stopped and reaped, with a bounded wait.
+During automatic synchronization, shutdown can still wait for running PSNR search
+workers to finish.
+
 Finite sync PSNR values keep their numeric value, rounded to six decimal places.
 When sync PSNR was not calculated, `sync.psnr` is `null` with no status field.
 For nonfinite PSNR, `sync.psnr` is also `null`, and `sync.psnr_status` identifies
