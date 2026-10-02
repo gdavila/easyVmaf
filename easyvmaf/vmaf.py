@@ -444,12 +444,8 @@ class vmaf():
         results.sort(key=lambda x: x[0])
         best_offset, best_psnr = max(results, key=lambda x: x[1])
 
-        # Restore invertedSrc state on shared ffmpegQos so that getVmaf() works correctly
-        if reverse:
-            self.ffmpegQos.invertedSrc = True
-            self.ffmpegQos.main.videoSrc, self.ffmpegQos.ref.videoSrc = \
-                self.ffmpegQos.ref.videoSrc, self.ffmpegQos.main.videoSrc
-
+        # Only workers swap sources for reverse search. Preserve the shared
+        # distorted/reference roles; a negative offset trims distorted in setOffset().
         self.offset = -best_offset if reverse else best_offset
         return [self.offset, best_psnr]
 

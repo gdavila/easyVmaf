@@ -135,9 +135,10 @@ properties — they trigger FFprobe only on first access and cache the result.
 ### Sync loop (syncOffset)
 - Runs PSNR at each frame offset in the sync window **in parallel** via `ThreadPoolExecutor`
 - Each worker creates its own `FFmpegQos` instance with `gpu_mode=False` — sync is always CPU-only even when `--gpu` is set
-- `ffmpegQos.invertSrcs()` swaps main/ref when `--reverse` is set
-- After inversion, `invertSrcs()` must be called again to restore original order
-- `clearFilters()` is called for each worker's own QoS instance
+- Reverse-search workers construct their own QoS instances with swapped paths and `invertedSrc=True`
+- The shared `ffmpegQos` retains main=distorted, ref=reference and its `invertedSrc` state after every search; no restoration swap is needed
+- Reverse search returns a negative offset so the final calculation trims distorted and names its output after distorted
+- Each worker starts with fresh filter chains on its own QoS instance
 
 ### Filter application order (always this sequence)
 1. `clearFilters()` — reset state (also resets `_hwupload_done`)
