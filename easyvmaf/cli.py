@@ -27,6 +27,7 @@ import csv
 import glob
 import json
 import logging
+import math
 import os.path
 import sys
 import xml.etree.ElementTree as ET
@@ -125,7 +126,8 @@ def get_args():
     parser.add_argument(
         '-cambi_heatmap', help='Activate cambi heatmap. (Default: false).', action='store_true')
     parser.add_argument(
-        '-sync_only', action='store_true', default=False, help='For sync measurement only. No Vmaf processing')
+        '-sync_only', action='store_true', default=False,
+        help='Measure sync only for every input. Requires an explicit finite -sw greater than zero. No Vmaf processing')
     parser.add_argument(
         '-json',
         help='Output final results as JSON to stdout. '
@@ -163,6 +165,10 @@ def main():
 
     '''reading values from cmdParser'''
     cmdParser = get_args()
+    if cmdParser.sync_only and (not math.isfinite(cmdParser.sw) or cmdParser.sw <= 0):
+        print('error: -sync_only requires an explicit finite -sw greater than zero',
+              file=sys.stderr)
+        sys.exit(2)
     main_pattern = cmdParser.d
     reference = cmdParser.r
 
@@ -268,7 +274,7 @@ def main():
                           output_fmt=output_fmt, threads=threads, print_progress=print_progress, end_sync=end_sync, manual_fps=fps, cambi_heatmap=cambi_heatmap, gpu_mode=gpu_mode)
             if syncWin > 0:
                 offset, psnr = myVmaf.syncOffset(syncWin, ss, reverse)
-                if cmdParser.sync_only:
+                if sync_only:
                     if use_json:
                         result = _build_result(
                             distorted=main,
@@ -280,7 +286,7 @@ def main():
                         print(json.dumps(result))
                     else:
                         print(f"offset: {offset} | psnr: {psnr}", flush=True)
-                    sys.exit(0)
+                    continue
             else:
                 offset = ss
                 psnr = None

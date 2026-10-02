@@ -72,7 +72,7 @@ easyvmaf -d <distorted> -r <reference> [options]
 | `-progress` | off | Show FFmpeg progress during VMAF computation. |
 | `-endsync` | off | Stop when the shorter video ends. |
 | `-cambi_heatmap` | off | Compute and save CAMBI banding heatmap. |
-| `-sync_only` | off | Measure sync offset only — skip VMAF computation. |
+| `-sync_only` | off | Measure sync offset for every input and skip VMAF computation. Requires an explicit, finite `-sw` greater than zero. |
 | `-json` | off | Print final results as JSON to stdout. Compatible with `-sync_only` and full VMAF runs. In batch mode, one JSON object per line (NDJSON). |
 | `-gpu` | off | Use GPU-accelerated VMAF via `libvmaf_cuda`. Requires a CUDA-capable FFmpeg build (see [Docker: CUDA](#cuda-gpu-build)). |
 
@@ -96,12 +96,21 @@ easyvmaf -d distorted.mp4 -r reference.mp4 -sw 3 -ss 6 -reverse
 
 ### Sync measurement only
 
+`-sync_only` requires an explicit, finite `-sw` greater than zero. Missing, zero,
+negative, NaN, or infinite windows are usage errors (exit code 2), reported before
+checking FFmpeg or probing videos. Every matched input is synchronized, with one
+result per file. JSON results contain only `distorted`, `reference`, and `sync`;
+no VMAF calculation or output file is produced.
+
 ```bash
 # Human-readable output
 easyvmaf -d distorted.mp4 -r reference.mp4 -sw 2 -sync_only
 
 # Structured JSON output
 easyvmaf -d distorted.mp4 -r reference.mp4 -sw 2 -sync_only -json
+
+# Batch: one JSON object per matched file (NDJSON)
+easyvmaf -d "folder/*.mp4" -r reference.mp4 -sw 2 -sync_only -json
 ```
 
 ### Structured JSON output
