@@ -126,7 +126,7 @@ def get_args():
     parser.add_argument('-subsample', dest='n', type=int, default=1,
                         help="Specifies the subsampling of frames to speed up calculation. (default=1, None).")
     parser.add_argument('-reverse', help="If enable, it Changes the default Autosync behaviour: The first frames of the Reference video are used as reference to sync with the Distorted one. (Default = Disable).", action='store_true')
-    parser.add_argument('-model', dest='model', type=str, default="HD",
+    parser.add_argument('-model', dest='model', type=str, choices=('HD', '4K'), default="HD",
                         help="Vmaf Model. Options: HD, 4K. (Default: HD).")
     parser.add_argument('-threads', dest='threads', type=int,
                         default=0, help='number of threads')
@@ -137,7 +137,8 @@ def get_args():
     parser.add_argument(
         '-endsync', help='Activate end sync. This ends the computation when the shortest video ends. (Default: false).', action='store_true')
 
-    parser.add_argument('-output_fmt', dest='output_fmt', type=str, default='json',
+    parser.add_argument('-output_fmt', dest='output_fmt', type=str,
+                        choices=('json', 'xml', 'csv'), default='json',
                         help='Output vmaf file format. Options: json, xml or csv (Default: json)')
 
     parser.add_argument(
@@ -167,7 +168,17 @@ def get_args():
     if len(sys.argv) == 1:
         parser.print_help(sys.stderr)
         sys.exit(1)
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.sync_only and (not math.isfinite(args.sw) or args.sw <= 0):
+        parser.error('-sync_only requires an explicit finite -sw greater than zero')
+    for flag, value in (('-sw', args.sw), ('-ss', args.ss), ('-fps', args.fps)):
+        if not math.isfinite(value) or value < 0:
+            parser.error('%s must be finite and greater than or equal to zero' % flag)
+    if args.n < 1:
+        parser.error('-subsample must be an integer of at least 1')
+    if args.threads < 0:
+        parser.error('-threads must be an integer greater than or equal to zero')
+    return args
 
 
 class MyParser(argparse.ArgumentParser):
@@ -182,18 +193,13 @@ def main():
 
     '''reading values from cmdParser'''
     cmdParser = get_args()
-    if cmdParser.sync_only and (not math.isfinite(cmdParser.sw) or cmdParser.sw <= 0):
-        print('error: -sync_only requires an explicit finite -sw greater than zero',
-              file=sys.stderr)
-        sys.exit(2)
     main_pattern = cmdParser.d
     reference = cmdParser.r
 
-    ''' to avoid error negative numbers are not allowed'''
-    syncWin = abs(cmdParser.sw)
-    ss = abs(cmdParser.ss)
-    fps = abs(cmdParser.fps)
-    n_subsample = abs(cmdParser.n)
+    syncWin = cmdParser.sw
+    ss = cmdParser.ss
+    fps = cmdParser.fps
+    n_subsample = cmdParser.n
     reverse = cmdParser.reverse
     model = cmdParser.model
     verbose = cmdParser.verbose
@@ -261,11 +267,6 @@ def main():
             )
             sys.exit(1)
         logger.info("GPU mode enabled — using libvmaf_cuda filter.")
-
-    # check output format
-    if not output_fmt in ["json", "xml", "csv"]:
-        logger.warning("output_fmt '%s' not supported, using json", output_fmt)
-        output_fmt = "json"
 
     '''
     Distorted video path could be loaded as patterns i.e., "myFolder/video-sample-*.mp4"

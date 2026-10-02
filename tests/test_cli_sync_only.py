@@ -103,7 +103,7 @@ def test_invalid_sync_only_window_rejected_before_environment_or_probing(
     constructor.assert_not_called()
 
 
-@pytest.mark.parametrize("window", [None, "-0.4", "0.4"])
+@pytest.mark.parametrize("window", [None, "0", "0.4"])
 def test_full_computation_still_runs_once_per_input(batch, monkeypatch, capsys, window):
     files, reference, calculations, constructor = batch
     monkeypatch.setattr(cli.glob, "glob", lambda pattern: files)
@@ -117,7 +117,7 @@ def test_full_computation_still_runs_once_per_input(batch, monkeypatch, capsys, 
     assert [call.args[0] for call in constructor.call_args_list] == files
     for calculation in calculations.values():
         calculation.getVmaf.assert_called_once_with()
-        if window is None:
+        if window in (None, "0"):
             calculation.syncOffset.assert_not_called()
         else:
             calculation.syncOffset.assert_called_once_with(0.4, 0, False)

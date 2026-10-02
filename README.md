@@ -76,6 +76,14 @@ easyvmaf -d <distorted> -r <reference> [options]
 | `-json` | off | Print final results as JSON to stdout. Compatible with `-sync_only` and full VMAF runs. In batch mode, one JSON object per line (NDJSON). |
 | `-gpu` | off | Use GPU-accelerated VMAF via `libvmaf_cuda`. Requires a CUDA-capable FFmpeg build (see [Docker: CUDA](#cuda-gpu-build)). |
 
+`-sw`, `-ss`, and `-fps` accept finite numbers greater than or equal to zero.
+Zero preserves the defaults: no sync search, no start offset, and automatic frame
+rate handling. `-subsample` accepts integers of at least 1; `-threads` accepts
+integers of at least 0. Model and output format choices are case-sensitive.
+Invalid values are usage errors (exit code 2), reported on stderr before checking
+FFmpeg or probing videos. They are never converted to positive values or replaced
+with defaults.
+
 ## Examples
 
 ### Basic VMAF (no sync)

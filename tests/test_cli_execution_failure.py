@@ -88,9 +88,10 @@ def test_real_cli_success_then_invalid_subsample_never_reuses_score(real_clip, p
 
     failure = subprocess.run(command + ["-subsample", "0"], capture_output=True,
                              text=True, env=environment)
-    assert failure.returncode == 1, failure.stdout
+    assert failure.returncode == 2, failure.stdout
     assert failure.stdout == ""
-    assert "[easyVmaf] ERROR: FFmpeg" in failure.stderr
+    assert "-subsample" in failure.stderr
+    assert "at least 1" in failure.stderr
     assert "Traceback" not in failure.stderr
 
 
