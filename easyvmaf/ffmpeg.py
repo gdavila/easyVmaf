@@ -34,6 +34,20 @@ from ffmpeg_progress_yield import FfmpegProgress
 logger = logging.getLogger(__name__)
 
 
+class FFmpegExecutionError(RuntimeError):
+    """An FFmpeg calculation failed; its output must not be used as a result."""
+
+    def __init__(self, cmd, returncode=None, detail=None):
+        self.cmd = list(cmd)
+        self.returncode = returncode
+        message = "FFmpeg execution failed"
+        if returncode is not None:
+            message += f" (exit code {returncode})"
+        if detail:
+            message += f": {detail}"
+        super().__init__(message)
+
+
 # Structured model definitions
 # Each entry: (version_string, name_alias, extra_params_dict)
 VMAF_MODELS = {
@@ -261,6 +275,10 @@ class FFmpegQos:
         return float(psnr)
 
     def getVmaf(self, log_path=None, model='HD', subsample=1, output_fmt='json', threads=0, print_progress=False, end_sync=False, features=None, cambi_heatmap=False, gpu=False):
+        """Run VMAF and return its process, raising FFmpegExecutionError on failure.
+
+        An existing log is not a valid result after an execution failure.
+        """
         if output_fmt == 'xml':
             log_fmt = "xml"
             if log_path == None:
@@ -330,14 +348,22 @@ class FFmpegQos:
 
         if print_progress:
             process = FfmpegProgress(self._cmd)
-            for progress in process.run_command_with_progress():
-                logger.info("progress = %s%% - %s", progress,
-                            "\n".join(str(process.stderr).splitlines()[-9:-8]))
+            try:
+                for progress in process.run_command_with_progress():
+                    logger.info("progress = %s%% - %s", progress,
+                                "\n".join(str(process.stderr).splitlines()[-9:-8]))
+            except RuntimeError as error:
+                # ffmpeg-progress-yield signals failure with RuntimeError.
+                # Recent versions clear their Popen instance during cleanup.
+                returncode = getattr(getattr(process, 'process', None), 'returncode', None)
+                raise FFmpegExecutionError(self._cmd, returncode, str(error)) from error
 
         else:
             process = subprocess.Popen(
                 self._cmd, stdout=subprocess.PIPE, shell=False)
             process.communicate()
+            if process.returncode != 0:
+                raise FFmpegExecutionError(self._cmd, process.returncode)
 
         return process
 

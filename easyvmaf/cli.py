@@ -33,7 +33,7 @@ import xml.etree.ElementTree as ET
 from signal import signal, SIGINT
 from statistics import mean, harmonic_mean
 
-from .ffmpeg import check_ffmpeg, HD_MODEL_NAME, HD_NEG_MODEL_NAME, HD_PHONE_MODEL_NAME, _4K_MODEL_NAME, HD_PHONE_MODEL_VERSION
+from .ffmpeg import FFmpegExecutionError, check_ffmpeg, HD_MODEL_NAME, HD_NEG_MODEL_NAME, HD_PHONE_MODEL_NAME, _4K_MODEL_NAME, HD_PHONE_MODEL_VERSION
 from .vmaf import vmaf, UnsupportedFramerateError
 
 logger = logging.getLogger(__name__)
@@ -290,7 +290,7 @@ def main():
                     myVmaf.offset = offset
 
             vmafProcess = myVmaf.getVmaf()
-        except (UnsupportedFramerateError, ValueError) as e:
+        except (FFmpegExecutionError, UnsupportedFramerateError, ValueError) as e:
             print(f"[easyVmaf] ERROR: {e}", file=sys.stderr)
             sys.exit(1)
         vmafpath = myVmaf.ffmpegQos.vmafpath
