@@ -306,12 +306,9 @@ def main():
                         print(f"offset: {offset} | psnr: {psnr}", flush=True)
                     continue
             else:
-                offset = ss
+                offset = (-ss if reverse else ss) if ss else 0.0
                 psnr = None
-                if reverse:
-                    myVmaf.offset = -offset
-                else:
-                    myVmaf.offset = offset
+                myVmaf.offset = offset
 
             vmafProcess = myVmaf.getVmaf()
         except (FFmpegExecutionError, UnsupportedFramerateError, ValueError) as e:

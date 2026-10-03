@@ -102,6 +102,11 @@ easyvmaf -d distorted.mp4 -r reference.mp4 -sw 2
 easyvmaf -d distorted.mp4 -r reference.mp4 -sw 3 -ss 6 -reverse
 ```
 
+With `-sw 0` (the default), `-ss X` applies a manual offset: positive to trim
+the reference, or negative with `-reverse` to trim the distorted video. Both
+manual and automatic offsets use this sign convention in JSON and human output.
+A zero manual offset is reported as `0.0`, including with `-reverse`.
+
 ### Sync measurement only
 
 `-sync_only` requires an explicit, finite `-sw` greater than zero. Missing, zero,
