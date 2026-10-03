@@ -31,6 +31,7 @@ def probes(monkeypatch):
 @pytest.mark.parametrize("output, version, version_str, minimum", [
     ("ffmpeg version 7.1.1 Copyright", (7, 1, 0), "7.1", True),
     ("ffmpeg version 4.4.5 Copyright", (4, 4, 0), "4.4", False),
+    ("ffmpeg version n7.1.1-20250301 Copyright", (7, 1, 0), "7.1", True),
     ("ffmpeg version N-111825-gabcdef123 Copyright", (0, 0, 0), "dev-build", True),
     ("ffmpeg version git-abcdef123 Copyright", (0, 0, 0), "dev-build", True),
 ])

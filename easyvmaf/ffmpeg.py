@@ -598,7 +598,8 @@ def check_ffmpeg() -> dict:
     # Parse "ffmpeg version X.Y.Z" or "ffmpeg version N-YYYYMMDD-..."
     # Dev builds look like: "ffmpeg version N-111825-gabcdef123"
     # Release builds: "ffmpeg version 7.1" or "ffmpeg version 7.1.1"
-    match = re.match(r'ffmpeg version (\d+)\.(\d+)(?=[\s.\-]|$)', output)
+    # Builds from git release tags (e.g. BtbN): "ffmpeg version n7.1.1-20250301"
+    match = re.match(r'ffmpeg version n?(\d+)\.(\d+)(?=[\s.\-]|$)', output)
     if not match:
         if not re.match(r'ffmpeg version (?:N-\d+-g[0-9a-f]+|git-[0-9a-f]+)(?=[\s-]|$)', output):
             raise RuntimeError("FFmpeg version could not be parsed from command output.")
