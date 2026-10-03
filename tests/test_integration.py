@@ -147,6 +147,21 @@ def test_vmaf_v1_scores_a_scaled_rendition(encode, tmp_path):
     assert any(Path(result.cambi_heatmap_path).iterdir())
 
 
+@pytest.mark.requires_libvmaf_v1
+def test_vmaf_v1_scores_a_144p_rendition(encode, tmp_path):
+    """The lowest ABR rungs fail in libvmaf: CAMBI rejects encoding sizes below 180x150."""
+    reference, distorted = tmp_path / "ref.mkv", tmp_path / "dist.mkv"
+    encode("-f", "lavfi", "-i", "testsrc2=s=1920x1080:r=10:d=1", "-pix_fmt", "yuv420p",
+           "-c:v", "ffv1", reference)
+    encode("-i", reference, "-vf", "scale=256:144", "-pix_fmt", "yuv420p", "-c:v", "ffv1",
+           distorted)
+
+    result = vmaf(str(distorted), str(reference), threads=2).getVmaf()
+
+    assert set(result.scores) == {"vmaf_v1_hd", "vmaf_v1_phone"}
+    assert all(0 <= score <= 100 for score in result.scores.values())
+
+
 def test_sync_worker_stops_decoding_after_trim(encode, tmp_path, monkeypatch):
     # With -map 0:v/1:v every 300-frame input was decoded to EOF, and audio
     # was decoded without -an. Frame counts are deterministic, not timing.

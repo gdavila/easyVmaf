@@ -38,6 +38,11 @@ logger = logging.getLogger(__name__)
 # HFR v1 models are calibrated for ~50/60 fps content.
 HFR_MIN_FPS = 47
 HFR_MAX_CALIBRATED_FPS = 60
+# libvmaf 3.2.1 CAMBI rejects an encoding size below 180x150, or with both
+# sides below 216 (feature/cambi.c), and the whole VMAF v1 calculation fails.
+CAMBI_MIN_ENC_WIDTH = 180
+CAMBI_MIN_ENC_HEIGHT = 150
+CAMBI_MIN_ENC_SIDE = 216
 
 # --model-option syntax: no ':', '|', '[', ']', ';' or quotes can reach the filtergraph.
 _MODEL_OPTION_RE = re.compile(r'^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*=[A-Za-z0-9_.\-]+$')
@@ -70,6 +75,18 @@ def _pixFmtBitdepth(pix_fmt) -> int:
         return parsed[1]
     match = re.search(r'p(\d+)(le|be)?$', str(pix_fmt))
     return int(match.group(1)) if match else 8
+
+
+def _cambiEncodingSize(width, height) -> Tuple[int, int]:
+    """
+    The encoding size passed to CAMBI: (width, height) when CAMBI accepts it,
+    otherwise the smallest accepted size with the same aspect ratio, which is
+    the closest to the real encoding resolution (e.g. 256x144 -> 267x150).
+    """
+    scale = max(1.0, CAMBI_MIN_ENC_WIDTH / width, CAMBI_MIN_ENC_HEIGHT / height,
+                CAMBI_MIN_ENC_SIDE / max(width, height))
+    # The epsilon keeps float error from rounding an exact side up by one.
+    return math.ceil(width * scale - 1e-9), math.ceil(height * scale - 1e-9)
 
 
 def _parseSize(size) -> Tuple[int, int]:
@@ -703,6 +720,16 @@ class vmaf():
             self.ffmpegQos.main.setTrimFilter(offset, duration)
             self.ffmpegQos.ref.setTrimFilter(0, duration)
 
+    @staticmethod
+    def _cambiEncodingSize(width, height):
+        """CAMBI-accepted encoding size, with a warning when it differs."""
+        size = _cambiEncodingSize(width, height)
+        if size != (width, height):
+            logger.warning("CAMBI does not accept a %sx%s encoding size; using %sx%s, "
+                           "the smallest accepted size with the same aspect ratio",
+                           width, height, *size)
+        return size
+
     def _resolveModels(self):
         """
         Select the models to compute once the effective frame rate is known,
@@ -726,6 +753,7 @@ class vmaf():
         else:
             enc_width = self.main.streamInfo['width']
             enc_height = self.main.streamInfo['height']
+        enc_width, enc_height = self._cambiEncodingSize(enc_width, enc_height)
         if self.enc_bitdepth is not None:
             enc_bitdepth = self.enc_bitdepth
         else:
@@ -766,10 +794,12 @@ class vmaf():
         # Separate CAMBI only when requested and no v1 model computes it:
         # v1 models get cambi.heatmaps_path as a model override instead.
         if self.cambi_heatmap and not self._hasV1():
+            enc_width, enc_height = self._cambiEncodingSize(
+                self.main.streamInfo['width'], self.main.streamInfo['height'])
             cambi_params = {
                 'full_ref':   'true',
-                'enc_width':  str(self.main.streamInfo['width']),
-                'enc_height': str(self.main.streamInfo['height']),
+                'enc_width':  str(enc_width),
+                'enc_height': str(enc_height),
                 'src_width':  str(self.ref.streamInfo['width']),
                 'src_height': str(self.ref.streamInfo['height']),
                 'heatmaps_path': FFmpegQos._escape_filter_value(self.cambi_heatmap_path),
