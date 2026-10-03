@@ -23,6 +23,7 @@ SOFTWARE.
 """
 from .ffmpeg import FFprobe
 from .ffmpeg import FFmpegQos
+from .models import DISPLAY_RESOLUTION, select_models
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
@@ -187,28 +188,19 @@ class vmaf():
         self.ffmpegQos = FFmpegQos(
             self.main.videoSrc, self.ref.videoSrc, self.loglevel,
             gpu_mode=gpu_mode)
-        self.target_resolution = None
+        # select_models() rejects any model other than HD/4K with ValueError.
+        display = str(model).lower()
+        self.models = select_models(display, ('0.6',))
+        self.target_resolution = list(DISPLAY_RESOLUTION[display])
         self.offset = 0
         self.manual_fps = manual_fps
-        self._initResolutions()
         self.output_fmt = output_fmt
         self.threads = threads
         self.print_progress = print_progress
         self.end_sync = end_sync
         self.cambi_heatmap = cambi_heatmap
+        self.cambi_heatmap_path = None
         self._filters_applied = False
-
-
-    def _initResolutions(self):
-        """
-        initialization of resolutions for each vmaf model
-        """
-        if self.model == 'HD':
-            self.target_resolution = [1920, 1080]
-        elif self.model == '4K':
-            self.target_resolution = [3840, 2160]
-        else:
-            raise ValueError(f"Invalid VMAF model: {self.model!r}. Supported: HD, 4K")
 
     def _applyScaleFilters(self, qos):
         """Apply scale filters to the given FFmpegQos instance."""
@@ -509,6 +501,7 @@ class vmaf():
                 'enc_height': str(self.main.streamInfo['height']),
                 'src_width':  str(self.ref.streamInfo['width']),
                 'src_height': str(self.ref.streamInfo['height']),
+                'heatmaps_path': FFmpegQos._escape_filter_value(self.cambi_heatmap_path),
             }
             features.append(FeatureConfig('cambi', cambi_params))
 
@@ -557,6 +550,8 @@ class vmaf():
         """Apply Offset filters, if offset =0 nothing happens """
         self.setOffset()
 
+        if self.cambi_heatmap:
+            self.cambi_heatmap_path = os.path.splitext(self.main.videoSrc)[0] + '_cambi_heatmap'
         self.features = self._build_feature_string()
 
 
@@ -582,8 +577,8 @@ class vmaf():
         logger.info("=" * 39)
 
 
-        vmafProcess = self.ffmpegQos.getVmaf(model=self.model, subsample=self.subsample,
-                                             output_fmt=self.output_fmt, threads=self.threads, print_progress=self.print_progress, end_sync=self.end_sync, features=self.features, cambi_heatmap=self.cambi_heatmap, gpu=self.gpu_mode)
+        vmafProcess = self.ffmpegQos.getVmaf(self.models, subsample=self.subsample,
+                                             output_fmt=self.output_fmt, threads=self.threads, print_progress=self.print_progress, end_sync=self.end_sync, features=self.features, gpu=self.gpu_mode)
         return vmafProcess
 
 

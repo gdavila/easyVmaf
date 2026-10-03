@@ -24,11 +24,13 @@ SOFTWARE.
 
 
 from . import config
+from .models import ModelRun
 import re
 import subprocess
 import json
 import logging
 import os
+from typing import Sequence
 from ffmpeg_progress_yield import FfmpegProgress
 
 logger = logging.getLogger(__name__)
@@ -63,34 +65,6 @@ class FFmpegExecutionError(RuntimeError):
         if detail:
             message += f": {detail}"
         super().__init__(message)
-
-
-# Structured model definitions
-# Each entry: (version_string, name_alias, extra_params_dict)
-VMAF_MODELS = {
-    'HD': [
-        ('vmaf_v0.6.1',     'vmaf_hd',       {}),
-        ('vmaf_v0.6.1neg',  'vmaf_hd_neg',   {}),
-        ('vmaf_v0.6.1',     'vmaf_hd_phone', {'enable_transform': 'true'}),
-    ],
-    '4K': [
-        ('vmaf_4k_v0.6.1',  'vmaf_4k',       {}),
-    ],
-}
-
-# Keep existing names as aliases for cli.py imports — do not remove these
-HD_MODEL_NAME       = VMAF_MODELS['HD'][0][1]   # 'vmaf_hd'
-HD_NEG_MODEL_NAME   = VMAF_MODELS['HD'][1][1]   # 'vmaf_hd_neg'
-HD_PHONE_MODEL_NAME = VMAF_MODELS['HD'][2][1]   # 'vmaf_hd_phone'
-_4K_MODEL_NAME      = VMAF_MODELS['4K'][0][1]   # 'vmaf_4k'
-
-# Version aliases (used in vmaf.py for the phone model version check)
-HD_MODEL_VERSION        = VMAF_MODELS['HD'][0][0]
-HD_NEG_MODEL_VERSION    = VMAF_MODELS['HD'][1][0]
-HD_PHONE_MODEL_VERSION  = VMAF_MODELS['HD'][2][0]
-_4K_MODEL_VERSION       = VMAF_MODELS['4K'][0][0]
-
-
 
 
 class FFprobe:
@@ -179,7 +153,6 @@ class FFmpegQos:
         self.vmafFilter = []
         self.invertedSrc = False
         self.vmafpath = None
-        self.vmaf_cambi_heatmap_path = None
         self.gpu_mode = gpu_mode
         # Private: run FFmpeg single-threaded. Set only by sync PSNR workers,
         # which already run one process per CPU; default keeps FFmpeg's own threading.
@@ -256,32 +229,25 @@ class FFmpegQos:
         return [f'-{filterName}', filter_string]
 
     @staticmethod
-    def _build_model_string(model: str) -> str:
+    def _build_model_string(models: Sequence[ModelRun]) -> str:
         """
-        Build the libvmaf model= filter parameter string for the given model.
+        Build the libvmaf model= filter parameter string for the given runs.
 
-        Format: version=X\\:name=Y\\:param=val|version=X\\:name=Y
-        Pipe-separates multiple models (HD computes vmaf_hd, vmaf_hd_neg,
-        vmaf_hd_phone in a single pass).
+        Format: version=X\\:name=Y\\:option=val|version=X\\:name=Y
+        Each run contributes its libvmaf model id, its metric name and then its
+        options in order; runs are pipe-separated so all models are computed in
+        a single pass.
 
         Args:
-            model: 'HD' or '4K'
+            models: resolved ModelRun entries (see easyvmaf.models.select_models)
 
         Returns:
             model string ready to pass as the model= parameter to libvmaf
-
-        Raises:
-            ValueError: if model is not a known key in VMAF_MODELS
         """
-        if model not in VMAF_MODELS:
-            raise ValueError(
-                f"Unknown VMAF model '{model}'. "
-                f"Supported models: {list(VMAF_MODELS.keys())}"
-            )
         parts = []
-        for version, name, params in VMAF_MODELS[model]:
-            tokens = [f'version={version}', f'name={name}']
-            for k, v in params.items():
+        for run in models:
+            tokens = [f'version={run.libvmaf_model}', f'name={run.spec.name}']
+            for k, v in run.options:
                 tokens.append(f'{k}={v}')
             parts.append('\\\\:'.join(tokens))
         return '|'.join(parts)
@@ -308,9 +274,11 @@ class FFmpegQos:
         psnr = [s for s in stdout if "average" in s][0].split(":")[1]
         return float(psnr)
 
-    def getVmaf(self, log_path=None, model='HD', subsample=1, output_fmt='json', threads=0, print_progress=False, end_sync=False, features=None, cambi_heatmap=False, gpu=False):
+    def getVmaf(self, models: Sequence[ModelRun], log_path=None, subsample=1, output_fmt='json', threads=0, print_progress=False, end_sync=False, features=None, gpu=False):
         """Run VMAF and return its process, raising FFmpegExecutionError on failure.
 
+        models are the resolved runs serialized into the libvmaf model= option;
+        features is the complete libvmaf feature= value, built by the caller.
         An existing log is not a valid result after an execution failure.
         """
         if output_fmt == 'xml':
@@ -331,11 +299,7 @@ class FFmpegQos:
 
         self.vmafpath = log_path
 
-        self.vmaf_cambi_heatmap_path = os.path.splitext(self.main.videoSrc)[0] + '_cambi_heatmap'
-
-
-
-        model_str = FFmpegQos._build_model_string(model)
+        model_str = FFmpegQos._build_model_string(models)
         if threads == 0:
             threads = os.cpu_count()
         shortest = 1 if end_sync else 0
@@ -365,15 +329,10 @@ class FFmpegQos:
             self.vmafFilter = [
                 f'[{main}][{ref}]{vmaf_filter_name}={base_params}'
             ]
-        elif features and not cambi_heatmap:
+        else:
             self.vmafFilter = [
                 f'[{main}][{ref}]{vmaf_filter_name}={base_params}'
                 f':feature={features}'
-            ]
-        elif features and cambi_heatmap:
-            self.vmafFilter = [
-                f'[{main}][{ref}]{vmaf_filter_name}={base_params}'
-                f':feature={features}\\\\:heatmaps_path={self._escape_filter_value(self.vmaf_cambi_heatmap_path)}'
             ]
 
 
@@ -434,6 +393,7 @@ class inputFFmpeg:
     - setDeintFieldFilter()
     - setTrimFilter()
     - setFpsFilter()
+    - setFormatFilter()
     - clearFilters()
     '''
 
@@ -540,6 +500,12 @@ class inputFFmpeg:
         self._setFilter(fpsFilter)
         self._updateOutputId(outputID)
 
+    def setFormatFilter(self, pix_fmt):
+        inputID, outputID = self._newInOutForFilter()
+        formatFilter = f'[{inputID}]format={pix_fmt}[{outputID}]'
+        self._setFilter(formatFilter)
+        self._updateOutputId(outputID)
+
     def clearFilters(self):
         self.filtersList = []
         self.lastOutputID = f'{str(self.id)}:v'
@@ -548,14 +514,14 @@ class inputFFmpeg:
 
 def check_ffmpeg() -> dict:
     """
-    Detect FFmpeg version and probe the built-in vmaf_v0.6.1 model.
+    Detect FFmpeg version and probe the built-in VMAF v1 model vmaf_v1.0.16_3d0h.
 
     Returns a dict with:
         {
-            'version': (major, minor, patch),  # e.g. (7, 1, 0)
-            'version_str': '7.1',
-            'meets_minimum': bool,              # >= 5.0
-            'builtin_models': bool,             # vmaf_v0.6.1 probe succeeded
+            'version': (major, minor, patch),  # e.g. (8, 1, 0)
+            'version_str': '8.1',
+            'meets_minimum': bool,              # >= 8.1
+            'libvmaf_v1': bool,                 # vmaf_v1.0.16_3d0h scored a frame
             'cuda_vmaf': bool,                  # compiled filter, not GPU runtime
         }
 
@@ -566,14 +532,14 @@ def check_ffmpeg() -> dict:
         'version': (0, 0, 0),
         'version_str': 'unknown',
         'meets_minimum': False,
-        'builtin_models': False,
+        'libvmaf_v1': False,
         'cuda_vmaf': False,      # libvmaf_cuda filter available
     }
 
     # --- Version detection ---
     if not FFmpegQos._executable:
         raise RuntimeError(
-            "FFmpeg binary not found. Install FFmpeg >= 5.0 built with --enable-libvmaf."
+            "FFmpeg binary not found. Install FFmpeg >= 8.1 built with --enable-libvmaf."
         )
     try:
         proc = subprocess.run(
@@ -586,7 +552,7 @@ def check_ffmpeg() -> dict:
     except OSError as error:
         raise RuntimeError(
             f"FFmpeg binary could not be executed at '{FFmpegQos._executable}': {error}. "
-            f"Install FFmpeg >= 5.0 built with --enable-libvmaf."
+            f"Install FFmpeg >= 8.1 built with --enable-libvmaf."
         ) from error
 
     if proc.returncode != 0:
@@ -610,17 +576,19 @@ def check_ffmpeg() -> dict:
         major, minor = int(match.group(1)), int(match.group(2))
         result['version'] = (major, minor, 0)
         result['version_str'] = f'{major}.{minor}'
-        result['meets_minimum'] = (major, minor) >= (5, 0)
+        result['meets_minimum'] = (major, minor) >= (8, 1)
 
-    # --- Built-in model probe ---
-    # A successful calculation confirms this model only, not every HD/4K model.
-    # Use one finite synthetic frame per input and require a successful exit.
+    # --- VMAF v1 probe ---
+    # Score a frame, not just load the model: libvmaf 3.2.0 loads the v1 models
+    # but a default build cannot extract their features. Its version string
+    # cannot tell it apart from 3.2.1, so only this calculation decides.
+    # v1's SpEED feature rejects frames below about 288x162, hence 320x240.
     probe_cmd = [
         FFmpegQos._executable,
         '-hide_banner', '-loglevel', 'error',
-        '-f', 'lavfi', '-i', 'color=black:s=64x64:r=1:d=1',
-        '-f', 'lavfi', '-i', 'color=black:s=64x64:r=1:d=1',
-        '-lavfi', f'libvmaf=model=version=vmaf_v0.6.1:log_fmt=json:log_path={os.devnull}',
+        '-f', 'lavfi', '-i', 'color=black:s=320x240:r=1:d=1',
+        '-f', 'lavfi', '-i', 'color=black:s=320x240:r=1:d=1',
+        '-lavfi', f'libvmaf=model=version=vmaf_v1.0.16_3d0h:log_fmt=json:log_path={os.devnull}',
         '-f', 'null', '-'
     ]
     try:
@@ -630,10 +598,10 @@ def check_ffmpeg() -> dict:
             text=True,
             shell=False
         )
-        result['builtin_models'] = probe.returncode == 0
+        result['libvmaf_v1'] = probe.returncode == 0
     except OSError:
         # Probe failed entirely — conservative assumption
-        result['builtin_models'] = False
+        result['libvmaf_v1'] = False
 
     # --- CUDA VMAF probe ---
     # Ask FFmpeg to list compiled-in filters. A CUDA-enabled build will

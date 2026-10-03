@@ -34,10 +34,19 @@ import xml.etree.ElementTree as ET
 from signal import signal, SIGINT
 from statistics import mean, harmonic_mean
 
-from .ffmpeg import FFmpegExecutionError, check_ffmpeg, HD_MODEL_NAME, HD_NEG_MODEL_NAME, HD_PHONE_MODEL_NAME, _4K_MODEL_NAME, HD_PHONE_MODEL_VERSION
+from .ffmpeg import FFmpegExecutionError, check_ffmpeg
+from .models import model_names, select_models
 from .vmaf import vmaf, UnsupportedFramerateError
 
 logger = logging.getLogger(__name__)
+
+# Labels of the human-readable summary, keyed by metric name
+_SCORE_LABELS = {
+    'vmaf_hd':       'VMAF HD',
+    'vmaf_hd_neg':   'VMAF Neg',
+    'vmaf_hd_phone': 'VMAF Phone',
+    'vmaf_4k':       'VMAF 4K',
+}
 
 
 def _build_result(distorted, reference, offset, psnr, model,
@@ -235,23 +244,25 @@ def main():
     if not ffmpeg_info['meets_minimum']:
         print(
             f"[easyVmaf] ERROR: FFmpeg {ffmpeg_info['version_str']} detected. "
-            f"easyVmaf requires FFmpeg >= 5.0 built with --enable-libvmaf. "
-            f"The 'model=' parameter for libvmaf was introduced in FFmpeg 5.0.",
+            f"easyVmaf requires FFmpeg >= 8.1 built with --enable-libvmaf. "
+            f"Use the easyVmaf Docker image or upgrade FFmpeg.",
             file=sys.stderr, flush=True
         )
         sys.exit(1)
 
-    if not ffmpeg_info['builtin_models']:
+    if not ffmpeg_info['libvmaf_v1']:
         print(
             f"[easyVmaf] ERROR: FFmpeg {ffmpeg_info['version_str']} is installed "
-            f"but libvmaf built-in models are not available. "
-            f"Rebuild libvmaf with '-Dbuilt_in_models=true' and recompile FFmpeg.",
+            f"but its libvmaf cannot compute VMAF v1 models. "
+            f"easyVmaf requires libvmaf >= 3.2.1 built with '-Dbuilt_in_models=true'. "
+            f"Use the easyVmaf Docker image, or upgrade libvmaf "
+            f"(e.g. 'brew upgrade libvmaf') and rebuild FFmpeg against it.",
             file=sys.stderr, flush=True
         )
         sys.exit(1)
 
     logger.info(
-        "FFmpeg %s detected. Built-in models: available.",
+        "FFmpeg %s detected. libvmaf VMAF v1 models: available.",
         ffmpeg_info['version_str']
     )
 
@@ -274,6 +285,7 @@ def main():
     '''
     main_pattern = os.path.expanduser(main_pattern)
     mainFiles = glob.glob(main_pattern)
+    metric_names = model_names(select_models(model.lower(), ('0.6',)))
 
     if not (os.path.isfile(reference)):
         print("Reference Video file not found:", reference, file=sys.stderr)
@@ -315,56 +327,31 @@ def main():
             print(f"[easyVmaf] ERROR: {e}", file=sys.stderr)
             sys.exit(1)
         vmafpath = myVmaf.ffmpegQos.vmafpath
-        vmafScore = []
-        vmafNegScore = []
-        vmafPhoneScore = []
+        frameScores = {name: [] for name in metric_names}
 
         if output_fmt == 'csv':
             with open(vmafpath, mode='r', newline='') as csvFile:
                 csvReader = csv.DictReader(csvFile)
                 for row in csvReader:
-                    if model == 'HD':
-                        vmafScore.append(float(row[HD_MODEL_NAME]))
-                        vmafNegScore.append(float(row[HD_NEG_MODEL_NAME]))
-                        vmafPhoneScore.append(float(row[HD_PHONE_MODEL_NAME]))
-                    if model == '4K':
-                        vmafScore.append(float(row[_4K_MODEL_NAME]))
+                    for name in metric_names:
+                        frameScores[name].append(float(row[name]))
 
         elif output_fmt == 'xml':
             tree = ET.parse(vmafpath)
             root = tree.getroot()
             for frame in root.findall('frames/frame'):
-                if model == 'HD':
-                    vmafScore.append(float(frame.attrib[HD_MODEL_NAME]))
-                    vmafNegScore.append(float(frame.attrib[HD_NEG_MODEL_NAME]))
-                    vmafPhoneScore.append(float(frame.attrib[HD_PHONE_MODEL_NAME]))
-                if model == '4K':
-                    vmafScore.append(float(frame.attrib[_4K_MODEL_NAME]))
+                for name in metric_names:
+                    frameScores[name].append(float(frame.attrib[name]))
         else:
             with open(vmafpath) as jsonFile:
                 jsonData = json.load(jsonFile)
                 for frame in jsonData['frames']:
-                    if model == 'HD':
-                        vmafScore.append(frame["metrics"][HD_MODEL_NAME])
-                        vmafNegScore.append(
-                            frame["metrics"][HD_NEG_MODEL_NAME])
-                        vmafPhoneScore.append(
-                            frame["metrics"][HD_PHONE_MODEL_NAME])
-                    if model == '4K':
-                        vmafScore.append(frame["metrics"][_4K_MODEL_NAME])
+                    for name in metric_names:
+                        frameScores[name].append(frame["metrics"][name])
+
+        vmaf_scores = {name: mean(scores) for name, scores in frameScores.items()}
 
         if use_json:
-            vmaf_scores = {}
-            if model == 'HD':
-                vmaf_scores = {
-                    HD_MODEL_NAME:       mean(vmafScore),
-                    HD_NEG_MODEL_NAME:   mean(vmafNegScore),
-                    HD_PHONE_MODEL_NAME: mean(vmafPhoneScore),
-                }
-            elif model == '4K':
-                vmaf_scores = {
-                    _4K_MODEL_NAME: mean(vmafScore),
-                }
             result = _build_result(
                 distorted=main,
                 reference=reference,
@@ -374,7 +361,7 @@ def main():
                 vmaf_scores=vmaf_scores,
                 vmaf_output_file=myVmaf.ffmpegQos.vmafpath,
                 cambi_heatmap_path=(
-                    myVmaf.ffmpegQos.vmaf_cambi_heatmap_path
+                    myVmaf.cambi_heatmap_path
                     if cambi_heatmap else None
                 ),
             )
@@ -387,16 +374,12 @@ def main():
             print("VMAF computed", flush=True)
             print("=======================================", flush=True)
             print("offset: ", offset, " | psnr: ", psnr)
-            if model == 'HD':
-                print("VMAF HD: ", mean(vmafScore))
-                print("VMAF Neg: ", mean(vmafNegScore))
-                print("VMAF Phone: ", mean(vmafPhoneScore))
-            if model == '4K':
-                print("VMAF 4K: ", mean(vmafScore))
+            for name, score in vmaf_scores.items():
+                print(f"{_SCORE_LABELS.get(name, name)}: ", score)
             print("VMAF output file path: ", myVmaf.ffmpegQos.vmafpath)
             if cambi_heatmap:
                 print("CAMBI Heatmap output path: ",
-                    myVmaf.ffmpegQos.vmaf_cambi_heatmap_path)
+                    myVmaf.cambi_heatmap_path)
 
             print("\n \n \n \n \n ")
 

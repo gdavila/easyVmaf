@@ -1,8 +1,7 @@
-"""Model catalog: model selection and the v0.6 model= string."""
+"""Model catalog: model selection."""
 
 import pytest
 
-from easyvmaf.ffmpeg import FFmpegQos
 from easyvmaf.models import model_names, select_models
 
 
@@ -55,18 +54,3 @@ def test_unknown_display():
     """An unknown display yields an empty model list instead of an error."""
     with pytest.raises(ValueError):
         select_models('sd')
-
-
-def _serialize(runs):
-    # Layer 1 contract (plan, phase 2): version, name, then options, joined by \\:
-    return '|'.join(
-        '\\\\:'.join([f'version={run.libvmaf_model}', f'name={run.spec.name}']
-                     + [f'{key}={value}' for key, value in run.options])
-        for run in runs
-    )
-
-
-@pytest.mark.parametrize("display, model", [('hd', 'HD'), ('4k', '4K')])
-def test_v06_runs_reproduce_current_model_string(display, model):
-    """The catalog changes the v0.6 libvmaf model= string, and with it the v0.6 scores."""
-    assert _serialize(select_models(display, ('0.6',))) == FFmpegQos._build_model_string(model)

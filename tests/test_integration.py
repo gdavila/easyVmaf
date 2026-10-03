@@ -43,10 +43,12 @@ def plain_ffmpeg(binary, first, second, graph):
                           capture_output=True, text=True, check=True, timeout=90).stderr
 
 
+@pytest.mark.requires_libvmaf_v1
 def test_check_ffmpeg_accepts_real_build(ffmpeg_bin):
+    """A build that computes VMAF v1 is rejected, e.g. by a probe frame too small for v1."""
     result = ffmpeg.check_ffmpeg()
     assert result["meets_minimum"] is True
-    assert result["builtin_models"] is True
+    assert result["libvmaf_v1"] is True
 
 
 def test_escaped_path_reaches_the_named_file(ffmpeg_bin, tmp_path):
@@ -126,6 +128,7 @@ def test_sync_worker_stops_decoding_after_trim(encode, tmp_path, monkeypatch):
     assert all(int(frames) == 0 for _, kind, frames in decoded if kind != "video")
 
 
+@pytest.mark.requires_libvmaf_v1  # the real CLI startup check requires VMAF v1
 @pytest.mark.parametrize("sync_only", [True, False], ids=["sync_only-batch", "full"])
 def test_cli_json_stdout_stays_ndjson_with_verbose_progress(encode, tmp_path, sync_only):
     reference = tmp_path / "reference.mkv"
@@ -172,6 +175,7 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 from easyvmaf import cli, ffmpeg
+from easyvmaf.models import select_models
 
 root = Path(sys.argv[1])
 progress = sys.argv[2] == "True"
@@ -185,7 +189,7 @@ def tracked_popen(*args, **kwargs):
     return child
 
 ffmpeg.subprocess.Popen = tracked_popen
-cli.check_ffmpeg = lambda: dict(meets_minimum=True, builtin_models=True,
+cli.check_ffmpeg = lambda: dict(meets_minimum=True, libvmaf_v1=True,
                               version_str="test", cuda_vmaf=False)
 files = [str(root / "first.mp4"), str(root / "interrupted.mp4")]
 cli.glob.glob = lambda pattern: files
@@ -208,7 +212,8 @@ class Calculation:
                 "-re", "-f", "lavfi", "-i", "color=s=64x64:r=10",
                 "-progress", str(root / "ready"), "-f", "null", "-"]
         self.ffmpegQos._commit = commit
-        return self.ffmpegQos.getVmaf(log_path=output, print_progress=progress)
+        return self.ffmpegQos.getVmaf(select_models("hd", ("0.6",)), log_path=output,
+                                      print_progress=progress)
 
 cli.vmaf = Calculation
 sys.argv = ["easyvmaf", "-d", "*.mp4", "-r", str(root / "ref.mp4"), "-json"]

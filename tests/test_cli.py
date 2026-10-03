@@ -10,6 +10,7 @@ import pytest
 
 from conftest import CAPABILITIES, SCORES, STREAM, strict_loads, write_scores
 from easyvmaf import cli, ffmpeg, vmaf
+from easyvmaf.models import select_models
 
 
 def run(monkeypatch, *arguments):
@@ -77,8 +78,8 @@ def test_invalid_arguments_fail_on_stderr_before_ffmpeg_check(monkeypatch, capsy
 
 
 @pytest.mark.parametrize("capability, message", [
-    ("meets_minimum", "requires FFmpeg >= 5.0"),
-    ("builtin_models", "built-in models are not available"),
+    ("meets_minimum", "requires FFmpeg >= 8.1"),
+    ("libvmaf_v1", "requires libvmaf >= 3.2.1"),
     ("cuda_vmaf", "libvmaf_cuda filter"),
 ])
 def test_unusable_ffmpeg_fails_on_stderr(monkeypatch, capsys, capability, message):
@@ -190,7 +191,7 @@ def test_manual_offset_is_applied_and_reported_for_every_input(
     monkeypatch.setattr(cli.glob, "glob", lambda pattern: [str(path) for path in files])
     monkeypatch.setattr(ffmpeg.FFprobe, "getStreamInfo", lambda self: dict(STREAM))
 
-    def score(qos, **kwargs):
+    def score(qos, models, **kwargs):
         qos.vmafpath = str(Path(qos.main.videoSrc).with_suffix(".json"))
         write_scores(qos.vmafpath)
 
@@ -246,7 +247,8 @@ def test_ffmpeg_failure_stops_batch_without_reading_stale_results(
     def calculation(main, ref, **kwargs):
         constructed.append(main)
         qos = ffmpeg.FFmpegQos(main, ref)
-        return SimpleNamespace(ffmpegQos=qos, getVmaf=lambda: qos.getVmaf(print_progress=progress))
+        return SimpleNamespace(ffmpegQos=qos, getVmaf=lambda: qos.getVmaf(
+            select_models("hd", ("0.6",)), print_progress=progress))
 
     def process_for_command(cmd, **kwargs):
         failed = files[1] in cmd

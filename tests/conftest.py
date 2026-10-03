@@ -14,7 +14,7 @@ import pytest
 from easyvmaf import ffmpeg
 
 ROOT = Path(__file__).resolve().parents[1]
-CAPABILITIES = dict(meets_minimum=True, builtin_models=True, version_str="9.0", cuda_vmaf=False)
+CAPABILITIES = dict(meets_minimum=True, libvmaf_v1=True, version_str="9.0", cuda_vmaf=False)
 SCORES = {"vmaf_hd": 91.1234567, "vmaf_hd_neg": 90.0, "vmaf_hd_phone": 95.0}
 STREAM = {"width": 320, "height": 180, "r_frame_rate": "10/1", "duration": "1.2", "start_time": "0"}
 LIBVMAF_V1_PROBE_MODEL = "vmaf_v1.0.16_3d0h"

@@ -6,8 +6,9 @@ from unittest.mock import Mock
 
 import pytest
 
-from easyvmaf import ffmpeg
+from easyvmaf import ffmpeg, vmaf
 from easyvmaf.ffmpeg import FFmpegQos
+from easyvmaf.models import select_models
 
 
 def response(returncode=0, stdout="", stderr=""):
@@ -19,7 +20,7 @@ def probes(monkeypatch):
     """Stub the three check_ffmpeg commands: -version, model probe, -filters."""
     monkeypatch.setattr(FFmpegQos, "_executable", "/test/ffmpeg")
 
-    def install(version="ffmpeg version 7.1.1 Copyright", model=response(), filters=response()):
+    def install(version="ffmpeg version 8.1 Copyright", model=response(), filters=response()):
         if isinstance(version, str):
             version = response(stdout=version)
         run = Mock(side_effect=[version, model, filters])
@@ -29,9 +30,9 @@ def probes(monkeypatch):
 
 
 @pytest.mark.parametrize("output, version, version_str, minimum", [
-    ("ffmpeg version 7.1.1 Copyright", (7, 1, 0), "7.1", True),
-    ("ffmpeg version 4.4.5 Copyright", (4, 4, 0), "4.4", False),
-    ("ffmpeg version n7.1.1-20250301 Copyright", (7, 1, 0), "7.1", True),
+    ("ffmpeg version 8.1 Copyright", (8, 1, 0), "8.1", True),
+    ("ffmpeg version 8.0.1 Copyright", (8, 0, 0), "8.0", False),
+    ("ffmpeg version n9.0.1-20260301 Copyright", (9, 0, 0), "9.0", True),
     ("ffmpeg version N-111825-gabcdef123 Copyright", (0, 0, 0), "dev-build", True),
     ("ffmpeg version git-abcdef123 Copyright", (0, 0, 0), "dev-build", True),
 ])
@@ -39,7 +40,7 @@ def test_check_ffmpeg_parses_release_and_dev_builds(probes, output, version, ver
     run = probes(version=output)
     assert ffmpeg.check_ffmpeg() == {
         "version": version, "version_str": version_str, "meets_minimum": minimum,
-        "builtin_models": True, "cuda_vmaf": False,
+        "libvmaf_v1": True, "cuda_vmaf": False,
     }
     assert all(isinstance(call.args[0], list) and not call.kwargs.get("shell")
                for call in run.call_args_list)
@@ -65,9 +66,9 @@ def test_check_ffmpeg_requires_resolved_binary(probes, monkeypatch):
     run.assert_not_called()
 
 
-def test_failed_model_probe_reports_no_builtin_models(probes):
-    probes(model=response(1, stderr="could not load libvmaf model"))
-    assert ffmpeg.check_ffmpeg()["builtin_models"] is False
+def test_failed_v1_probe_reports_no_libvmaf_v1(probes):
+    probes(model=response(1, stderr="problem during vmaf_use_features_from_model"))
+    assert ffmpeg.check_ffmpeg()["libvmaf_v1"] is False
 
 
 @pytest.mark.parametrize("listing, expected", [
@@ -109,7 +110,7 @@ def test_qos_commands_decode_only_filtered_video(tmp_path, monkeypatch):
 
     assert qos.getPsnr() == 40.0
     psnr_cmd = qos._cmd
-    qos.getVmaf(log_path=str(tmp_path / "out.json"))
+    qos.getVmaf(select_models("hd", ("0.6",)), log_path=str(tmp_path / "out.json"))
 
     for cmd in (psnr_cmd, qos._cmd):
         assert "-map" not in cmd
@@ -140,7 +141,7 @@ def test_interrupted_vmaf_kills_and_reaps_child(monkeypatch, progress):
     monkeypatch.setattr(ffmpeg.subprocess, "Popen", lambda *args, **kwargs: child)
 
     with pytest.raises(KeyboardInterrupt) as raised:
-        FFmpegQos("dist", "ref").getVmaf(print_progress=progress)
+        FFmpegQos("dist", "ref").getVmaf(select_models("hd", ("0.6",)), print_progress=progress)
 
     assert raised.value is error
     child.kill.assert_called_once_with()
@@ -158,8 +159,57 @@ def test_cleanup_timeout_preserves_interruption(monkeypatch, caplog):
     monkeypatch.setattr(ffmpeg.subprocess, "Popen", lambda *args, **kwargs: child)
 
     with pytest.raises(SystemExit) as raised:
-        FFmpegQos("dist", "ref").getVmaf()
+        FFmpegQos("dist", "ref").getVmaf(select_models("hd", ("0.6",)))
 
     assert raised.value is error
     child.stdout.close.assert_called_once_with()
     assert "Could not reap interrupted FFmpeg process" in caplog.text
+
+
+# Captured from easyVmaf 3.x before layer 1 moved to ModelRun. The v0.6 model=
+# string, the filter order and the libvmaf options must not change: a different
+# command means different v0.6 scores or log paths for existing users.
+GOLDEN_CHAINS = {
+    "HD": (r"[0:v]scale=1920:1080:flags=bicubic[input0_0];[input0_0]fps=fps=25.0[input0_1];"
+           r"[input0_1]trim=start=0:duration=10.0, setpts=PTS-STARTPTS[input0_2];"
+           r"[1:v]fps=fps=25.0[input1_0];"
+           r"[input1_0]trim=start=1.5:duration=10.0, setpts=PTS-STARTPTS[input1_1];"
+           r"[input0_2][input1_1]libvmaf=log_fmt=json:model="
+           r"version=vmaf_v0.6.1\\:name=vmaf_hd|version=vmaf_v0.6.1neg\\:name=vmaf_hd_neg|"
+           r"version=vmaf_v0.6.1\\:name=vmaf_hd_phone\\:enable_transform=true"
+           r":n_subsample=1:log_path=dist_vmaf.json:n_threads=4:shortest=0:feature=name=psnr"),
+    "4K": (r"[0:v]scale=3840:2160:flags=bicubic[input0_0];[input0_0]fps=fps=25.0[input0_1];"
+           r"[input0_1]trim=start=0:duration=10.0, setpts=PTS-STARTPTS[input0_2];"
+           r"[1:v]scale=3840:2160:flags=bicubic[input1_0];[input1_0]fps=fps=25.0[input1_1];"
+           r"[input1_1]trim=start=1.5:duration=10.0, setpts=PTS-STARTPTS[input1_2];"
+           r"[input0_2][input1_2]libvmaf=log_fmt=json:model=version=vmaf_4k_v0.6.1\\:name=vmaf_4k"
+           r":n_subsample=1:log_path=dist_vmaf.json:n_threads=4:shortest=0:feature=name=psnr"),
+}
+GOLDEN_CAMBI = (r"|name=cambi\\:full_ref=true\\:enc_width=1280\\:enc_height=720"
+                r"\\:src_width=1920\\:src_height=1080\\:heatmaps_path=dist_cambi_heatmap")
+
+
+@pytest.mark.parametrize("model", ["HD", "4K"])
+@pytest.mark.parametrize("cambi_heatmap", [False, True], ids=["plain", "cambi"])
+def test_v06_vmaf_command_is_unchanged(monkeypatch, model, cambi_heatmap):
+    """The v0.6 FFmpeg command changes, and with it v0.6 scores or output paths."""
+    monkeypatch.setattr(FFmpegQos, "_executable", "ffmpeg")
+    monkeypatch.setattr(ffmpeg.FFprobe, "getStreamInfo", lambda self: dict(
+        width=1280, height=720, r_frame_rate="25/1", duration="10.0", start_time="0")
+        if self.videoSrc == "dist.mp4" else dict(
+        width=1920, height=1080, r_frame_rate="25/1", duration="12.0", start_time="0"))
+    monkeypatch.setattr(ffmpeg.FFprobe, "getFramesInfo",
+                        lambda self: [{"interlaced_frame": 0, "pkt_size": 1}])
+    monkeypatch.setattr(ffmpeg.subprocess, "Popen", Mock(
+        return_value=SimpleNamespace(returncode=0, communicate=lambda: (b"", None))))
+    calculation = vmaf("dist.mp4", "ref.mp4", "json", model=model, threads=4,
+                       cambi_heatmap=cambi_heatmap)
+    calculation.offset = 1.5
+
+    calculation.getVmaf()
+
+    graph = GOLDEN_CHAINS[model] + (GOLDEN_CAMBI if cambi_heatmap else "")
+    assert calculation.ffmpegQos._cmd == [
+        "ffmpeg", "-y", "-hide_banner", "-stats", "-loglevel", "info",
+        "-i", "dist.mp4", "-i", "ref.mp4", "-an", "-sn", "-dn",
+        "-lavfi", graph, "-f", "null", "-"]
