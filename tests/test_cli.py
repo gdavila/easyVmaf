@@ -11,7 +11,7 @@ import pytest
 from conftest import CAPABILITIES, SCORES, STREAM, strict_loads, write_scores
 from easyvmaf import cli, ffmpeg, vmaf
 from easyvmaf.models import model_names, select_models
-from easyvmaf.results import read_scores
+from easyvmaf.results import VmafResult, read_scores
 
 
 def run(monkeypatch, *arguments):
@@ -23,6 +23,24 @@ def exit_code(monkeypatch, *arguments):
     with pytest.raises(SystemExit) as exc:
         run(monkeypatch, *arguments)
     return exc.value.code
+
+
+def result_for(models, scores, log_path):
+    return VmafResult(scores=scores, models=models, display="hd", pix_fmt="yuv420p",
+                      hfr=False, log_path=log_path)
+
+
+@pytest.fixture
+def scored(monkeypatch):
+    """Real vmaf preprocessing; FFprobe and libvmaf are stubbed, every requested model scores 90."""
+    monkeypatch.setattr(ffmpeg.FFprobe, "getStreamInfo", lambda self: dict(STREAM))
+
+    def score(qos, models, **kwargs):
+        qos.vmafpath = str(Path(qos.main.videoSrc).with_name(
+            Path(qos.main.videoSrc).stem + "_vmaf.json"))
+        write_scores(qos.vmafpath, dict.fromkeys(model_names(models), 90.0))
+
+    monkeypatch.setattr(ffmpeg.FFmpegQos, "getVmaf", score)
 
 
 @pytest.fixture
@@ -38,8 +56,8 @@ def batch(tmp_path, monkeypatch, ffmpeg_ok):
         files.append(str(distorted))
         calculations[str(distorted)] = SimpleNamespace(
             syncOffset=Mock(return_value=(index * 0.1, 30.1234567 + index)),
-            getVmaf=Mock(return_value=SimpleNamespace(
-                scores=dict(SCORES), log_path=str(output), cambi_heatmap_path=None)))
+            getVmaf=Mock(return_value=result_for(
+                select_models("hd", ("0.6",)), dict(SCORES), str(output))))
     constructor = Mock(side_effect=lambda main, ref, **kwargs: calculations[main])
     real_glob = cli.glob.glob
     monkeypatch.setattr(cli.glob, "glob", lambda p: files if p == "*.mkv" else real_glob(p))
@@ -58,10 +76,13 @@ def batch(tmp_path, monkeypatch, ffmpeg_ok):
     (["-subsample=0"], 2, "-subsample"),
     (["-subsample=1.5"], 2, "-subsample"),
     (["-threads=-1"], 2, "-threads"),
-    (["-model=hd"], 2, "-model"),
     (["-output_fmt=JSON"], 2, "-output_fmt"),
     (["-sync_only"], 2, "-sync_only"),
     (["-sync_only", "-sw=0"], 2, "-sync_only"),
+    # GPU scripts of 3.x now get VMAF v1 by default, which libvmaf_cuda cannot compute.
+    (["-gpu"], 2, "--vmaf-version 0.6"),
+    # ':' or '|' would inject options or models into the libvmaf filtergraph.
+    (["--model-option", "cambi.topk=0.5:eotf=pq"], 2, "--model-option"),
 ], ids=lambda value: " ".join(value) if isinstance(value, list) else None)
 def test_invalid_arguments_fail_on_stderr_before_ffmpeg_check(monkeypatch, capsys,
                                                               arguments, code, message):
@@ -74,7 +95,7 @@ def test_invalid_arguments_fail_on_stderr_before_ffmpeg_check(monkeypatch, capsy
 
     out, err = capsys.readouterr()
     assert out == ""
-    assert "usage:" in err and message in err
+    assert "usage:" in err and message in err.splitlines()[0]
     check.assert_not_called()
 
 
@@ -90,7 +111,8 @@ def test_unusable_ffmpeg_fails_on_stderr(monkeypatch, capsys, capability, messag
     constructor = Mock()
     monkeypatch.setattr(cli, "vmaf", constructor)
 
-    assert exit_code(monkeypatch, "-d", "dist.mkv", "-r", "ref.mkv", "-gpu", "-json") == 1
+    assert exit_code(monkeypatch, "-d", "dist.mkv", "-r", "ref.mkv", "-gpu",
+                     "--vmaf-version", "0.6", "-json") == 1
 
     out, err = capsys.readouterr()
     assert out == ""
@@ -114,40 +136,80 @@ def test_missing_input_fails_on_stderr(batch, monkeypatch, capsys, missing, mess
     batch.constructor.assert_not_called()
 
 
-HD = dict(subsample=1, threads=0, manual_fps=0, display="hd", vmaf_versions=("0.6",))
+DEFAULTS = dict(subsample=1, threads=0, manual_fps=0, display="hd", vmaf_versions=("1",),
+                views=None, hfr="auto", bitdepth="auto", enc_size=None, enc_bitdepth=None,
+                model_options=(), output_fmt="json")
 
 
-@pytest.mark.parametrize("options, forwarded, output_fmt", [
-    ([], HD, "json"),
+@pytest.mark.parametrize("options, forwarded", [
+    ([], DEFAULTS),
     (["-sw", "0.4", "-ss", "1.25", "-fps", "23.976", "-subsample", "3", "-threads", "2",
-      "-model", "4K"], dict(HD, subsample=3, threads=2, manual_fps=23.976, display="4k"), "json"),
-    (["-output_fmt", "xml"], HD, "xml"),
-    (["-output_fmt", "csv"], HD, "csv"),
-], ids=["defaults", "all-options-4k", "xml", "csv"])
-def test_options_are_forwarded_and_scores_reported(batch, monkeypatch, capsys,
-                                                   options, forwarded, output_fmt):
+      "--display", "4K", "--view", "1.5h", "3H", "--hfr", "on", "--bitdepth", "10",
+      "--enc-size", "1280x720", "--enc-bitdepth", "8", "--model-option", "cambi.topk=0.5",
+      "--model-option", "motion3.motion_fps_weight=1.0"],
+     dict(DEFAULTS, subsample=3, threads=2, manual_fps=23.976, display="4k",
+          views=("1.5h", "3h"), hfr="on", bitdepth="10", enc_size=(1280, 720), enc_bitdepth=8,
+          model_options=("cambi.topk=0.5", "motion3.motion_fps_weight=1.0"))),
+    (["--vmaf-version", "1", "0.6", "-output_fmt", "xml"],
+     dict(DEFAULTS, vmaf_versions=("1", "0.6"), output_fmt="xml")),
+], ids=["defaults", "all-options-4k", "both-versions-xml"])
+def test_options_are_forwarded(batch, monkeypatch, options, forwarded):
     distorted = batch.files[0]
     calculation = batch.calc[distorted]
-    model = "4K" if forwarded["display"] == "4k" else "HD"
-    names = model_names(select_models(forwarded["display"], ("0.6",)))
-    scores = {name: SCORES.get(name, 92.0) for name in names}
-    output = Path(distorted).with_name("scores." + output_fmt)
-    calculation.getVmaf.return_value.scores = scores
-    calculation.getVmaf.return_value.log_path = str(output)
 
     run(monkeypatch, "-d", distorted, "-r", batch.reference, "-json", *options)
 
     assert batch.constructor.call_args.args == (distorted, batch.reference)
-    assert batch.constructor.call_args.kwargs.items() >= dict(forwarded, output_fmt=output_fmt).items()
+    assert batch.constructor.call_args.kwargs.items() >= forwarded.items()
     calculation.getVmaf.assert_called_once_with()
     if "-sw" in options:
         calculation.syncOffset.assert_called_once_with(0.4, 1.25, False)
     else:
         calculation.syncOffset.assert_not_called()
         assert calculation.offset == 0
-    assert strict_loads(capsys.readouterr().out)["vmaf"] == dict(
-        model=model, output_file=str(output),
-        **{name: round(scores[name], 6) for name in names})
+
+
+def test_json_reports_v1_by_default(tmp_path, monkeypatch, capsys, ffmpeg_ok, scored):
+    """JSON schema 2 contract, with VMAF v1 as the default model set."""
+    reference, distorted = tmp_path / "ref.mkv", tmp_path / "dist.mkv"
+    reference.touch()
+    distorted.touch()
+
+    run(monkeypatch, "-d", str(distorted), "-r", str(reference), "-fps", "10", "-json")
+
+    assert strict_loads(capsys.readouterr().out) == {
+        "schema_version": 2,
+        "distorted": str(distorted),
+        "reference": str(reference),
+        "sync": {"offset": 0.0, "psnr": None},
+        "vmaf": {
+            "display": "hd",
+            "pix_fmt": "yuv420p10le",
+            "hfr": False,
+            "scores": {"vmaf_v1_hd": 90.0, "vmaf_v1_phone": 90.0},
+            "models": [
+                {"name": "vmaf_v1_hd", "libvmaf_model": "vmaf_v1.0.16_3d0h",
+                 "vmaf_version": "1", "view": "3h", "range": [0, 100]},
+                {"name": "vmaf_v1_phone", "libvmaf_model": "vmaf_v1.0.16_5d0h",
+                 "vmaf_version": "1", "view": "5h", "range": [0, 100]},
+            ],
+            "output_file": str(tmp_path / "dist_vmaf.json"),
+        },
+    }
+
+
+def test_vmaf_v06_keeps_its_metrics(tmp_path, monkeypatch, capsys, ffmpeg_ok, scored):
+    """3.x users migrating with --vmaf-version 0.6 keep vmaf_hd, vmaf_hd_neg and vmaf_hd_phone."""
+    reference, distorted = tmp_path / "ref.mkv", tmp_path / "dist.mkv"
+    reference.touch()
+    distorted.touch()
+
+    run(monkeypatch, "-d", str(distorted), "-r", str(reference), "-fps", "10",
+        "--vmaf-version", "0.6", "-json")
+
+    record = strict_loads(capsys.readouterr().out)
+    assert list(record["vmaf"]["scores"]) == ["vmaf_hd", "vmaf_hd_neg", "vmaf_hd_phone"]
+    assert record["vmaf"]["pix_fmt"] == "yuv420p"
 
 
 @pytest.mark.parametrize("options", [["-sync_only"], ["-sync_only", "-json"], ["-json"]],
@@ -168,6 +230,7 @@ def test_batch_processes_each_input_once_in_glob_order(batch, monkeypatch, capsy
     records = [strict_loads(line) for line in lines]
     assert [record["distorted"] for record in records] == batch.files
     for index, record in enumerate(records):
+        assert record["schema_version"] == 2
         assert record["reference"] == batch.reference
         assert record["sync"] == {"offset": round(index * 0.1, 6),
                                   "psnr": round(30.1234567 + index, 6)}
@@ -178,19 +241,13 @@ def test_batch_processes_each_input_once_in_glob_order(batch, monkeypatch, capsy
     ("0.2", False, False), ("0.2", True, True), ("0", True, True),
 ], ids=["forward-text", "reverse-json", "zero-reverse-json"])
 def test_manual_offset_is_applied_and_reported_for_every_input(
-        tmp_path, monkeypatch, capsys, ffmpeg_ok, seconds, reverse, use_json):
+        tmp_path, monkeypatch, capsys, ffmpeg_ok, scored, seconds, reverse, use_json):
     # Real preprocessing and trim construction; only probing and scoring are stubbed.
     reference = tmp_path / "reference.mkv"
     files = [tmp_path / "first.mkv", tmp_path / "second.mkv"]
     for path in [reference, *files]:
         path.touch()
     monkeypatch.setattr(cli.glob, "glob", lambda pattern: [str(path) for path in files])
-    monkeypatch.setattr(ffmpeg.FFprobe, "getStreamInfo", lambda self: dict(STREAM))
-
-    def score(qos, models, **kwargs):
-        qos.vmafpath = str(Path(qos.main.videoSrc).with_suffix(".json"))
-        write_scores(qos.vmafpath)
-
     instances = []
 
     def construct(*args, **kwargs):
@@ -198,7 +255,6 @@ def test_manual_offset_is_applied_and_reported_for_every_input(
         instances[-1].syncOffset = Mock(side_effect=AssertionError("unexpected sync search"))
         return instances[-1]
 
-    monkeypatch.setattr(ffmpeg.FFmpegQos, "getVmaf", score)
     monkeypatch.setattr(cli, "vmaf", construct)
 
     run(monkeypatch, "-d", "*.mkv", "-r", str(reference), "-fps", "10", "-ss", seconds,
@@ -247,8 +303,8 @@ def test_ffmpeg_failure_stops_batch_without_reading_stale_results(
 
         def get_vmaf():
             qos.getVmaf(models, print_progress=progress)
-            return SimpleNamespace(scores=read_scores(qos.vmafpath, "json", model_names(models)),
-                                   log_path=qos.vmafpath, cambi_heatmap_path=None)
+            return result_for(models, read_scores(qos.vmafpath, "json", model_names(models)),
+                              qos.vmafpath)
         return SimpleNamespace(ffmpegQos=qos, getVmaf=get_vmaf)
 
     def process_for_command(cmd, **kwargs):

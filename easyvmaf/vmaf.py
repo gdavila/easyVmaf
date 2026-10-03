@@ -84,6 +84,67 @@ def _parseSize(size) -> Tuple[int, int]:
     return width, height
 
 
+def validate_model_config(display='hd', vmaf_versions=('1',), views=None, hfr='auto',
+                          bitdepth='auto', enc_size=None, enc_bitdepth=None,
+                          model_options=(), gpu_mode=False, labels=None):
+    """
+    Check that the requested models can be computed with these options,
+    without probing any input. vmaf() runs it in its constructor; a caller that
+    processes a batch can run it once before the first input.
+
+    Args:
+        display ... gpu_mode: as in vmaf()
+        labels: names shown in error messages for each argument, e.g.
+            {'gpu_mode': '--gpu'}; default: the argument names
+
+    Returns:
+        The selected ModelRun list, without overrides
+
+    Raises:
+        UnsupportedModelConfigError: options the selected models cannot honour
+        ValueError: unknown display, version or view
+    """
+    labels = labels or {}
+
+    def label(argument):
+        return labels.get(argument, argument)
+
+    vmaf_versions = tuple(str(v) for v in vmaf_versions)
+    hfr, bitdepth = str(hfr).lower(), str(bitdepth).lower()
+    has_v1 = '1' in vmaf_versions
+    # select_models() rejects unknown displays, versions and views with ValueError.
+    models = select_models(display, vmaf_versions, views)
+    if hfr not in ('auto', 'on', 'off'):
+        raise UnsupportedModelConfigError(
+            f"{label('hfr')} must be 'auto', 'on' or 'off', not '{hfr}'")
+    if bitdepth not in ('auto', '8', '10'):
+        raise UnsupportedModelConfigError(
+            f"{label('bitdepth')} must be 'auto', 8 or 10, not '{bitdepth}'")
+    if gpu_mode and has_v1:
+        # libvmaf_cuda has no CUDA extractors for the v1 features.
+        raise UnsupportedModelConfigError(
+            f"{label('gpu_mode')} only supports {label('vmaf_versions')} 0.6: "
+            f"libvmaf_cuda cannot compute VMAF v1 models")
+    if gpu_mode and bitdepth == '10':
+        raise UnsupportedModelConfigError(
+            f"{label('gpu_mode')} measures in yuv420p; {label('bitdepth')} 10 is not supported")
+    if not has_v1:
+        v1_only = [name for name, used in (
+            (label('views'), views is not None), (label('hfr') + ' on', hfr == 'on'),
+            (label('enc_size'), enc_size is not None),
+            (label('enc_bitdepth'), enc_bitdepth is not None),
+            (label('model_options'), bool(model_options))) if used]
+        if v1_only:
+            raise UnsupportedModelConfigError(
+                f"{', '.join(v1_only)}: only for VMAF version 1 models, "
+                f"add 1 to {label('vmaf_versions')}")
+    for option in model_options:
+        if not _MODEL_OPTION_RE.match(option):
+            raise UnsupportedModelConfigError(
+                f"Invalid {label('model_options')} '{option}': expected feature.option=value")
+    return models
+
+
 @dataclass
 class FeatureConfig:
     """
@@ -253,7 +314,7 @@ class vmaf():
 
         Raises:
             UnsupportedModelConfigError: options that the selected models
-                cannot honour (see _validateModelConfig)
+                cannot honour (see validate_model_config)
             ValueError: unknown display, version or view
         """
         self.display = str(display).lower()
@@ -266,8 +327,6 @@ class vmaf():
         self.model_options = tuple(model_options)
         self.gpu_mode = gpu_mode
         self.cambi_heatmap = cambi_heatmap
-        # select_models() rejects unknown displays, versions and views with ValueError.
-        self.models = select_models(self.display, self.vmaf_versions, views)
         self._validateModelConfig(mainSrc)
         self.loglevel = loglevel
         self.main = video(mainSrc, self.loglevel)
@@ -293,31 +352,9 @@ class vmaf():
         return '1' in self.vmaf_versions
 
     def _validateModelConfig(self, mainSrc):
-        if self.hfr not in ('auto', 'on', 'off'):
-            raise UnsupportedModelConfigError(
-                f"hfr must be 'auto', 'on' or 'off', not '{self.hfr}'")
-        if self.bitdepth not in ('auto', '8', '10'):
-            raise UnsupportedModelConfigError(
-                f"bitdepth must be 'auto', 8 or 10, not '{self.bitdepth}'")
-        if self.gpu_mode and self._hasV1():
-            # libvmaf_cuda has no CUDA extractors for the v1 features.
-            raise UnsupportedModelConfigError("GPU mode only supports VMAF version 0.6")
-        if self.gpu_mode and self.bitdepth == '10':
-            raise UnsupportedModelConfigError(
-                "GPU mode measures in yuv420p; bitdepth 10 is not supported")
-        if not self._hasV1():
-            v1_only = [name for name, used in (
-                ('views', self.views is not None), ('hfr on', self.hfr == 'on'),
-                ('enc_size', self.enc_size is not None),
-                ('enc_bitdepth', self.enc_bitdepth is not None),
-                ('model_options', bool(self.model_options))) if used]
-            if v1_only:
-                raise UnsupportedModelConfigError(
-                    f"{', '.join(v1_only)} only apply to VMAF version 1 models")
-        for option in self.model_options:
-            if not _MODEL_OPTION_RE.match(option):
-                raise UnsupportedModelConfigError(
-                    f"Invalid model option '{option}': expected feature.option=value")
+        self.models = validate_model_config(
+            self.display, self.vmaf_versions, self.views, self.hfr, self.bitdepth,
+            self.enc_size, self.enc_bitdepth, self.model_options, self.gpu_mode)
         if self.cambi_heatmap and self._hasV1():
             path = self._cambiHeatmapPath(mainSrc)
             if any(c in path for c in _HEATMAP_PATH_FORBIDDEN):

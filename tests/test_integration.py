@@ -183,7 +183,8 @@ def test_sync_worker_stops_decoding_after_trim(encode, tmp_path, monkeypatch):
 @pytest.mark.parametrize("sync_only", [True, False], ids=["sync_only-batch", "full"])
 def test_cli_json_stdout_stays_ndjson_with_verbose_progress(encode, tmp_path, sync_only):
     reference = tmp_path / "reference.mkv"
-    encode("-f", "lavfi", "-i", "testsrc2=s=64x64:r=10:d=1", "-c:v", "ffv1", reference)
+    # VMAF v1 (the default) rejects CAMBI encoding sizes below 180x150.
+    encode("-f", "lavfi", "-i", "testsrc2=s=320x180:r=10:d=1", "-c:v", "ffv1", reference)
     shutil.copyfile(reference, tmp_path / "dist-same.mkv")
     # Not eq=brightness: eq is GPL-only and the Docker image's FFmpeg is not.
     encode("-i", reference, "-vf", "lutyuv=y=val+13", "-c:v", "ffv1",
@@ -227,6 +228,7 @@ import sys
 from types import SimpleNamespace
 from easyvmaf import cli, ffmpeg
 from easyvmaf.models import select_models
+from easyvmaf.results import VmafResult
 
 root = Path(sys.argv[1])
 progress = sys.argv[2] == "True"
@@ -254,8 +256,9 @@ class Calculation:
         output = str(root / "result.json")
         self.ffmpegQos.vmafpath = output
         if self.main == files[0]:
-            return SimpleNamespace(scores={"vmaf_hd": 90, "vmaf_hd_neg": 89, "vmaf_hd_phone": 95},
-                                   log_path=output, cambi_heatmap_path=None)
+            return VmafResult(scores={"vmaf_hd": 90, "vmaf_hd_neg": 89, "vmaf_hd_phone": 95},
+                              models=select_models("hd", ("0.6",)), display="hd",
+                              pix_fmt="yuv420p", hfr=False, log_path=output)
         # Exercise the real process lifecycle without media files or a long score.
         def commit():
             self.ffmpegQos._cmd = [binary, "-hide_banner", "-loglevel", "error",
