@@ -1,6 +1,7 @@
 """Shared stubs and real-FFmpeg prerequisites."""
 
 import functools
+import importlib
 import json
 import os
 import re
@@ -16,7 +17,8 @@ from easyvmaf import ffmpeg
 ROOT = Path(__file__).resolve().parents[1]
 CAPABILITIES = dict(meets_minimum=True, libvmaf_v1=True, version_str="9.0", cuda_vmaf=False)
 SCORES = {"vmaf_hd": 91.1234567, "vmaf_hd_neg": 90.0, "vmaf_hd_phone": 95.0}
-STREAM = {"width": 320, "height": 180, "r_frame_rate": "10/1", "duration": "1.2", "start_time": "0"}
+STREAM = {"width": 320, "height": 180, "r_frame_rate": "10/1", "duration": "1.2", "start_time": "0",
+          "pix_fmt": "yuv420p"}
 LIBVMAF_V1_PROBE_MODEL = "vmaf_v1.0.16_3d0h"
 
 
@@ -75,6 +77,14 @@ def run_cli(*arguments, cwd, **environment):
     env = dict(os.environ, PYTHONPATH=str(ROOT), **environment)
     return subprocess.run([sys.executable, "-m", "easyvmaf", *arguments], capture_output=True,
                           text=True, env=env, cwd=cwd, timeout=120)
+
+
+@pytest.fixture
+def unscored(monkeypatch):
+    """FFmpeg is stubbed and writes no libvmaf log: vmaf.getVmaf() reads zero scores."""
+    # easyvmaf.vmaf is shadowed by the vmaf class exported from the package.
+    monkeypatch.setattr(importlib.import_module("easyvmaf.vmaf"), "read_scores",
+                        lambda log_path, output_fmt, names: dict.fromkeys(names, 0.0))
 
 
 @pytest.fixture

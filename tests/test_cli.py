@@ -10,7 +10,8 @@ import pytest
 
 from conftest import CAPABILITIES, SCORES, STREAM, strict_loads, write_scores
 from easyvmaf import cli, ffmpeg, vmaf
-from easyvmaf.models import select_models
+from easyvmaf.models import model_names, select_models
+from easyvmaf.results import read_scores
 
 
 def run(monkeypatch, *arguments):
@@ -34,11 +35,11 @@ def batch(tmp_path, monkeypatch, ffmpeg_ok):
         distorted = tmp_path / (name + ".mkv")
         distorted.touch()
         output = tmp_path / (name + "_vmaf.json")
-        write_scores(output)
         files.append(str(distorted))
         calculations[str(distorted)] = SimpleNamespace(
-            syncOffset=Mock(return_value=(index * 0.1, 30.1234567 + index)), getVmaf=Mock(),
-            ffmpegQos=SimpleNamespace(vmafpath=str(output)))
+            syncOffset=Mock(return_value=(index * 0.1, 30.1234567 + index)),
+            getVmaf=Mock(return_value=SimpleNamespace(
+                scores=dict(SCORES), log_path=str(output), cambi_heatmap_path=None)))
     constructor = Mock(side_effect=lambda main, ref, **kwargs: calculations[main])
     real_glob = cli.glob.glob
     monkeypatch.setattr(cli.glob, "glob", lambda p: files if p == "*.mkv" else real_glob(p))
@@ -113,30 +114,26 @@ def test_missing_input_fails_on_stderr(batch, monkeypatch, capsys, missing, mess
     batch.constructor.assert_not_called()
 
 
-HD = dict(subsample=1, threads=0, manual_fps=0, model="HD")
+HD = dict(subsample=1, threads=0, manual_fps=0, display="hd", vmaf_versions=("0.6",))
 
 
 @pytest.mark.parametrize("options, forwarded, output_fmt", [
     ([], HD, "json"),
     (["-sw", "0.4", "-ss", "1.25", "-fps", "23.976", "-subsample", "3", "-threads", "2",
-      "-model", "4K"], dict(subsample=3, threads=2, manual_fps=23.976, model="4K"), "json"),
+      "-model", "4K"], dict(HD, subsample=3, threads=2, manual_fps=23.976, display="4k"), "json"),
     (["-output_fmt", "xml"], HD, "xml"),
     (["-output_fmt", "csv"], HD, "csv"),
 ], ids=["defaults", "all-options-4k", "xml", "csv"])
-def test_options_are_forwarded_and_scores_read(batch, monkeypatch, capsys,
-                                               options, forwarded, output_fmt):
+def test_options_are_forwarded_and_scores_reported(batch, monkeypatch, capsys,
+                                                   options, forwarded, output_fmt):
     distorted = batch.files[0]
     calculation = batch.calc[distorted]
-    scores = dict(SCORES, vmaf_4k=92.0)
+    model = "4K" if forwarded["display"] == "4k" else "HD"
+    names = model_names(select_models(forwarded["display"], ("0.6",)))
+    scores = {name: SCORES.get(name, 92.0) for name in names}
     output = Path(distorted).with_name("scores." + output_fmt)
-    if output_fmt == "xml":
-        attributes = " ".join('{}="{}"'.format(*item) for item in scores.items())
-        output.write_text("<root><frames><frame " + attributes + "/></frames></root>")
-    elif output_fmt == "csv":
-        output.write_text(",".join(scores) + "\n" + ",".join(map(str, scores.values())) + "\n")
-    else:
-        write_scores(output, scores)
-    calculation.ffmpegQos.vmafpath = str(output)
+    calculation.getVmaf.return_value.scores = scores
+    calculation.getVmaf.return_value.log_path = str(output)
 
     run(monkeypatch, "-d", distorted, "-r", batch.reference, "-json", *options)
 
@@ -148,9 +145,8 @@ def test_options_are_forwarded_and_scores_read(batch, monkeypatch, capsys,
     else:
         calculation.syncOffset.assert_not_called()
         assert calculation.offset == 0
-    names = ["vmaf_4k"] if forwarded["model"] == "4K" else list(SCORES)
     assert strict_loads(capsys.readouterr().out)["vmaf"] == dict(
-        model=forwarded["model"], output_file=str(output),
+        model=model, output_file=str(output),
         **{name: round(scores[name], 6) for name in names})
 
 
@@ -247,8 +243,13 @@ def test_ffmpeg_failure_stops_batch_without_reading_stale_results(
     def calculation(main, ref, **kwargs):
         constructed.append(main)
         qos = ffmpeg.FFmpegQos(main, ref)
-        return SimpleNamespace(ffmpegQos=qos, getVmaf=lambda: qos.getVmaf(
-            select_models("hd", ("0.6",)), print_progress=progress))
+        models = select_models("hd", ("0.6",))
+
+        def get_vmaf():
+            qos.getVmaf(models, print_progress=progress)
+            return SimpleNamespace(scores=read_scores(qos.vmafpath, "json", model_names(models)),
+                                   log_path=qos.vmafpath, cambi_heatmap_path=None)
+        return SimpleNamespace(ffmpegQos=qos, getVmaf=get_vmaf)
 
     def process_for_command(cmd, **kwargs):
         failed = files[1] in cmd

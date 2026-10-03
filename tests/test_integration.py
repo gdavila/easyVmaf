@@ -4,6 +4,7 @@ Each check compares easyVmaf with a plain FFmpeg command or with what a user
 of the CLI observes; they are skipped when no suitable FFmpeg is installed.
 """
 
+import dataclasses
 import json
 import math
 import os
@@ -21,6 +22,7 @@ import pytest
 from conftest import ROOT, run_cli, strict_loads
 from easyvmaf import ffmpeg, vmaf
 from easyvmaf.ffmpeg import FFmpegQos
+from easyvmaf.models import CATALOG, ModelRun
 
 SCALE = "scale=1920:1080:flags=bicubic,fps=fps=10"
 
@@ -67,7 +69,7 @@ def test_sync_and_score_match_plain_ffmpeg(ffmpeg_bin, clips, monkeypatch, rever
     # Forward: the reference leads. Reverse: the distorted clip leads.
     distorted, reference = (clips.lead, clips.late) if reverse else (clips.late, clips.lead)
     monkeypatch.chdir(clips.directory)  # PSNR writes its stats file to cwd
-    calculation = vmaf(distorted, reference, "json", manual_fps=10, threads=1)
+    calculation = vmaf(distorted, reference, vmaf_versions=("0.6",), manual_fps=10, threads=1)
 
     offset, psnr = calculation.syncOffset(0.4, reverse=reverse)
 
@@ -94,6 +96,55 @@ def test_sync_and_score_match_plain_ffmpeg(ffmpeg_bin, clips, monkeypatch, rever
     assert len(actual["frames"]) == len(expected["frames"]) == 10
     assert (actual["pooled_metrics"]["vmaf_hd"]["mean"]
             == pytest.approx(expected["pooled_metrics"]["vmaf"]["mean"], abs=1e-6))
+
+
+@pytest.mark.requires_libvmaf_v1
+def test_every_catalog_model_scores_in_one_pass(ffmpeg_bin, tmp_path):
+    """A misspelt model id or a broken override syntax would only fail in production."""
+    runs = []
+    for spec in CATALOG:
+        cambi = (("cambi.enc_width", "320"), ("cambi.enc_height", "180"),
+                 ("cambi.enc_bitdepth", "8")) if spec.vmaf_version == "1" else ()
+        runs.append(ModelRun(spec, spec.libvmaf_model, spec.options + cambi))
+        if spec.hfr_model:
+            hfr_spec = dataclasses.replace(spec, name=spec.name + "_hfr")
+            runs.append(ModelRun(hfr_spec, spec.hfr_model, spec.options + cambi))
+    log = tmp_path / "catalog.json"
+    # v1 SpEED rejects small frames; 3d0h_2160 needs about 576x324.
+    source = "testsrc2=s=640x360:r=5:d=0.4"
+    subprocess.run([ffmpeg_bin, "-v", "error", "-f", "lavfi", "-i", source, "-f", "lavfi",
+                    "-i", source + ",gblur=sigma=1", "-lavfi",
+                    "[0:v][1:v]libvmaf=log_fmt=json:log_path={}:model={}".format(
+                        FFmpegQos._escape_filter_value(str(log)),
+                        FFmpegQos._build_model_string(runs)),
+                    "-f", "null", "-"], check=True, capture_output=True, timeout=120)
+
+    frames = json.loads(log.read_text())["frames"]
+    assert frames
+    for run in runs:
+        low, high = run.spec.score_range
+        assert all(low <= frame["metrics"][run.spec.name] <= high for frame in frames), run
+
+
+@pytest.mark.requires_libvmaf_v1
+def test_vmaf_v1_scores_a_scaled_rendition(encode, tmp_path):
+    """Default v1 run end to end: 10-bit measurement, CAMBI and chroma features, heatmaps."""
+    reference, distorted = tmp_path / "ref.mkv", tmp_path / "dist.mkv"
+    encode("-f", "lavfi", "-i", "testsrc2=s=1920x1080:r=10:d=1", "-pix_fmt", "yuv420p",
+           "-c:v", "ffv1", reference)
+    encode("-i", reference, "-vf", "scale=1280:720,gblur=sigma=1", "-pix_fmt", "yuv420p",
+           "-c:v", "ffv1", distorted)
+
+    result = vmaf(str(distorted), str(reference), cambi_heatmap=True, threads=2).getVmaf()
+
+    assert set(result.scores) == {"vmaf_v1_hd", "vmaf_v1_phone"}
+    assert all(0 <= score <= 100 for score in result.scores.values())
+    assert result.pix_fmt == "yuv420p10le"
+    metrics = json.loads(Path(result.log_path).read_text())["frames"][0]["metrics"]
+    assert any(key.startswith("cambi") for key in metrics)
+    assert any(key.startswith("speed_chroma") for key in metrics)
+    assert result.cambi_heatmap_path == str(tmp_path / "dist_cambi_heatmap")
+    assert any(Path(result.cambi_heatmap_path).iterdir())
 
 
 def test_sync_worker_stops_decoding_after_trim(encode, tmp_path, monkeypatch):
@@ -203,9 +254,8 @@ class Calculation:
         output = str(root / "result.json")
         self.ffmpegQos.vmafpath = output
         if self.main == files[0]:
-            Path(output).write_text(json.dumps({"frames": [{"metrics": {
-                "vmaf_hd": 90, "vmaf_hd_neg": 89, "vmaf_hd_phone": 95}}]}))
-            return
+            return SimpleNamespace(scores={"vmaf_hd": 90, "vmaf_hd_neg": 89, "vmaf_hd_phone": 95},
+                                   log_path=output, cambi_heatmap_path=None)
         # Exercise the real process lifecycle without media files or a long score.
         def commit():
             self.ffmpegQos._cmd = [binary, "-hide_banner", "-loglevel", "error",

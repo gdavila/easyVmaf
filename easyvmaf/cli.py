@@ -23,19 +23,15 @@ SOFTWARE.
 """
 
 import argparse
-import csv
 import glob
 import json
 import logging
 import math
 import os.path
 import sys
-import xml.etree.ElementTree as ET
 from signal import signal, SIGINT
-from statistics import mean, harmonic_mean
 
 from .ffmpeg import FFmpegExecutionError, check_ffmpeg
-from .models import model_names, select_models
 from .vmaf import vmaf, UnsupportedFramerateError
 
 logger = logging.getLogger(__name__)
@@ -285,7 +281,6 @@ def main():
     '''
     main_pattern = os.path.expanduser(main_pattern)
     mainFiles = glob.glob(main_pattern)
-    metric_names = model_names(select_models(model.lower(), ('0.6',)))
 
     if not (os.path.isfile(reference)):
         print("Reference Video file not found:", reference, file=sys.stderr)
@@ -300,8 +295,8 @@ def main():
         '''check if syncWin was set. If true offset is computed automatically, otherwise manual values are used  '''
 
         try:
-            myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample, model=model,
-                          output_fmt=output_fmt, threads=threads, print_progress=print_progress, end_sync=end_sync, manual_fps=fps, cambi_heatmap=cambi_heatmap, gpu_mode=gpu_mode)
+            myVmaf = vmaf(main, reference, display=model.lower(), vmaf_versions=('0.6',),
+                          loglevel=loglevel, subsample=n_subsample, output_fmt=output_fmt, threads=threads, print_progress=print_progress, end_sync=end_sync, manual_fps=fps, cambi_heatmap=cambi_heatmap, gpu_mode=gpu_mode)
             if syncWin > 0:
                 offset, psnr = myVmaf.syncOffset(syncWin, ss, reverse)
                 if sync_only:
@@ -322,34 +317,11 @@ def main():
                 psnr = None
                 myVmaf.offset = offset
 
-            vmafProcess = myVmaf.getVmaf()
+            vmaf_result = myVmaf.getVmaf()
         except (FFmpegExecutionError, UnsupportedFramerateError, ValueError) as e:
             print(f"[easyVmaf] ERROR: {e}", file=sys.stderr)
             sys.exit(1)
-        vmafpath = myVmaf.ffmpegQos.vmafpath
-        frameScores = {name: [] for name in metric_names}
-
-        if output_fmt == 'csv':
-            with open(vmafpath, mode='r', newline='') as csvFile:
-                csvReader = csv.DictReader(csvFile)
-                for row in csvReader:
-                    for name in metric_names:
-                        frameScores[name].append(float(row[name]))
-
-        elif output_fmt == 'xml':
-            tree = ET.parse(vmafpath)
-            root = tree.getroot()
-            for frame in root.findall('frames/frame'):
-                for name in metric_names:
-                    frameScores[name].append(float(frame.attrib[name]))
-        else:
-            with open(vmafpath) as jsonFile:
-                jsonData = json.load(jsonFile)
-                for frame in jsonData['frames']:
-                    for name in metric_names:
-                        frameScores[name].append(frame["metrics"][name])
-
-        vmaf_scores = {name: mean(scores) for name, scores in frameScores.items()}
+        vmaf_scores = vmaf_result.scores
 
         if use_json:
             result = _build_result(
@@ -359,11 +331,8 @@ def main():
                 psnr=psnr,
                 model=model,
                 vmaf_scores=vmaf_scores,
-                vmaf_output_file=myVmaf.ffmpegQos.vmafpath,
-                cambi_heatmap_path=(
-                    myVmaf.cambi_heatmap_path
-                    if cambi_heatmap else None
-                ),
+                vmaf_output_file=vmaf_result.log_path,
+                cambi_heatmap_path=vmaf_result.cambi_heatmap_path,
             )
             _print_json_result(result)
         else:
@@ -376,10 +345,10 @@ def main():
             print("offset: ", offset, " | psnr: ", psnr)
             for name, score in vmaf_scores.items():
                 print(f"{_SCORE_LABELS.get(name, name)}: ", score)
-            print("VMAF output file path: ", myVmaf.ffmpegQos.vmafpath)
+            print("VMAF output file path: ", vmaf_result.log_path)
             if cambi_heatmap:
                 print("CAMBI Heatmap output path: ",
-                    myVmaf.cambi_heatmap_path)
+                    vmaf_result.cambi_heatmap_path)
 
             print("\n \n \n \n \n ")
 

@@ -191,19 +191,20 @@ GOLDEN_CAMBI = (r"|name=cambi\\:full_ref=true\\:enc_width=1280\\:enc_height=720"
 
 @pytest.mark.parametrize("model", ["HD", "4K"])
 @pytest.mark.parametrize("cambi_heatmap", [False, True], ids=["plain", "cambi"])
-def test_v06_vmaf_command_is_unchanged(monkeypatch, model, cambi_heatmap):
+def test_v06_vmaf_command_is_unchanged(monkeypatch, unscored, model, cambi_heatmap):
     """The v0.6 FFmpeg command changes, and with it v0.6 scores or output paths."""
     monkeypatch.setattr(FFmpegQos, "_executable", "ffmpeg")
     monkeypatch.setattr(ffmpeg.FFprobe, "getStreamInfo", lambda self: dict(
-        width=1280, height=720, r_frame_rate="25/1", duration="10.0", start_time="0")
-        if self.videoSrc == "dist.mp4" else dict(
-        width=1920, height=1080, r_frame_rate="25/1", duration="12.0", start_time="0"))
+        width=1280, height=720, r_frame_rate="25/1", duration="10.0", start_time="0",
+        pix_fmt="yuv420p") if self.videoSrc == "dist.mp4" else dict(
+        width=1920, height=1080, r_frame_rate="25/1", duration="12.0", start_time="0",
+        pix_fmt="yuv420p"))
     monkeypatch.setattr(ffmpeg.FFprobe, "getFramesInfo",
                         lambda self: [{"interlaced_frame": 0, "pkt_size": 1}])
     monkeypatch.setattr(ffmpeg.subprocess, "Popen", Mock(
         return_value=SimpleNamespace(returncode=0, communicate=lambda: (b"", None))))
-    calculation = vmaf("dist.mp4", "ref.mp4", "json", model=model, threads=4,
-                       cambi_heatmap=cambi_heatmap)
+    calculation = vmaf("dist.mp4", "ref.mp4", display=model.lower(), vmaf_versions=("0.6",),
+                       threads=4, cambi_heatmap=cambi_heatmap)
     calculation.offset = 1.5
 
     calculation.getVmaf()
