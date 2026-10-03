@@ -372,6 +372,9 @@ class vmaf():
             qos = FFmpegQos(self.ref.videoSrc, self.main.videoSrc, self.loglevel,
                             gpu_mode=False)
             qos.invertedSrc = True
+        # One FFmpeg process per offset already fills the CPUs; internal
+        # FFmpeg threads on top of that oversubscribe them.
+        qos._single_thread = True
 
         qos.ref.setTrimFilter(offset, 0.5)
         qos.main.setTrimFilter(0, 0.5)
@@ -427,6 +430,12 @@ class vmaf():
         ]
 
         max_workers = self.threads if self.threads > 0 else os.cpu_count()
+
+        # The lazy interlace probe is not locked: if workers trigger it, each
+        # one runs its own frames probe. Probe once per input before the pool.
+        if self.manual_fps == 0:
+            self.main.interlaced
+            self.ref.interlaced
 
         # Results arrive in completion order (not offset order) — logged as they finish
         results = []

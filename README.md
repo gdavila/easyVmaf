@@ -66,7 +66,7 @@ easyvmaf -d <distorted> -r <reference> [options]
 | `-subsample N` | `1` | Frame subsampling factor to speed up computation. |
 | `-reverse` | off | Reverse sync direction: match reference first-frames against distorted instead of the default. |
 | `-model MODEL` | `HD` | VMAF model. Options: `HD`, `4K`. |
-| `-threads N` | `0` | Number of threads (0 = auto). |
+| `-threads N` | `0` | Parallel single-threaded sync workers and libvmaf threads (0 = CPU count). |
 | `-output_fmt FMT` | `json` | Per-frame VMAF output file format: `json`, `xml`, or `csv`. |
 | `-verbose` | off | Enable verbose log level. |
 | `-progress` | off | Show FFmpeg progress during VMAF computation. |

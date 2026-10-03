@@ -129,7 +129,7 @@ def get_args():
     parser.add_argument('-model', dest='model', type=str, choices=('HD', '4K'), default="HD",
                         help="Vmaf Model. Options: HD, 4K. (Default: HD).")
     parser.add_argument('-threads', dest='threads', type=int,
-                        default=0, help='number of threads')
+                        default=0, help='Number of parallel sync workers (each runs FFmpeg single-threaded) and libvmaf threads. (default=0, CPU count).')
     parser.add_argument(
         '-verbose', help='Activate verbose loglevel. (Default: info).', action='store_true')
     parser.add_argument(

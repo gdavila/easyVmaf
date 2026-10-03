@@ -117,16 +117,20 @@ Understand this before touching easyvmaf/vmaf.py or easyvmaf/ffmpeg.py.
 |                    |                   |   cambi feature string)                       |       |
 |                    |                   | `getDuration` (primary: duration, start_time) |       |
 | `formatInfo`       | `getFormatInfo()` | `getDuration` fallback only (KeyError path)   | low   |
-| `framesInfo` /     | `getFramesInfo()` | `_autoDeinterlace` via `self.interlaced` only | HIGH  |
-| `interlaced`       |                   | Skipped entirely when `manual_fps != 0`       |       |
-|                    |                   | Skipped entirely when `--sync_only` is used   |       |
+| `framesInfo` /     | `getFramesInfo()` | `_autoDeinterlace` and sync workers, via      | HIGH  |
+| `interlaced`       |                   |   `self.interlaced` only                      |       |
+|                    |                   | `syncOffset` probes once per input before     |       |
+|                    |                   |   starting its worker pool                    |       |
+|                    |                   | Skipped entirely when `manual_fps != 0` (-fps)|       |
 
 `getFramesInfo()` uses `-read_intervals %+5` — it decodes 5 seconds of frames
 per input to sample interlacing. This flag must never be changed.
 
 **Lazy loading**: `interlaced` and `formatInfo` on the `video` class are lazy
 properties — they trigger FFprobe only on first access and cache the result.
-`streamInfo` is eager (fetched in `__init__`).
+`streamInfo` is eager (fetched in `__init__`). The properties are not locked, so
+`syncOffset()` reads `interlaced` before creating workers; otherwise each worker
+would run its own frames probe.
 
 ---
 
@@ -135,6 +139,7 @@ properties — they trigger FFprobe only on first access and cache the result.
 ### Sync loop (syncOffset)
 - Runs PSNR at each frame offset in the sync window **in parallel** via `ThreadPoolExecutor`
 - Each worker creates its own `FFmpegQos` instance with `gpu_mode=False` — sync is always CPU-only even when `--gpu` is set
+- Each worker sets the private `FFmpegQos._single_thread` switch: FFmpeg runs single-threaded (`-threads 1` before each `-i`, global `-filter_complex_threads 1`), since the pool already runs one process per CPU. The final VMAF command keeps FFmpeg's default threading
 - Reverse-search workers construct their own QoS instances with swapped paths and `invertedSrc=True`
 - The shared `ffmpegQos` retains main=distorted, ref=reference and its `invertedSrc` state after every search; no restoration swap is needed
 - Reverse search returns a negative offset so the final calculation trims distorted and names its output after distorted

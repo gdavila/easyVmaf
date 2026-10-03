@@ -181,6 +181,9 @@ class FFmpegQos:
         self.vmafpath = None
         self.vmaf_cambi_heatmap_path = None
         self.gpu_mode = gpu_mode
+        # Private: run FFmpeg single-threaded. Set only by sync PSNR workers,
+        # which already run one process per CPU; default keeps FFmpeg's own threading.
+        self._single_thread = False
 
     @staticmethod
     def _escape_filter_value(value: str) -> str:
@@ -215,7 +218,12 @@ class FFmpegQos:
         return value
 
     def _commitBase(self):
-        return [FFmpegQos._executable, '-y', '-hide_banner', '-stats', '-loglevel', self.loglevel]
+        base = [FFmpegQos._executable, '-y', '-hide_banner', '-stats', '-loglevel', self.loglevel]
+        if self._single_thread:
+            # Global option: -lavfi is a complex filtergraph, so -filter_threads
+            # (simple filtergraphs only) would not apply.
+            base += ['-filter_complex_threads', '1']
+        return base
 
     def _commit(self):
         """build the final cmd to run"""
@@ -233,7 +241,11 @@ class FFmpegQos:
         would add unfiltered outputs that decode both files to EOF despite
         trim. -an/-sn/-dn stop auto-selection of other streams.
         """
-        return ['-i', self.main.videoSrc, '-i', self.ref.videoSrc, '-an', '-sn', '-dn']
+        # Decoder threads are an input option: it must precede each -i.
+        decoder = ['-threads', '1'] if self._single_thread else []
+        return (decoder + ['-i', self.main.videoSrc] +
+                decoder + ['-i', self.ref.videoSrc] +
+                ['-an', '-sn', '-dn'])
 
     def _commitOutputs(self):
         return ['-f', 'null', '-']
