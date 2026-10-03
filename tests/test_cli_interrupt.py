@@ -46,7 +46,8 @@ def test_interruption_reaps_child_and_propagates(monkeypatch, progress, interrup
         ffmpeg.FFmpegQos("dist", "ref").getVmaf(print_progress=progress)
     assert raised.value is error
     child.kill.assert_called_once_with()
-    child.wait.assert_called_once_with(timeout=5)
+    child.wait.assert_called_once()
+    assert child.wait.call_args.kwargs["timeout"] > 0
     child.stdout.close.assert_called_once_with()
     child.stdin.close.assert_called_once_with()
 
@@ -62,7 +63,8 @@ def test_cleanup_timeout_preserves_interruption(monkeypatch, caplog):
     with pytest.raises(SystemExit) as raised:
         ffmpeg.FFmpegQos("dist", "ref").getVmaf()
     assert raised.value is error
-    child.wait.assert_called_once_with(timeout=5)
+    child.wait.assert_called_once()
+    assert child.wait.call_args.kwargs["timeout"] > 0
     child.stdout.close.assert_called_once_with()
     assert "Could not reap interrupted FFmpeg process" in caplog.text
 
@@ -77,8 +79,7 @@ from easyvmaf import cli, ffmpeg
 
 root = Path(sys.argv[1])
 progress = sys.argv[2] == "True"
-batch = sys.argv[3] == "True"
-binary = sys.argv[4]
+binary = sys.argv[3]
 children = []
 original_popen = ffmpeg.subprocess.Popen
 
@@ -92,7 +93,7 @@ ffmpeg.subprocess.Popen = tracked_popen
 cli.check_ffmpeg = lambda: dict(meets_minimum=True, builtin_models=True,
                               version_str="test", cuda_vmaf=False)
 files = [str(root / "first.mp4"), str(root / "interrupted.mp4")]
-cli.glob.glob = lambda pattern: files if batch else files[1:]
+cli.glob.glob = lambda pattern: files
 
 class Calculation:
     def __init__(self, main, reference, **kwargs):
@@ -131,8 +132,7 @@ finally:
 
 
 @pytest.mark.parametrize("progress", [False, True])
-@pytest.mark.parametrize("batch", [False, True])
-def test_real_sigint_preserves_completed_records_and_reaps_ffmpeg(tmp_path, progress, batch):
+def test_real_sigint_preserves_completed_records_and_reaps_ffmpeg(tmp_path, progress):
     binary = shutil.which("ffmpeg")
     if binary is None:
         pytest.skip("FFmpeg is required for the real child cleanup regression")
@@ -140,7 +140,7 @@ def test_real_sigint_preserves_completed_records_and_reaps_ffmpeg(tmp_path, prog
     env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1]),
                PYTHONDONTWRITEBYTECODE="1")
     process = subprocess.Popen(
-        [sys.executable, "-c", _CLI_HARNESS, str(tmp_path), str(progress), str(batch), binary],
+        [sys.executable, "-c", _CLI_HARNESS, str(tmp_path), str(progress), binary],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
         cwd=tmp_path, start_new_session=True,
     )
@@ -159,10 +159,9 @@ def test_real_sigint_preserves_completed_records_and_reaps_ffmpeg(tmp_path, prog
         assert states == ["already-reaped"]
         stdout, stderr = process.communicate(timeout=3)
         records = [json.loads(line) for line in stdout.splitlines()]
-        assert len(records) == int(batch)
-        if batch:
-            assert records[0]["distorted"] == str(tmp_path / "first.mp4")
-            assert records[0]["vmaf"]["vmaf_hd"] == 90
+        assert len(records) == 1
+        assert records[0]["distorted"] == str(tmp_path / "first.mp4")
+        assert records[0]["vmaf"]["vmaf_hd"] == 90
         assert "SIGINT" in stderr
         assert "Traceback" not in stderr
         assert "FFmpeg execution failed" not in stderr

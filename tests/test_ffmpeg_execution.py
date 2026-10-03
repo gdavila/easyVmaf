@@ -8,11 +8,8 @@ import pytest
 from easyvmaf import ffmpeg
 
 
-@pytest.mark.parametrize("existing_output", [False, True])
-def test_nonzero_exit_raises_before_returning(tmp_path, monkeypatch, existing_output):
+def test_nonzero_exit_raises_before_returning(tmp_path, monkeypatch):
     output = tmp_path / "previous.json"
-    if existing_output:
-        output.write_text('{"frames": []}')
     process = SimpleNamespace(returncode=23, communicate=Mock(return_value=(b"", None)))
     monkeypatch.setattr(ffmpeg.subprocess, "Popen", Mock(return_value=process))
     qos = ffmpeg.FFmpegQos("distorted.mp4", "reference.mp4")

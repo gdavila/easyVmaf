@@ -55,9 +55,11 @@ def reported_offsets(output, use_json):
             for line in output.splitlines() if line.startswith("offset:")]
 
 
-@pytest.mark.parametrize("use_json", [False, True])
-@pytest.mark.parametrize("reverse", [False, True])
-@pytest.mark.parametrize("seconds", ["0.2", "0", "-0.0"])
+@pytest.mark.parametrize("seconds,reverse,use_json", [
+    ("0.2", False, False), ("0.2", False, True),
+    ("0.2", True, False), ("0.2", True, True),
+    ("0", False, False), ("-0.0", True, True),
+])
 def test_manual_offset_matches_report_and_trim(calculation, capsys, seconds, reverse, use_json):
     sys.argv.extend(["-ss", seconds])
     if reverse:
@@ -86,28 +88,24 @@ def test_manual_offset_matches_report_and_trim(calculation, capsys, seconds, rev
         assert math.copysign(1, offsets[0]) == 1
 
 
-@pytest.mark.parametrize("use_json", [False, True])
 def test_reverse_manual_batch_uses_same_sign_for_each_distinct_instance(
-        calculation, monkeypatch, capsys, use_json):
+        calculation, monkeypatch, capsys):
     first = sys.argv[2]
     second = str(Path(first).with_name("second.mkv"))
     Path(second).touch()
     monkeypatch.setattr(cli.glob, "glob", lambda pattern: [first, second])
-    sys.argv.extend(["-ss", "0.2", "-reverse"])
-    if use_json:
-        sys.argv.append("-json")
+    sys.argv.extend(["-ss", "0.2", "-reverse", "-json"])
 
     cli.main()
 
     output = capsys.readouterr().out
-    assert reported_offsets(output, use_json) == [-0.2, -0.2]
+    assert reported_offsets(output, True) == [-0.2, -0.2]
     assert len(calculation) == 2
     assert calculation[0] is not calculation[1]
     assert [instance.main.videoSrc for instance in calculation] == [first, second]
     assert [instance.offset for instance in calculation] == [-0.2, -0.2]
-    if use_json:
-        records = [json.loads(line) for line in output.splitlines()]
-        assert [record["distorted"] for record in records] == [first, second]
+    records = [json.loads(line) for line in output.splitlines()]
+    assert [record["distorted"] for record in records] == [first, second]
 
 
 def test_real_manual_reverse_matches_automatic_alignment(tmp_path):

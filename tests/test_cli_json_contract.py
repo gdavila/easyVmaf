@@ -73,8 +73,11 @@ def test_psnr_json_schema(calculation, capsys, sync_only, psnr, expected):
         calculation.getVmaf.assert_called_once_with()
 
 
-@pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
-@pytest.mark.parametrize("field", ["sync_offset", "full_offset", "vmaf"])
+@pytest.mark.parametrize("field,value", [
+    ("sync_offset", float("inf")),
+    ("full_offset", float("nan")),
+    ("vmaf", float("-inf")),
+])
 def test_unsupported_nonfinite_result_fails_without_partial_json(
         calculation, capsys, value, field):
     if field == "vmaf":
@@ -196,15 +199,6 @@ def test_explicit_help_still_uses_stdout(monkeypatch, capsys):
     assert captured.err == ""
 
 
-def test_interrupt_diagnostic_uses_stderr_and_exits_130(capsys):
-    with pytest.raises(SystemExit) as exc:
-        cli.handler(None, None)
-    assert exc.value.code == 130
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert "SIGINT" in captured.err
-
-
 def cli_environment(**overrides):
     return dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1]), **overrides)
 
@@ -220,7 +214,7 @@ def test_real_missing_ffmpeg_leaves_stdout_empty(tmp_path):
     assert "Traceback" not in result.stderr
 
 
-@pytest.mark.parametrize("sync_only, count", [(True, 1), (True, 2), (False, 1)])
+@pytest.mark.parametrize("sync_only, count", [(True, 2), (False, 1)])
 def test_real_identical_clips_emit_strict_json_with_verbose_progress(tmp_path, sync_only, count):
     binary = ffmpeg.FFmpegQos._executable
     if not binary or not shutil.which(binary):

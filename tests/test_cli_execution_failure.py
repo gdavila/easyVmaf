@@ -1,7 +1,6 @@
 """CLI regression coverage, including real CPU reproduction of F01."""
 
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -57,8 +56,7 @@ def test_cli_does_not_read_results_after_execution_failure(tmp_path, monkeypatch
     open_result.assert_not_called()
 
 
-@pytest.fixture
-def real_clip(tmp_path):
+def test_real_ffmpeg_failure_never_reuses_previous_score(tmp_path, monkeypatch, capsys):
     binary = ffmpeg.FFmpegQos._executable
     if not binary or not shutil.which(binary):
         pytest.skip("FFmpeg unavailable for CPU VMAF reproduction")
@@ -69,30 +67,31 @@ def real_clip(tmp_path):
     subprocess.run([binary, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
                     "testsrc2=s=64x64:r=2:d=1", "-c:v", "ffv1", str(clip)], check=True,
                    capture_output=True)
-    return clip
+    monkeypatch.setattr(sys, "argv", ["easyvmaf", "-d", str(clip), "-r", str(clip),
+                                      "-fps", "2", "-threads", "1", "-json"])
+    cli.main()
+    result = json.loads(capsys.readouterr().out)
+    output = Path(result["vmaf"]["output_file"])
+    previous_score = output.read_bytes()
 
+    # Keep CLI arguments valid and fail inside the real scoring subprocess,
+    # before FFmpeg can overwrite the valid result from the preceding run.
+    original_commit = ffmpeg.FFmpegQos._commit
 
-@pytest.mark.parametrize("progress", [False, True])
-def test_real_cli_success_then_invalid_subsample_never_reuses_score(real_clip, progress):
-    command = [sys.executable, "-m", "easyvmaf", "-d", str(real_clip), "-r", str(real_clip),
-               "-fps", "2", "-threads", "1", "-json"]
-    if progress:
-        command.append("-progress")
-    # Keep source importable when the caller runs pytest from another directory.
-    environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1]))
-    success = subprocess.run(command, capture_output=True, text=True, env=environment)
-    assert success.returncode == 0, success.stderr
-    result = json.loads(success.stdout)
-    assert result["vmaf"]["vmaf_hd"] > 90
-    assert Path(result["vmaf"]["output_file"]).is_file()
+    def fail_scoring(qos):
+        original_commit(qos)
+        qos._cmd.append("-easyvmaf_test_invalid_option")
 
-    failure = subprocess.run(command + ["-subsample", "0"], capture_output=True,
-                             text=True, env=environment)
-    assert failure.returncode == 2, failure.stdout
-    assert failure.stdout == ""
-    assert "-subsample" in failure.stderr
-    assert "at least 1" in failure.stderr
-    assert "Traceback" not in failure.stderr
+    monkeypatch.setattr(ffmpeg.FFmpegQos, "_commit", fail_scoring)
+    with pytest.raises(SystemExit) as error:
+        cli.main()
+
+    assert error.value.code == 1
+    failure = capsys.readouterr()
+    assert failure.out == ""
+    assert "FFmpeg execution failed" in failure.err
+    assert "Traceback" not in failure.err
+    assert output.read_bytes() == previous_score
 
 
 @pytest.mark.parametrize("progress", [False, True])

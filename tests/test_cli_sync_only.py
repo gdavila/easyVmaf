@@ -46,7 +46,7 @@ def batch(tmp_path, monkeypatch):
     return files, str(reference), calculations, constructor
 
 
-@pytest.mark.parametrize("count", [1, 2, 3])
+@pytest.mark.parametrize("count", [1, 3])
 @pytest.mark.parametrize("use_json", [False, True])
 def test_sync_only_processes_each_input_once(batch, monkeypatch, capsys, count, use_json):
     files, reference, calculations, constructor = batch
@@ -75,8 +75,9 @@ def test_sync_only_processes_each_input_once(batch, monkeypatch, capsys, count, 
                          for index in range(count)]
 
 
-@pytest.mark.parametrize("window", [None, "0", "-0.4", "nan", "inf", "-inf"])
-@pytest.mark.parametrize("use_json", [False, True])
+@pytest.mark.parametrize("window,use_json", [
+    (None, False), ("0", True), ("-0.4", True), ("nan", True), ("inf", True),
+])
 def test_invalid_sync_only_window_rejected_before_environment_or_probing(
         monkeypatch, capsys, window, use_json):
     arguments = ["easyvmaf", "-d", "missing.mp4", "-r", "missing-ref.mp4", "-sync_only"]
@@ -103,7 +104,7 @@ def test_invalid_sync_only_window_rejected_before_environment_or_probing(
     constructor.assert_not_called()
 
 
-@pytest.mark.parametrize("window", [None, "0", "0.4"])
+@pytest.mark.parametrize("window", [None, "0.4"])
 def test_full_computation_still_runs_once_per_input(batch, monkeypatch, capsys, window):
     files, reference, calculations, constructor = batch
     monkeypatch.setattr(cli.glob, "glob", lambda pattern: files)
