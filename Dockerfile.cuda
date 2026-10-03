@@ -2,7 +2,7 @@
 
 # Global ARGs — available to all stages via empty redeclaration
 ARG FFMPEG_version=8.1
-ARG VMAF_version=3.0.0
+ARG VMAF_version=3.2.1
 ARG DAV1D_version=1.4.3
 ARG EASYVMAF_VERSION=3.0.0
 ARG PYTHON_VERSION=3.12

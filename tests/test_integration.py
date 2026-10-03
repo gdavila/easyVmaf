@@ -18,7 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from conftest import ROOT, run_cli, strict_loads
+from conftest import ROOT, probe_libvmaf_model, run_cli, strict_loads
 from easyvmaf import ffmpeg, vmaf
 from easyvmaf.ffmpeg import FFmpegQos
 
@@ -47,6 +47,12 @@ def test_check_ffmpeg_accepts_real_build(ffmpeg_bin):
     result = ffmpeg.check_ffmpeg()
     assert result["meets_minimum"] is True
     assert result["builtin_models"] is True
+
+
+@pytest.mark.requires_libvmaf_v1
+@pytest.mark.parametrize("model", ["vmaf_v1.0.16_3d0h", "vmaf_v1.0.16_hfr_3d0h", "vmaf_v0.6.1"])
+def test_built_in_model_scores_a_frame(model):
+    assert probe_libvmaf_model(model) is None
 
 
 def test_escaped_path_reaches_the_named_file(ffmpeg_bin, tmp_path):
@@ -131,7 +137,8 @@ def test_cli_json_stdout_stays_ndjson_with_verbose_progress(encode, tmp_path, sy
     reference = tmp_path / "reference.mkv"
     encode("-f", "lavfi", "-i", "testsrc2=s=64x64:r=10:d=1", "-c:v", "ffv1", reference)
     shutil.copyfile(reference, tmp_path / "dist-same.mkv")
-    encode("-i", reference, "-vf", "eq=brightness=0.05", "-c:v", "ffv1",
+    # Not eq=brightness: eq is GPL-only and the Docker image's FFmpeg is not.
+    encode("-i", reference, "-vf", "lutyuv=y=val+13", "-c:v", "ffv1",
            tmp_path / "dist-bright.mkv")
     pattern = "dist-*.mkv" if sync_only else "dist-same.mkv"
 

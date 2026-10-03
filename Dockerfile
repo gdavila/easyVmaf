@@ -1,6 +1,6 @@
 # Global ARGs — available to all stages via empty redeclaration
 ARG FFMPEG_version=8.1
-ARG VMAF_version=3.0.0
+ARG VMAF_version=3.2.1
 ARG EASYVMAF_VERSION=3.0.0
 
 FROM python:3.12-slim AS base
