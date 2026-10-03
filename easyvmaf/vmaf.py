@@ -530,7 +530,7 @@ class vmaf():
                     f"No deinterlace filter available for the given framerate combination. "
                     f"ref={round(ref_fps, 5)}fps (interlaced={self.ref.interlaced}), "
                     f"main={round(main_fps, 5)}fps (interlaced={self.main.interlaced}). "
-                    f"Consider using the -fps flag to force a frame rate manually."
+                    f"Consider using the --fps flag to force a frame rate manually."
                 )
             return round(main_fps, 5)
 
@@ -567,7 +567,7 @@ class vmaf():
                     f"No deinterlace filter available for the given framerate combination. "
                     f"ref={round(ref_fps, 5)}fps (interlaced={self.ref.interlaced}), "
                     f"main={round(main_fps, 5)}fps (interlaced={self.main.interlaced}). "
-                    f"Consider using the -fps flag to force a frame rate manually."
+                    f"Consider using the --fps flag to force a frame rate manually."
                 )
 
     def _autoDeinterlace(self):

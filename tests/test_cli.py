@@ -275,7 +275,7 @@ def test_manual_offset_is_applied_and_reported_for_every_input(
     else:
         offsets = [float(line.split("|")[0].split(":", 1)[1])
                    for line in out.splitlines() if line.startswith("offset:")]
-    # Compare signs too: -ss 0 -reverse must not report -0.0.
+    # Compare signs too: --sync-start 0 --reverse must not report -0.0.
     assert [(o, math.copysign(1, o)) for o in offsets] == [(expected, math.copysign(1, expected))] * 2
     assert len(instances) == 2
     for instance in instances:

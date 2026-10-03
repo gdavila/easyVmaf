@@ -5,9 +5,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 easyVmaf is a Python CLI tool that wraps FFmpeg and FFprobe to compute VMAF video
-quality scores. It handles the preprocessing that VMAF requires: deinterlacing,
-scaling, frame rate normalization, and frame-accurate time synchronization between
-reference and distorted video streams.
+quality scores. It handles the preprocessing that VMAF requires: pixel format
+normalization, deinterlacing, scaling, frame rate normalization, and
+frame-accurate time synchronization between reference and distorted video streams.
+
+Since 4.0 the default models are VMAF v1 (`vmaf_v1.0.16_*`); the VMAF v0.6 models
+of 3.x are computed with `--vmaf-version 0.6`.
 
 ## Setup
 
@@ -17,7 +20,8 @@ pip install -e .          # from source (editable)
 pip install easyvmaf
 ```
 
-FFmpeg >= 5.0 built with `--enable-libvmaf` must be on PATH, or override via env:
+FFmpeg >= 8.1 built with `--enable-libvmaf`, against libvmaf >= 3.2.1 built with
+`-Dbuilt_in_models=true`, must be on PATH, or override via env:
 
 ```bash
 FFMPEG=/path/to/ffmpeg FFPROBE=/path/to/ffprobe python3 -m easyvmaf ...
@@ -27,15 +31,21 @@ FFMPEG=/path/to/ffmpeg FFPROBE=/path/to/ffprobe python3 -m easyvmaf ...
 
 ```bash
 # Installed CLI command
-easyvmaf -d distorted.mp4 -r reference.mp4
-easyvmaf -d distorted.mp4 -r reference.mp4 -sw 2      # with sync window
-easyvmaf -d distorted.mp4 -r reference.mp4 --gpu      # GPU-accelerated (CUDA)
-easyvmaf -d distorted.mp4 -r reference.mp4 -json      # structured JSON output
-easyvmaf -d "folder/*.mp4" -r reference.mp4           # batch
+easyvmaf -d distorted.mp4 -r reference.mp4                      # VMAF v1 HD (vmaf_v1_hd, vmaf_v1_phone)
+easyvmaf -d distorted.mp4 -r reference.mp4 --sync-window 2      # with sync window
+easyvmaf -d distorted.mp4 -r reference.mp4 --display 4k         # VMAF v1 4K
+easyvmaf -d distorted.mp4 -r reference.mp4 --vmaf-version 0.6   # v0.6 models, as in 3.x
+easyvmaf -d distorted.mp4 -r reference.mp4 --vmaf-version 1 0.6 # both generations in one pass
+easyvmaf -d distorted.mp4 -r reference.mp4 --vmaf-version 0.6 --gpu  # GPU (CUDA), v0.6 only
+easyvmaf -d distorted.mp4 -r reference.mp4 --json               # structured JSON output
+easyvmaf -d "folder/*.mp4" -r reference.mp4                     # batch
 
 # Module invocation (no install)
 python3 -m easyvmaf -d distorted.mp4 -r reference.mp4
 ```
+
+3.x flags (`-sw`, `-model`, `-json`, ...) are rejected with exit code 2 and the
+name of their replacement (`_REMOVED_FLAGS` in `cli.py`).
 
 ## Docker
 
@@ -48,11 +58,18 @@ docker run --rm -v $(pwd)/video_samples:/videos easyvmaf \
 # GPU build (requires CUDA 12.3, nvidia-container-toolkit on host)
 docker build -f Dockerfile.cuda -t easyvmaf:cuda .
 docker run --rm --gpus all -v $(pwd)/video_samples:/videos easyvmaf:cuda \
-  -d /videos/distorted.mp4 -r /videos/reference.mp4 --gpu
+  -d /videos/distorted.mp4 -r /videos/reference.mp4 --vmaf-version 0.6 --gpu
 
 # docker-compose
 docker compose build
 docker compose run easyvmaf -d /videos/dist.mp4 -r /videos/ref.mp4
+```
+
+Running pytest inside the image (pytest is not installed in it):
+
+```bash
+docker run --rm -v $(pwd):/src -w /src --entrypoint sh easyvmaf \
+  -c 'pip install -q --root-user-action=ignore pytest && python3 -m pytest -q -rs -p no:cacheprovider'
 ```
 
 ---
@@ -63,43 +80,115 @@ Each layer must only talk to the layer directly below it.
 
 ```
 easyvmaf/cli.py     ← Layer 3: CLI only (argparse, glob, JSON output, print results)
-easyvmaf/vmaf.py    ← Layer 2: VMAF logic (scaling, deinterlace, sync, scoring)
+easyvmaf/vmaf.py    ← Layer 2: VMAF logic (pixel format, scaling, deinterlace, sync,
+easyvmaf/results.py ←          model resolution, scoring, reading libvmaf logs)
 easyvmaf/ffmpeg.py  ← Layer 1: FFmpeg/FFprobe subprocess wrappers
+easyvmaf/models.py  ← model catalog: pure data, imported by layers 1-3
 easyvmaf/config.py  ← binary path resolution (ffmpeg, ffprobe via shutil.which)
 ```
 
 Supporting entry points:
-- `easyvmaf/__init__.py` — public API surface
+- `easyvmaf/__init__.py` — public API surface: `vmaf`, `VmafResult`,
+  `validate_model_config`, `UnsupportedFramerateError`,
+  `UnsupportedModelConfigError`, `ModelSpec`, `CATALOG`, `select_models`,
+  `FFprobe`, `FFmpegQos`, `inputFFmpeg`, `__version__`
 - `easyvmaf/__main__.py` — enables `python3 -m easyvmaf`
+
+### easyvmaf/models.py — model catalog
+Pure data module: no subprocess, no logging, no import of `ffmpeg.py` or `vmaf.py`.
+- `DISPLAY_RESOLUTION = {'hd': (1920, 1080), '4k': (3840, 2160)}`
+- `VMAF_VERSIONS = ('1', '0.6')`, `VIEW_ALIASES = {'phone': '5h'}`
+- `ModelSpec` (frozen): `name` (score key), `libvmaf_model` (built-in id, passed as
+  `version=`), `vmaf_version`, `display`, `view`, `score_range`, `options`,
+  `hfr_model`, `default`
+- `ModelRun` (frozen): `spec`, `libvmaf_model` (`spec.libvmaf_model` or
+  `spec.hfr_model`), `options` (`spec.options` + layer 2 overrides)
+- `CATALOG`: the 8 `ModelSpec` entries (see VMAF models below)
+- `select_models(display, vmaf_versions=('1',), views=None, hfr=False)`: filters by
+  display, then each version in the order received; v1 `views=None` takes the
+  `default` models, explicit views are case-insensitive, follow catalog order, and
+  raise `ValueError` if a view does not exist for the display; v0.6 always returns
+  the full set of its display; `hfr=True` switches v1 ids to `hfr_model`. Returns
+  `ModelRun` without overrides.
+- `model_names(runs)`: score names, in order
+
+Add a model by adding a catalog entry, not by branching on display names.
 
 ### Layer 1 — easyvmaf/ffmpeg.py
 Thin subprocess wrappers around ffmpeg and ffprobe binaries.
 - `FFprobe`: runs ffprobe, returns stream/frame/packet/format info as dicts
-- `FFmpegQos`: builds and runs ffmpeg filter graph for PSNR and VMAF computation
-- `inputFFmpeg`: manages per-input filter chains (scale, trim, fps, deinterlace, hwupload_cuda)
-- `check_ffmpeg()`: probes FFmpeg version, built-in model availability, and `libvmaf_cuda` support
-- `VMAF_MODELS`: structured dict defining HD and 4K model configurations
-- `_build_model_string()`: builds the libvmaf `model=` parameter string
+- `FFmpegQos`: builds and runs the ffmpeg filter graph for PSNR and VMAF
+  - `getVmaf(models, log_path=None, subsample=1, output_fmt='json', threads=0,
+    print_progress=False, end_sync=False, features=None, gpu=False)`: `models` is a
+    resolved `Sequence[ModelRun]`; `features` is the complete libvmaf `feature=`
+    value built by layer 2. Returns the FFmpeg process; raises
+    `FFmpegExecutionError` on failure. Sets `self.vmafpath`.
+  - `_build_model_string(models)`: per model `version=…`, `name=…`, then
+    `options` in order, joined by `\\\\:`; models joined by `|`
+- `inputFFmpeg`: per-input filter chains (scale, trim, fps, deinterlace,
+  `setFormatFilter(pix_fmt)`, hwupload_cuda)
+- `check_ffmpeg()`: returns `version`, `version_str`, `meets_minimum` (FFmpeg >= 8.1;
+  `n8.1…` tags and `N-…`/`git-…` dev builds accepted), `libvmaf_v1` and `cuda_vmaf`.
+  `libvmaf_v1` comes from a probe that **computes one frame** with
+  `vmaf_v1.0.16_3d0h` on two `color=black:s=320x240` inputs. It never reads the
+  libvmaf version: 3.2.1 reports itself as 3.2.0, and a default 3.2.0 build loads
+  the v1 models but cannot compute them. The probe must stay >= 320x240: the v1
+  SpEED feature rejects frames below about 288x162.
 
 Must NOT contain any VMAF business logic or user-facing print statements.
 
-### Layer 2 — easyvmaf/vmaf.py
+### Layer 2 — easyvmaf/vmaf.py and easyvmaf/results.py
 VMAF computation orchestration.
 - `video`: parses stream metadata via FFprobe (lazy loading), detects interlacing
-- `vmaf`: auto-scaling, auto-deinterlace, parallel sync offset search, final VMAF scoring
+- `vmaf(mainSrc, refSrc, *, display='hd', vmaf_versions=('1',), views=None,
+  hfr='auto', bitdepth='auto', enc_size=None, enc_bitdepth=None, model_options=(),
+  output_fmt='json', loglevel='info', subsample=1, threads=0, print_progress=False,
+  end_sync=False, manual_fps=0, cambi_heatmap=False, gpu_mode=False)`: pixel format,
+  auto-scaling, auto-deinterlace, parallel sync offset search, model resolution and
+  final VMAF scoring. `getVmaf()` returns a `VmafResult`.
+- `validate_model_config(display, vmaf_versions, views, hfr, bitdepth, enc_size,
+  enc_bitdepth, model_options, gpu_mode, labels=None)`: the single source of model
+  option validation. Run by the `vmaf` constructor and once by the CLI before the
+  batch (`labels` maps argument names to flag names in messages). Raises
+  `UnsupportedModelConfigError` for: GPU with v1; GPU with bitdepth 10; `views`,
+  `hfr='on'`, `enc_size`, `enc_bitdepth` or `model_options` without v1; a
+  `model_options` entry not matching `_MODEL_OPTION_RE`. Unknown display, version or
+  view raise `ValueError` from `select_models()`.
+- The constructor also rejects, with v1 + `cambi_heatmap`, a heatmap path containing
+  `:`, `|`, `\` or `'` (`_HEATMAP_PATH_FORBIDDEN`): it cannot be escaped inside a
+  `model=` override.
 - `UnsupportedFramerateError`: raised when no deinterlace filter covers the fps combination
+- `UnsupportedModelConfigError(ValueError)`: options the selected models cannot honour
 - `FeatureConfig`: dataclass for building the libvmaf `feature=` parameter string
+- `results.py`: `VmafResult` dataclass (`scores`, `models`, `display`, `pix_fmt`,
+  `hfr`, `log_path`, `cambi_heatmap_path`, `offset`) and
+  `read_scores(log_path, output_fmt, names)`, which averages the per-frame values of
+  each model name in a json, xml or csv libvmaf log. It reads only model names:
+  feature columns differ between v0.6 and v1.
+
+Reading libvmaf logs is a layer 2 responsibility since 4.0.
 
 Must NOT contain CLI argument parsing or result formatting.
 
 ### Layer 3 — easyvmaf/cli.py
 CLI entry point only. Argparse, glob pattern expansion for batch processing,
-reading VMAF output files (json/xml/csv), printing or emitting structured JSON results.
-- `-json` flag: emits NDJSON to stdout (one object per file in batch); logging goes to stderr
-- `_build_result()`: constructs the result dict for JSON output and human-readable display
-- `check_ffmpeg()` called at startup for version/model/CUDA validation
+printing or emitting structured JSON results.
+- Flags are `--kebab-case`, grouped in `--help` as input, synchronization, models,
+  VMAF v1 parameters, output and execution. Only `-d`/`-r` have short forms.
+  `allow_abbrev=False`.
+- `_REMOVED_FLAGS`: 3.x flag → 4.0 flag. `MyParser.parse_known_args()` checks it
+  **before** parsing (argparse would read `-reverse` as `-r everse`) and exits with
+  code 2: `error: -sw was removed in easyVmaf 4.0, use --sync-window`.
+- `get_args()` calls `validate_model_config(..., labels=_FLAG_LABELS)` and turns
+  its `ValueError` into `parser.error()` (exit code 2), before `check_ffmpeg()`.
+- `--json` flag: emits NDJSON to stdout (one object per file in batch); logging goes to stderr
+- `_build_result()`: constructs the JSON schema 2 dict from a `VmafResult`
+  (`JSON_SCHEMA_VERSION = 2`)
+- `_print_text_result()`: one line per score with value, libvmaf model and range
+- `check_ffmpeg()` called at startup: exits 1 if `meets_minimum` or `libvmaf_v1` is
+  false, or if `--gpu` is set and `cuda_vmaf` is false
 
-Must NOT contain FFmpeg filter logic or VMAF computation directly.
+Must NOT contain FFmpeg filter logic, VMAF computation or libvmaf log parsing.
 
 ---
 
@@ -110,21 +199,29 @@ Understand this before touching easyvmaf/vmaf.py or easyvmaf/ffmpeg.py.
 | Data               | Method            | Consumers in vmaf.py                          | Cost  |
 |--------------------|-------------------|-----------------------------------------------|-------|
 | `streamInfo`       | `getStreamInfo()` | `_autoScale` (width, height)                  | low   |
+|                    |                   | `_applyPixelFormat` / `_measurementPixFmt`    |       |
+|                    |                   |   (pix_fmt of both inputs)                    |       |
 |                    |                   | `_autoDeinterlace` (r_frame_rate)             |       |
 |                    |                   | `_deinterlaceFrame/Field` (r_frame_rate)      |       |
 |                    |                   | `syncOffset` (r_frame_rate, width, height)    |       |
-|                    |                   | `getVmaf` (r_frame_rate, width, height,       |       |
-|                    |                   |   cambi feature string)                       |       |
+|                    |                   | `_resolveModels` (distorted width, height,    |       |
+|                    |                   |   pix_fmt → `cambi.enc_*`)                    |       |
+|                    |                   | `_build_feature_string` (v0.6-only CAMBI:     |       |
+|                    |                   |   width, height of both inputs)               |       |
+|                    |                   | `getVmaf` (r_frame_rate, width, height logs)  |       |
 |                    |                   | `getDuration` (primary: duration, start_time) |       |
 | `formatInfo`       | `getFormatInfo()` | `getDuration` fallback only (KeyError path)   | low   |
 | `framesInfo` /     | `getFramesInfo()` | `_autoDeinterlace` and sync workers, via      | HIGH  |
 | `interlaced`       |                   |   `self.interlaced` only                      |       |
 |                    |                   | `syncOffset` probes once per input before     |       |
 |                    |                   |   starting its worker pool                    |       |
-|                    |                   | Skipped entirely when `manual_fps != 0` (-fps)|       |
+|                    |                   | Skipped entirely when `manual_fps != 0` (--fps)|      |
 
 `getFramesInfo()` uses `-read_intervals %+5` — it decodes 5 seconds of frames
 per input to sample interlacing. This flag must never be changed.
+
+All VMAF v1 parameters (measurement format, CAMBI encoding size and bit depth) come
+from `streamInfo`, which is already fetched: v1 adds no FFprobe call.
 
 **Lazy loading**: `interlaced` and `formatInfo` on the `video` class are lazy
 properties — they trigger FFprobe only on first access and cache the result.
@@ -140,19 +237,57 @@ would run its own frames probe.
 - Runs PSNR at each frame offset in the sync window **in parallel** via `ThreadPoolExecutor`
 - Each worker creates its own `FFmpegQos` instance with `gpu_mode=False` — sync is always CPU-only even when `--gpu` is set
 - Each worker sets the private `FFmpegQos._single_thread` switch: FFmpeg runs single-threaded (`-threads 1` before each `-i`, global `-filter_complex_threads 1`), since the pool already runs one process per CPU. The final VMAF command keeps FFmpeg's default threading
+- Workers apply scale and deinterlace/fps filters only; no pixel format normalization
 - Reverse-search workers construct their own QoS instances with swapped paths and `invertedSrc=True`
 - The shared `ffmpegQos` retains main=distorted, ref=reference and its `invertedSrc` state after every search; no restoration swap is needed
 - Reverse search returns a negative offset so the final calculation trims distorted and names its output after distorted
 - Each worker starts with fresh filter chains on its own QoS instance
 
-### Filter application order (always this sequence)
+### Filter application order (`vmaf.getVmaf()`, always this sequence)
 1. `clearFilters()` — reset state (also resets `_hwupload_done`)
-2. `_autoScale()` — scale to model resolution (CPU `scale` filter; warns if called without preceding `clearFilters()`)
-3. `_autoDeinterlace()` OR `_forceFps()` — normalize frame rate (mutually exclusive)
-4. `setOffset()` — apply trim filters for sync
-5. `getVmaf()` — if `gpu=True`, auto-inserts `hwupload_cuda` on both chains as the last CPU→GPU step before `libvmaf_cuda`
+2. `_applyPixelFormat()` — resolve the measurement `pix_fmt` and add
+   `format=<pix_fmt>` as the **first** filter of each chain whose native format
+   differs (CPU only; in GPU mode `pix_fmt = 'yuv420p'` and no filter is added)
+3. `_autoScale()` — scale to `DISPLAY_RESOLUTION[display]` (CPU `scale` filter; warns if called without preceding `clearFilters()`)
+4. `_autoDeinterlace()` OR `_forceFps()` — normalize frame rate (mutually exclusive);
+   both record the effective distorted frame rate in `self.output_fps`
+5. `setOffset()` — apply trim filters for sync
+6. `_resolveModels()` — HFR decision from `output_fps`, `select_models()`, v1 overrides
+7. `ffmpegQos.getVmaf(models, ...)` — if `gpu=True`, auto-inserts `hwupload_cuda` on both chains as the last CPU→GPU step before `libvmaf_cuda`
+
+`syncOffset()` (with `autoSync=True`) runs between steps 4 and 5.
+
+The format conversion goes first on purpose: with `scale` in the chain FFmpeg
+negotiates the output format into the scaler, but without scaling and with `yadif`
+FFmpeg inserts the conversion at the end and deinterlaces at 8 bits.
+
+### Measurement pixel format (`_measurementPixFmt`)
+- Chroma subsampling of the reference (`yuvj*`, `nv12`, `nv21` count as 4:2:0 8-bit,
+  `p010` as 4:2:0 10-bit; an unrecognized format falls back to 4:2:0 with a warning)
+- Bit depth: `bitdepth` override; else `max(10, reference depth)` with any v1 model;
+  else the reference depth (v0.6 only)
+- Never converts the reference to a lower format. Reported as `VmafResult.pix_fmt`
+
+### Model resolution (`_resolveModels`)
+- HFR: `hfr='auto'` → `output_fps >= HFR_MIN_FPS` (47); warning if
+  `output_fps > HFR_MAX_CALIBRATED_FPS` (60). `VmafResult.hfr` is true only when a
+  v1 model used its `_hfr` variant
+- Each v1 `ModelRun` gets `cambi.enc_width`, `cambi.enc_height`
+  (`enc_size` or the distorted `streamInfo` size) and `cambi.enc_bitdepth`
+  (`enc_bitdepth` or the distorted `pix_fmt` digits, 8 without digits), then
+  `model_options`, appended to `run.options` with `dataclasses.replace`
+- CAMBI minimum encoding size: libvmaf 3.2.1 rejects < 180x150 or both sides < 216
+  (`CAMBI_MIN_ENC_*`). `_cambiEncodingSize()` raises the size to the smallest accepted
+  one with the same aspect ratio (256x144 → 267x150) and logs a warning; it applies
+  to `enc_size` overrides and to the v0.6-only CAMBI feature too
+- `cambi_heatmap`: with v1, `cambi.heatmaps_path` only on the first v1 run; with
+  v0.6 only, a separate `cambi` feature in the `feature=` string (as in 3.x)
+- Never add `enable_transform` to a v1 model: v1 model JSONs already enable
+  `score_transform`
 
 ### GPU filter pipeline
+`--gpu` only supports v0.6 models: libvmaf 3.2.x has no CUDA extractors for the
+v1 features (`cambi`, `speed_chroma`, `adm3`, `motion3`).
 When `--gpu` is used, `getVmaf()` calls `_insertHwupload()` on both `main` and `ref`
 inputs **after** all CPU filters have been appended:
 ```
@@ -173,34 +308,46 @@ some TS streams) falls back to `formatInfo['duration']`. Both values subtract
 Duration is passed to `setOffset()` to compute trim length.
 
 ### VMAF models
-```python
-VMAF_MODELS = {
-    'HD': [                                                       # default
-        ('vmaf_v0.6.1',     'vmaf_hd',       {}),
-        ('vmaf_v0.6.1neg',  'vmaf_hd_neg',   {}),
-        ('vmaf_v0.6.1',     'vmaf_hd_phone', {'enable_transform': 'true'}),
-    ],
-    '4K': [
-        ('vmaf_4k_v0.6.1',  'vmaf_4k',       {}),
-    ],
-}
+`CATALOG` in `easyvmaf/models.py` (all built-in libvmaf models):
+
+| `name`          | `libvmaf_model`                         | Version | Display | View    | Range    | Default |
+|-----------------|-----------------------------------------|---------|---------|---------|----------|---------|
+| `vmaf_v1_hd`    | `vmaf_v1.0.16_3d0h`                     | 1       | hd      | 3h      | [0, 100] | yes     |
+| `vmaf_v1_phone` | `vmaf_v1.0.16_5d0h`                     | 1       | hd      | 5h      | [0, 100] | yes     |
+| `vmaf_v1_4k`    | `vmaf_v1.0.16_1d5h_2160`                | 1       | 4k      | 1.5h    | [0, 100] | yes     |
+| `vmaf_v1_4k_3h` | `vmaf_v1.0.16_3d0h_2160`                | 1       | 4k      | 3h      | [0, 110] | no      |
+| `vmaf_hd`       | `vmaf_v0.6.1`                           | 0.6     | hd      | default | [0, 100] | yes     |
+| `vmaf_hd_neg`   | `vmaf_v0.6.1neg`                        | 0.6     | hd      | neg     | [0, 100] | yes     |
+| `vmaf_hd_phone` | `vmaf_v0.6.1` + `enable_transform=true` | 0.6     | hd      | phone   | [0, 100] | yes     |
+| `vmaf_4k`       | `vmaf_4k_v0.6.1`                        | 0.6     | 4k      | default | [0, 100] | yes     |
+
+- Every v1 model has `hfr_model = vmaf_v1.0.16_hfr_<suffix>` (e.g.
+  `vmaf_v1.0.16_hfr_3d0h`); HFR changes the id, never the score name
+- v1 score names always start with `vmaf_v1_`: v1 and v0.6 scores are not comparable
+- Catalog order matters: the v0.6 HD order reproduces the 3.x `model=` string
+- Built-in models only; external model JSONs (`path=`) are not supported
+
+Example `model=` for the v1 HD defaults with a 1280x720 8-bit distorted input:
+```text
+version=vmaf_v1.0.16_3d0h\\:name=vmaf_v1_hd\\:cambi.enc_width=1280\\:cambi.enc_height=720\\:cambi.enc_bitdepth=8|version=vmaf_v1.0.16_5d0h\\:name=vmaf_v1_phone\\:cambi.enc_width=1280\\:cambi.enc_height=720\\:cambi.enc_bitdepth=8
 ```
-- HD model: computes vmaf_hd, vmaf_hd_neg, vmaf_hd_phone in a single FFmpeg pass
-- 4K model: computes vmaf_4k only
-- Built-in models used (FFmpeg >= 5.0 required — models bundled in FFmpeg build)
-- `_build_model_string()` produces the pipe/colon-separated `model=` parameter
 
 ### Feature string
-`_build_feature_string()` in vmaf.py always includes PSNR; adds CAMBI only when
-`--cambi_heatmap` is passed. Built via `FeatureConfig` dataclass — add new features
-there, not by editing the string directly.
+`_build_feature_string()` in vmaf.py always includes PSNR; adds a separate CAMBI
+feature only when `--cambi-heatmap` is passed and no v1 model is computed. Built via
+`FeatureConfig` dataclass — add new features there, not by editing the string directly.
 
 ### Output formats
 VMAF results written to file: json (default), xml, csv.
 File path: same directory as distorted input, same base name + `_vmaf.{ext}`
 
-JSON to stdout (`-json` flag): NDJSON, one object per file.
-Schema: `{ distorted, reference, sync: { offset, psnr }, vmaf: { model, scores…, output_file } }`
+JSON to stdout (`--json` flag): NDJSON, one object per file, schema 2:
+```
+{ schema_version: 2, distorted, reference, sync: { offset, psnr[, psnr_status] },
+  vmaf: { display, pix_fmt, hfr, scores: { name: mean }, models: [ { name,
+  libvmaf_model, vmaf_version, view, range } ], output_file[, cambi_heatmap_path] } }
+```
+`--sync-only` records have `schema_version` and no `vmaf` block.
 
 ---
 
@@ -212,12 +359,36 @@ Schema: `{ distorted, reference, sync: { offset, psnr }, vmaf: { model, scores�
   which FFmpeg's filter graph parser requires to treat `:` as a literal inside option values.
   Do not change these separators.
 - **No silent failures**: if a deinterlace/fps combination is unsupported, raise
-  `UnsupportedFramerateError`. Do not print and continue.
+  `UnsupportedFramerateError`; if the model options cannot be honoured, raise
+  `UnsupportedModelConfigError`. Do not print and continue.
 - **No print() in Layer 1 or 2**: use `logging` module with `%s`-style format args.
   `print()` belongs in Layer 3 (CLI) only.
-- **Logging destination**: `basicConfig(stream=sys.stderr)` — keeps stdout clean for `-json` output.
-- **Python >= 3.8**. Use `functools.cached_property` or lazy `@property` where appropriate.
+- **Logging destination**: `basicConfig(stream=sys.stderr)` — keeps stdout clean for `--json` output.
+- **Python >= 3.8**. Use `typing.List`/`Tuple`/`Optional`, no `match`, no `list[str]`
+  at runtime. Use `functools.cached_property` or lazy `@property` where appropriate.
 - **Public method signatures in ffmpeg.py**: do not change without explicit instruction.
+- **Test clips for VMAF v1**: frames passed straight to a v1 model need at least
+  ~320x240 (`3d0h`), ~400x300 (`5d0h`) or ~576x324 (`3d0h_2160`), or SpEED fails.
+  Through easyVmaf the inputs are always scaled to 1080p/2160p first.
+
+## Tests
+
+`.venv/bin/python -m pytest -q` from the repo root. Tests are consolidated by layer:
+
+- `tests/test_models.py` — catalog selection
+- `tests/test_ffmpeg.py` — layer 1, `check_ffmpeg()`, and the v0.6 golden test
+- `tests/test_sync.py` — layer 2: sync, filter chains, pixel format, HFR, CAMBI
+  overrides, `read_scores()`
+- `tests/test_cli.py` — layer 3: arguments, removed flags, JSON schema 2, batch
+- `tests/test_integration.py` — real FFmpeg runs
+- `tests/conftest.py` — shared stubs (`STREAM`, `CAPABILITIES`), fixtures, and the
+  `requires_libvmaf_v1` marker, which skips a test unless FFmpeg's libvmaf
+  computes a v1 frame (`probe_libvmaf_model()`)
+
+Each test must protect against a real user-visible failure or a forbidden
+change; no tests of implementation details, duplicated cases or unrealistic inputs.
+
+---
 
 ## What to Never Change Without Explicit Instruction
 
@@ -230,6 +401,16 @@ Schema: `{ distorted, reference, sync: { offset, psnr }, vmaf: { model, scores�
 - The `invertSrcs()` / `invertedSrc` flag logic in sync handling
 - Any public method name in `ffmpeg.py`
 - The `_hwupload_done` guard in `_insertHwupload()` and the reset in `clearFilters()`
+- The v0.6 FFmpeg command: `test_v06_vmaf_command_is_unchanged` in
+  `tests/test_ffmpeg.py` (`GOLDEN_CHAINS`, `GOLDEN_CAMBI`) pins the full command for
+  v0.6 HD/4K with and without CAMBI heatmap. Never edit its expected strings to
+  make a change pass
+- The v0.6 score names (`vmaf_hd`, `vmaf_hd_neg`, `vmaf_hd_phone`, `vmaf_4k`) and
+  the `vmaf_v1_` prefix of v1 score names
+- JSON schema 2 field names (`schema_version`, `vmaf.scores`, `vmaf.models`, ...);
+  a breaking change needs a new `schema_version`
+- The `check_ffmpeg()` v1 probe computing a frame (not only loading the model) at
+  >= 320x240
 
 ---
 
@@ -237,15 +418,19 @@ Schema: `{ distorted, reference, sync: { offset, psnr }, vmaf: { model, scores�
 
 - Linux / macOS only (current)
 - Python >= 3.8
-- FFmpeg >= 5.0 built with `--enable-libvmaf` (built-in models required)
-- GPU: FFmpeg built with `--enable-libvmaf --enable-ffnvcodec --enable-cuda-nvcc --enable-nonfree`, libvmaf 3.0.0 built with `-Denable_cuda=true`; CUDA 12.3+ with nvidia-container-toolkit on host
+- FFmpeg >= 8.1 built with `--enable-libvmaf`
+- libvmaf >= 3.2.1 built with `-Dbuilt_in_models=true` (3.2.0 is not enough: its
+  default build cannot compute the v1 `speed_chroma` feature). 3.2.1 reports its
+  version as 3.2.0; only the frame probe tells them apart
+- GPU: FFmpeg built with `--enable-libvmaf --enable-ffnvcodec --enable-cuda-nvcc --enable-nonfree`, libvmaf 3.2.1 built with `-Denable_cuda=true`; CUDA 12.3+ with nvidia-container-toolkit on host. VMAF v0.6 only
 - Dependency: `ffmpeg-progress-yield >= 0.7.0` (pip)
 
 ### Docker image versions (pinned)
 | Component  | Version |
 |------------|---------|
+| easyVmaf   | 4.0.0   |
 | FFmpeg     | 8.1     |
-| libvmaf    | 3.0.0   |
+| libvmaf    | 3.2.1   |
 | dav1d      | 1.4.3   |
 | Python     | 3.12    |
 | CUDA base  | 12.3.2  |

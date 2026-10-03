@@ -79,7 +79,7 @@ def test_interlace_is_probed_once_per_input_before_workers(fake_ffmpeg, manual_f
     calculation.syncOffset(1.0)
 
     assert len(fake_ffmpeg.commands) == 10
-    # -fps skips the interlace probe entirely.
+    # --fps skips the interlace probe entirely.
     expected = {"distorted.mkv": 1, "reference.mkv": 1} if manual_fps == 0 else {}
     assert dict(fake_ffmpeg.probes) == expected
 
