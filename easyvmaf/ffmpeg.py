@@ -227,8 +227,13 @@ class FFmpegQos:
         )
 
     def _commitInputs(self):
-        """build the cmd for the inputs files"""
-        return ['-i', self.main.videoSrc, '-i', self.ref.videoSrc, '-map', '0:v', '-map', '1:v']
+        """build the cmd for the inputs files
+
+        No -map: the -lavfi output is mapped automatically. Mapping 0:v/1:v
+        would add unfiltered outputs that decode both files to EOF despite
+        trim. -an/-sn/-dn stop auto-selection of other streams.
+        """
+        return ['-i', self.main.videoSrc, '-i', self.ref.videoSrc, '-an', '-sn', '-dn']
 
     def _commitOutputs(self):
         return ['-f', 'null', '-']
