@@ -53,6 +53,25 @@ _FLAG_LABELS = {
     'gpu_mode': '--gpu',
 }
 
+# 3.x flags, removed in 4.0 without aliases: rejected with their 4.0 name
+_REMOVED_FLAGS = {
+    '-sw': '--sync-window',
+    '-ss': '--sync-start',
+    '-sync_only': '--sync-only',
+    '-reverse': '--reverse',
+    '-fps': '--fps',
+    '-subsample': '--subsample',
+    '-threads': '--threads',
+    '-endsync': '--end-sync',
+    '-output_fmt': '--output-format',
+    '-cambi_heatmap': '--cambi-heatmap',
+    '-progress': '--progress',
+    '-verbose': '--verbose',
+    '-json': '--json',
+    '-gpu': '--gpu',
+    '-model': '--display',
+}
+
 
 def _range(model_run):
     """Score range of a model, with integral bounds as ints: [0, 100]."""
@@ -159,101 +178,104 @@ def handler(signal_received, frame):
 
 def get_args():
     '''This function parses and return arguments passed in'''
-    parser = MyParser(prog='easyVmaf',
+    parser = MyParser(prog='easyVmaf', allow_abbrev=False,
                       description="Script to easy compute VMAF using FFmpeg. It allows to deinterlace, scale and sync Ref and Distorted video samples automatically: \
                         \n\n \t Autodeinterlace: If the Reference or Distorted samples are interlaced, deinterlacing is applied\
                         \n\n \t Autoscale: Reference and Distorted samples are scaled automatically to 1920x1080 or 3840x2160 depending on --display\
                         \n\n \t Autosync: The first frames of the distorted video are used as reference to a sync look up with the Reference video. \
                         \n \t \t The sync is doing by a frame-by-frame look up of the best PSNR\
-                        \n \t \t See [-reverse] for more options of syncing\
+                        \n \t \t See [--reverse] for more options of syncing\
                         \n\n As output, a json file with VMAF score is created",
                       formatter_class=argparse.RawTextHelpFormatter)
-    requiredgroup = parser.add_argument_group('required arguments')
-    requiredgroup.add_argument(
-        '-d', dest='d', type=str, help='Distorted video', required=True)
-    requiredgroup.add_argument(
-        '-r', dest='r', type=str, help='Reference video ', required=True)
-    parser.add_argument('-sw', dest='sw', type=float, default=0,
-                        help='Sync Window: window size in seconds of a subsample of the Reference video. The sync lookup will be done between the first frames of the Distorted input and this Subsample of the Reference. (default=0. No sync).')
-    parser.add_argument('-ss', dest='ss', type=float, default=0,
-                        help="Sync Start Time. Time in seconds from the beginning of the Reference video to which the Sync Window will be applied from. (default=0).")
-    parser.add_argument('-fps', dest='fps', type=float, default=0,
+
+    inputs = parser.add_argument_group('input')
+    inputs.add_argument('-d', '--distorted', dest='distorted', type=str, required=True,
+                        help='Distorted video, or a glob pattern for batch processing.')
+    inputs.add_argument('-r', '--reference', dest='reference', type=str, required=True,
+                        help='Reference video.')
+    inputs.add_argument('--fps', dest='fps', type=float, default=0,
                         help='Video Frame Rate: force frame rate conversion to <fps> value. Autodeinterlace is disabled when setting this')
-    parser.add_argument('-subsample', dest='n', type=int, default=1,
-                        help="Specifies the subsampling of frames to speed up calculation. (default=1, None).")
-    parser.add_argument('-reverse', help="If enable, it Changes the default Autosync behaviour: The first frames of the Reference video are used as reference to sync with the Distorted one. (Default = Disable).", action='store_true')
-    parser.add_argument('--display', '-model', dest='display', type=str.lower,
+
+    sync = parser.add_argument_group('synchronization')
+    sync.add_argument('--sync-window', dest='sync_window', type=float, default=0,
+                      help='Sync Window: window size in seconds of a subsample of the Reference video. The sync lookup will be done between the first frames of the Distorted input and this Subsample of the Reference. (default=0. No sync).')
+    sync.add_argument('--sync-start', dest='sync_start', type=float, default=0,
+                      help="Sync Start Time. Time in seconds from the beginning of the Reference video to which the Sync Window will be applied from. (default=0).")
+    sync.add_argument('--sync-only', dest='sync_only', action='store_true',
+                      help='Measure sync only for every input. Requires an explicit finite --sync-window greater than zero. No Vmaf processing')
+    sync.add_argument('--reverse', dest='reverse', action='store_true',
+                      help="If enable, it Changes the default Autosync behaviour: The first frames of the Reference video are used as reference to sync with the Distorted one. (Default = Disable).")
+    sync.add_argument('--end-sync', dest='end_sync', action='store_true',
+                      help='Activate end sync. This ends the computation when the shortest video ends. (Default: false).')
+
+    models = parser.add_argument_group('models')
+    models.add_argument('--display', dest='display', type=str.lower,
                         choices=tuple(DISPLAY_RESOLUTION), default='hd',
                         help="Target display: inputs are scaled to 1920x1080 (hd) or 3840x2160 (4k). (Default: hd).")
-    parser.add_argument('--vmaf-version', dest='vmaf_versions', nargs='+',
+    models.add_argument('--vmaf-version', dest='vmaf_versions', nargs='+',
                         choices=VMAF_VERSIONS, default=['1'],
                         help="VMAF generations to compute: 1 and/or 0.6. '--vmaf-version 1 0.6' computes both in one pass. (Default: 1).")
-    parser.add_argument('--view', dest='views', nargs='+', type=str.lower,
-                        choices=('3h', '5h', 'phone', '1.5h'),
-                        help="VMAF v1 viewing distances (phone = 5h). (Default: 3h 5h for hd; 1.5h for 4k).")
-    parser.add_argument('--hfr', dest='hfr', type=str.lower,
-                        choices=('auto', 'on', 'off'), default='auto',
-                        help="VMAF v1 high frame rate models. auto: when the effective frame rate is >= 47 fps. (Default: auto).")
-    parser.add_argument('--bitdepth', dest='bitdepth', type=str.lower,
+    models.add_argument('--bitdepth', dest='bitdepth', type=str.lower,
                         choices=('auto', '8', '10'), default='auto',
                         help="Measurement bit depth. auto: 10 with VMAF v1 models, otherwise the reference bit depth. (Default: auto).")
-    parser.add_argument('--enc-size', dest='enc_size', type=_enc_size, metavar='WxH',
-                        help="VMAF v1 encoding resolution for CAMBI. (Default: distorted video size).")
-    parser.add_argument('--enc-bitdepth', dest='enc_bitdepth', type=int, choices=(8, 10, 12),
-                        help="VMAF v1 encoding bit depth for CAMBI. (Default: from the distorted pixel format).")
-    parser.add_argument('--model-option', dest='model_options', action='append', default=[],
-                        metavar='FEATURE.OPTION=VALUE',
-                        help="Advanced VMAF v1 model option override, e.g. cambi.topk=0.5. Repeatable.")
-    parser.add_argument('-threads', dest='threads', type=int,
-                        default=0, help='Number of parallel sync workers (each runs FFmpeg single-threaded) and libvmaf threads. (default=0, CPU count).')
-    parser.add_argument(
-        '-verbose', help='Activate verbose loglevel. (Default: info).', action='store_true')
-    parser.add_argument(
-        '-progress', help='Activate progress indicator for vmaf computation. (Default: false).', action='store_true')
-    parser.add_argument(
-        '-endsync', help='Activate end sync. This ends the computation when the shortest video ends. (Default: false).', action='store_true')
 
-    parser.add_argument('-output_fmt', dest='output_fmt', type=str,
+    v1 = parser.add_argument_group('VMAF v1 parameters')
+    v1.add_argument('--view', dest='views', nargs='+', type=str.lower,
+                    choices=('3h', '5h', 'phone', '1.5h'),
+                    help="VMAF v1 viewing distances (phone = 5h). (Default: 3h 5h for hd; 1.5h for 4k).")
+    v1.add_argument('--hfr', dest='hfr', type=str.lower,
+                    choices=('auto', 'on', 'off'), default='auto',
+                    help="VMAF v1 high frame rate models. auto: when the effective frame rate is >= 47 fps. (Default: auto).")
+    v1.add_argument('--enc-size', dest='enc_size', type=_enc_size, metavar='WxH',
+                    help="VMAF v1 encoding resolution for CAMBI. (Default: distorted video size).")
+    v1.add_argument('--enc-bitdepth', dest='enc_bitdepth', type=int, choices=(8, 10, 12),
+                    help="VMAF v1 encoding bit depth for CAMBI. (Default: from the distorted pixel format).")
+    v1.add_argument('--model-option', dest='model_options', action='append', default=[],
+                    metavar='FEATURE.OPTION=VALUE',
+                    help="Advanced VMAF v1 model option override, e.g. cambi.topk=0.5. Repeatable.")
+
+    output = parser.add_argument_group('output')
+    output.add_argument('--output-format', dest='output_format', type=str,
                         choices=('json', 'xml', 'csv'), default='json',
                         help='Output vmaf file format. Options: json, xml or csv (Default: json)')
+    output.add_argument('--json', dest='json', action='store_true',
+                        help='Output final results as JSON to stdout. '
+                             'Compatible with --sync-only and full VMAF runs. '
+                             '(Default: false).')
+    output.add_argument('--cambi-heatmap', dest='cambi_heatmap', action='store_true',
+                        help='Activate cambi heatmap. (Default: false).')
+    output.add_argument('--verbose', dest='verbose', action='store_true',
+                        help='Activate verbose loglevel. (Default: info).')
+    output.add_argument('--progress', dest='progress', action='store_true',
+                        help='Activate progress indicator for vmaf computation. (Default: false).')
 
-    parser.add_argument(
-        '-cambi_heatmap', help='Activate cambi heatmap. (Default: false).', action='store_true')
-    parser.add_argument(
-        '-sync_only', action='store_true', default=False,
-        help='Measure sync only for every input. Requires an explicit finite -sw greater than zero. No Vmaf processing')
-    parser.add_argument(
-        '-json',
-        help='Output final results as JSON to stdout. '
-             'Compatible with --sync_only and full VMAF runs. '
-             '(Default: false).',
-        action='store_true',
-        default=False
-    )
-    parser.add_argument(
-        '-gpu',
-        help='Use GPU-accelerated VMAF computation via libvmaf_cuda. '
-             'Requires FFmpeg built with --enable-nonfree --enable-ffnvcodec '
-             '--enable-libvmaf and libvmaf built with -Denable_cuda=true. '
-             'Use the provided Dockerfile.cuda to build a compatible image. '
-             '(Default: false).',
-        action='store_true',
-        default=False
-    )
+    execution = parser.add_argument_group('execution')
+    execution.add_argument('--threads', dest='threads', type=int, default=0,
+                           help='Number of parallel sync workers (each runs FFmpeg single-threaded) and libvmaf threads. (default=0, CPU count).')
+    execution.add_argument('--subsample', dest='subsample', type=int, default=1,
+                           help="Specifies the subsampling of frames to speed up calculation. (default=1, None).")
+    execution.add_argument('--gpu', dest='gpu', action='store_true',
+                           help='Use GPU-accelerated VMAF computation via libvmaf_cuda. '
+                                'Only supports --vmaf-version 0.6. '
+                                'Requires FFmpeg built with --enable-nonfree --enable-ffnvcodec '
+                                '--enable-libvmaf and libvmaf built with -Denable_cuda=true. '
+                                'Use the provided Dockerfile.cuda to build a compatible image. '
+                                '(Default: false).')
 
     if len(sys.argv) == 1:
         parser.print_help(sys.stderr)
         sys.exit(1)
     args = parser.parse_args()
-    if args.sync_only and (not math.isfinite(args.sw) or args.sw <= 0):
-        parser.error('-sync_only requires an explicit finite -sw greater than zero')
-    for flag, value in (('-sw', args.sw), ('-ss', args.ss), ('-fps', args.fps)):
+    if args.sync_only and (not math.isfinite(args.sync_window) or args.sync_window <= 0):
+        parser.error('--sync-only requires an explicit finite --sync-window greater than zero')
+    for flag, value in (('--sync-window', args.sync_window), ('--sync-start', args.sync_start),
+                        ('--fps', args.fps)):
         if not math.isfinite(value) or value < 0:
             parser.error('%s must be finite and greater than or equal to zero' % flag)
-    if args.n < 1:
-        parser.error('-subsample must be an integer of at least 1')
+    if args.subsample < 1:
+        parser.error('--subsample must be an integer of at least 1')
     if args.threads < 0:
-        parser.error('-threads must be an integer greater than or equal to zero')
+        parser.error('--threads must be an integer greater than or equal to zero')
     try:
         validate_model_config(
             args.display, args.vmaf_versions, args.views, args.hfr, args.bitdepth,
@@ -265,6 +287,18 @@ def get_args():
 
 
 class MyParser(argparse.ArgumentParser):
+    def parse_known_args(self, args=None, namespace=None):
+        # Checked before parsing: argparse would read '-reverse' as '-r everse'.
+        args = sys.argv[1:] if args is None else list(args)
+        for arg in args:
+            if arg == '--':
+                break
+            flag = arg.split('=', 1)[0]
+            if flag in _REMOVED_FLAGS:
+                self.error('%s was removed in easyVmaf 4.0, use %s'
+                           % (flag, _REMOVED_FLAGS[flag]))
+        return super().parse_known_args(args, namespace)
+
     def error(self, message):
         sys.stderr.write('error: %s\n' % message)
         self.print_help(sys.stderr)
@@ -276,23 +310,23 @@ def main():
 
     '''reading values from cmdParser'''
     cmdParser = get_args()
-    main_pattern = cmdParser.d
-    reference = cmdParser.r
+    main_pattern = cmdParser.distorted
+    reference = cmdParser.reference
 
-    syncWin = cmdParser.sw
-    ss = cmdParser.ss
+    syncWin = cmdParser.sync_window
+    ss = cmdParser.sync_start
     fps = cmdParser.fps
-    n_subsample = cmdParser.n
+    n_subsample = cmdParser.subsample
     reverse = cmdParser.reverse
     display = cmdParser.display
     vmaf_versions = tuple(cmdParser.vmaf_versions)
     views = tuple(cmdParser.views) if cmdParser.views else None
     model_options = tuple(cmdParser.model_options)
     verbose = cmdParser.verbose
-    output_fmt = cmdParser.output_fmt
+    output_fmt = cmdParser.output_format
     threads = cmdParser.threads
     print_progress = cmdParser.progress
-    end_sync = cmdParser.endsync
+    end_sync = cmdParser.end_sync
     cambi_heatmap = cmdParser.cambi_heatmap
     sync_only = cmdParser.sync_only
     use_json = cmdParser.json

@@ -191,9 +191,10 @@ def test_cli_json_stdout_stays_ndjson_with_verbose_progress(encode, tmp_path, sy
            tmp_path / "dist-bright.mkv")
     pattern = "dist-*.mkv" if sync_only else "dist-same.mkv"
 
-    result = run_cli("-d", str(tmp_path / pattern), "-r", str(reference), "-sw", "0.2",
-                     "-fps", "10", "-threads", "1", "-json", "-verbose", "-progress",
-                     *(["-sync_only"] if sync_only else []), cwd=tmp_path)
+    result = run_cli("-d", str(tmp_path / pattern), "-r", str(reference),
+                     "--sync-window", "0.2", "--fps", "10", "--threads", "1", "--json",
+                     "--verbose", "--progress",
+                     *(["--sync-only"] if sync_only else []), cwd=tmp_path)
 
     assert result.returncode == 0, result.stderr
     assert "FFmpeg" in result.stderr  # logging still happens, on stderr
@@ -212,7 +213,7 @@ def test_cli_json_stdout_stays_ndjson_with_verbose_progress(encode, tmp_path, sy
 
 
 def test_cli_without_ffmpeg_fails_on_stderr(tmp_path):
-    result = run_cli("-d", "dist", "-r", "ref", "-json", cwd=tmp_path,
+    result = run_cli("-d", "dist", "-r", "ref", "--json", cwd=tmp_path,
                      FFMPEG=str(tmp_path / "missing-ffmpeg"))
     assert result.returncode == 1
     assert result.stdout == ""
@@ -269,7 +270,7 @@ class Calculation:
                                       print_progress=progress)
 
 cli.vmaf = Calculation
-sys.argv = ["easyvmaf", "-d", "*.mp4", "-r", str(root / "ref.mp4"), "-json"]
+sys.argv = ["easyvmaf", "-d", "*.mp4", "-r", str(root / "ref.mp4"), "--json"]
 try:
     cli.main()
 finally:
