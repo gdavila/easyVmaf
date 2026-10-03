@@ -307,6 +307,26 @@ frame rate is the distorted frame rate after deinterlacing and `--fps`, not the
 container value. Above 60 fps, easyVmaf still uses the HFR
 variants and logs a warning, since that is outside their calibration.
 
+## Interlaced sources
+
+easyVmaf deinterlaces with `yadif` when only one of the inputs is interlaced:
+one frame per frame when both end at the same rate (1080i25 vs 25p), one frame
+per field when the progressive input runs at the field rate (1080i25 vs 50p, in
+either direction). These combinations are **not supported** yet and give
+misleading scores:
+
+- **Both inputs interlaced** (1080i25 vs 1080i25): nothing is deinterlaced, so
+  VMAF scores woven frames, with both fields combined, not what a viewer sees.
+- **An interlaced input that ffprobe reports at its field rate** (1080i25
+  reported as 50 fps, typical of H.264 PAFF) **against a progressive input at
+  that field rate** (50p), in either direction. easyVmaf decides from
+  `r_frame_rate` and takes the interlaced input for a 50 frames/s one, so half
+  of the pictures are paired with the wrong instant (interlaced reference) or
+  only the first field is scored (interlaced distorted).
+
+Use `--fps` to force a common frame rate in these cases, knowing that it does
+not deinterlace.
+
 ## Examples
 
 ### Basic VMAF (no sync)
@@ -635,11 +655,13 @@ JSON output. Every change has a one-line migration. See also
 | `FFmpegQos.vmaf_cambi_heatmap_path` | In layer 1 | `vmaf.cambi_heatmap_path` and `VmafResult.cambi_heatmap_path` | Read it from the result |
 
 Unchanged: the v0.6 score names, the libvmaf log path
-(`<distorted>_vmaf.{json,xml,csv}`), the PSNR sync algorithm, deinterlacing,
-scaling, duration handling and the libvmaf json/xml/csv log formats.
+(`<distorted>_vmaf.{json,xml,csv}`), the PSNR sync algorithm, scaling,
+duration handling and the libvmaf json/xml/csv log formats. Deinterlacing is
+unchanged except for two fixes for an interlaced distorted video against a
+progressive reference (see the changelog).
 
 With `--vmaf-version 0.6`, easyVmaf 4.0 produces the same v0.6 scores as 3.x on
-the same libvmaf. Moving from libvmaf 3.0.0 to 3.2.1 changed them by at most
+the same libvmaf, except in those two deinterlacing cases. Moving from libvmaf 3.0.0 to 3.2.1 changed them by at most
 0.00002 in our checks. With `--vmaf-version 1 0.6`, the v0.6 models are measured
 at 10 bits, which moved them by at most 0.028 when the inputs are scaled. See
 the [CHANGELOG](CHANGELOG.md) for the full verification.

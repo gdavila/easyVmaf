@@ -540,11 +540,11 @@ class vmaf():
             Field deinterlacing doubles MAIN's frame rate unless an fps filter follows.
             """
             if round(ref_fps) == round(main_fps*2):
-                logger.warning("Frame rate conversion can produce bad vmaf scores")
+                # REF=50p, MAIN=25i: one MAIN frame per field matches REF's rate.
                 if not qos.invertedSrc:
-                    forced = self._deinterlaceField(1, qos.main)
+                    forced = self._deinterlaceField(2, qos.main)
                 else:
-                    forced = self._deinterlaceField(1, qos.ref)
+                    forced = self._deinterlaceField(2, qos.ref)
                 return forced or round(main_fps*2, 5)
 
             elif round(ref_fps) == round(main_fps):
@@ -555,12 +555,13 @@ class vmaf():
                 return forced or round(main_fps, 5)
 
             elif round(ref_fps) == round(main_fps/2):
-                logger.warning("Frame rate conversion can produce bad vmaf scores")
+                # REF=25p, MAIN=25i reported at its field rate (50): one MAIN
+                # frame per frame, the mirror of REF interlaced at 2x MAIN.
                 if not qos.invertedSrc:
-                    forced = self._deinterlaceField(0.5, qos.main)
+                    forced = self._deinterlaceFrame(0.5, qos.main)
                 else:
-                    forced = self._deinterlaceField(0.5, qos.ref)
-                return forced or round(main_fps*2, 5)
+                    forced = self._deinterlaceFrame(0.5, qos.ref)
+                return forced or round(main_fps/2, 5)
 
             else:
                 raise UnsupportedFramerateError(

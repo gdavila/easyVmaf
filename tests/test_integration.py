@@ -162,6 +162,32 @@ def test_vmaf_v1_scores_a_144p_rendition(encode, tmp_path):
     assert all(0 <= score <= 100 for score in result.scores.values())
 
 
+@pytest.mark.parametrize("reference_fps, reported_distorted_fps", [
+    # 20p master vs its 10i (20 fields/s) broadcast: every field must be scored.
+    (20, None),
+    # Same 10i reported at its field rate, as ffprobe does for H.264 PAFF (which
+    # free encoders cannot produce), vs a 10p reference: one frame per frame.
+    (10, "20/1"),
+], ids=["reference-at-field-rate", "distorted-reported-at-field-rate"])
+def test_interlaced_distorted_scores_each_reference_frame_once(encode, tmp_path, reference_fps,
+                                                               reported_distorted_fps):
+    """Field deinterlacing scores only the first field, or pairs fields with the wrong instant."""
+    source, reference, distorted = (tmp_path / name for name in ("src.mkv", "ref.mkv", "dist.ts"))
+    encode("-f", "lavfi", "-i", "testsrc2=s=320x240:r=20:d=1", "-pix_fmt", "yuv420p",
+           "-c:v", "ffv1", source)
+    encode("-i", source, "-vf", "fps=%d" % reference_fps, "-c:v", "ffv1", reference)
+    encode("-i", source, "-vf", "tinterlace=mode=interleave_top,setfield=tff",
+           "-c:v", "mpeg2video", "-q:v", "2", "-flags", "+ilme+ildct", distorted)
+    calculation = vmaf(str(distorted), str(reference), vmaf_versions=("0.6",), threads=2)
+    if reported_distorted_fps:
+        calculation.main.streamInfo["r_frame_rate"] = reported_distorted_fps
+
+    result = calculation.getVmaf()
+
+    assert len(json.loads(Path(result.log_path).read_text())["frames"]) == reference_fps
+    assert calculation.output_fps == reference_fps
+
+
 def test_sync_worker_stops_decoding_after_trim(encode, tmp_path, monkeypatch):
     # With -map 0:v/1:v every 300-frame input was decoded to EOF, and audio
     # was decoded without -an. Frame counts are deterministic, not timing.

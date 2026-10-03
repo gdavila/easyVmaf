@@ -390,6 +390,33 @@ change; no tests of implementation details, duplicated cases or unrealistic inpu
 
 ---
 
+## Known Tech Debt
+
+Deinterlacing in `_applyDeinterlaceFilters()` is wrong for these combinations,
+which are documented as unsupported in the README (numbers refer to the
+combination table of the 4.0 deinterlace review):
+
+- **Case 5, both inputs interlaced** (1080i25 vs 1080i25): the "same interlacing"
+  branch only normalizes fps, so VMAF scores woven frames.
+- **Case 11, interlaced reference reported at its field rate vs progressive
+  distorted at that rate** (25i reported as 50 vs 50p): `round(ref) == round(main)`
+  picks `_deinterlaceFrame(1, ref)`; the reference ends at 25 frames/s against a
+  50p distorted, so every reference frame is paired twice and half of the pairs
+  are half a frame apart.
+- **Case 13, progressive reference vs interlaced distorted reported at its field
+  rate** (50p vs 25i reported as 50): `_deinterlaceFrame(1, main)` leaves the
+  distorted at 25 frames/s, so only its first field is scored, while
+  `output_fps` reports 50 and VMAF v1 picks the HFR models.
+
+Root cause of 11 and 13: decisions use `r_frame_rate`, and an interlaced stream
+reported at its field rate (H.264 PAFF) cannot be told from a 50 frames/s one.
+A candidate fix, not verified on a real PAFF file, is to normalize an interlaced
+stream to its frame rate first (e.g. use `avg_frame_rate` when `r_frame_rate` is
+twice it). Fixed in 4.0, keep fixed: progressive reference at 2x an interlaced
+distorted (`_deinterlaceField(2, main)`) and progressive reference vs interlaced
+distorted reported at 2x (`_deinterlaceFrame(0.5, main)`), pinned by
+`test_interlaced_distorted_scores_each_reference_frame_once`.
+
 ## What to Never Change Without Explicit Instruction
 
 - The `-read_intervals %+5` flag in FFprobe `getFramesInfo` command

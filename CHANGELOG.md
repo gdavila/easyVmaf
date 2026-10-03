@@ -91,6 +91,17 @@ for the one-line migration of each change.
   same aspect ratio (256x144 → 267x150) and logs a warning. The same applies to
   `--enc-size`.
 - `UnsupportedFramerateError` now suggests `--fps`.
+- Progressive reference at twice the frame rate of an interlaced distorted
+  video (50p vs 1080i25, 59.94p vs 1080i29.97): the distorted video is
+  deinterlaced to one frame per field and every field is scored. Since 2020
+  (`393b950`) an `fps` filter dropped the second field, so only half of the
+  pictures were measured (scores about 1-2 VMAF higher in the clip measured),
+  and VMAF v1 did not pick the HFR models.
+- Progressive reference vs an interlaced distorted video that ffprobe reports
+  at its field rate (25p vs 1080i25 reported as 50, as with H.264 PAFF): the
+  distorted video is deinterlaced to one frame per frame. Since `d94297e`
+  (2026-03) it was deinterlaced per field, pairing half of its pictures with
+  the wrong reference instant (about -25 VMAF in the clip measured).
 
 ### Migration verification
 
