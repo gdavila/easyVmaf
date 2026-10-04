@@ -276,7 +276,7 @@ class FFmpegQos:
             raise FFmpegExecutionError(self._cmd, 0, "the PSNR filter compared no frames")
         return float(averages[0].split(":")[1])
 
-    def getVmaf(self, models: Sequence[ModelRun], log_path=None, subsample=1, output_fmt='json', threads=0, print_progress=False, end_sync=False, features=None, gpu=False):
+    def getVmaf(self, models: Sequence[ModelRun], log_path=None, subsample=1, output_fmt='json', threads=0, print_progress=False, shortest=False, features=None, gpu=False):
         """Run VMAF and return its process, raising FFmpegExecutionError on failure.
 
         models are the resolved runs serialized into the libvmaf model= option;
@@ -304,7 +304,6 @@ class FFmpegQos:
         model_str = FFmpegQos._build_model_string(models)
         if threads == 0:
             threads = os.cpu_count()
-        shortest = 1 if end_sync else 0
 
         # Upload frames to GPU immediately before libvmaf_cuda.
         # All CPU filters (scale, fps, trim, deinterlace) must run before this.
@@ -324,7 +323,7 @@ class FFmpegQos:
             f':n_subsample={subsample}'
             f':log_path={self._escape_filter_value(log_path)}'
             f':n_threads={threads}'
-            f':shortest={shortest}'
+            f':shortest={1 if shortest else 0}'
         )
 
         if not features:

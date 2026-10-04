@@ -62,7 +62,7 @@ _REMOVED_FLAGS = {
     '-fps': '--fps',
     '-subsample': '--subsample',
     '-threads': '--threads',
-    '-endsync': '--end-sync',
+    '-endsync': '--shortest',
     '-output_fmt': '--output-format',
     '-cambi_heatmap': '--cambi-heatmap',
     '-progress': '--progress',
@@ -205,8 +205,8 @@ def get_args():
                       help='Measure sync only for every input. Requires an explicit finite --sync-window greater than zero. No Vmaf processing')
     sync.add_argument('--reverse', dest='reverse', action='store_true',
                       help="If enable, it Changes the default Autosync behaviour: The first frames of the Reference video are used as reference to sync with the Distorted one. (Default = Disable).")
-    sync.add_argument('--end-sync', dest='end_sync', action='store_true',
-                      help='Activate end sync. This ends the computation when the shortest video ends. (Default: false).')
+    sync.add_argument('--shortest', dest='shortest', action='store_true',
+                      help='Stop when the shorter video ends, instead of repeating its last frame until the longer one ends. Use it when the inputs have different durations. (Default: false).')
 
     models = parser.add_argument_group('models')
     models.add_argument('--display', dest='display', type=str.lower,
@@ -327,7 +327,7 @@ def main():
     output_fmt = cmdParser.output_format
     threads = cmdParser.threads
     print_progress = cmdParser.progress
-    end_sync = cmdParser.end_sync
+    shortest = cmdParser.shortest
     cambi_heatmap = cmdParser.cambi_heatmap
     sync_only = cmdParser.sync_only
     use_json = cmdParser.json
@@ -415,7 +415,7 @@ def main():
                           vmaf_versions=vmaf_versions, views=views, hfr=cmdParser.hfr,
                           bitdepth=cmdParser.bitdepth, enc_size=cmdParser.enc_size,
                           enc_bitdepth=cmdParser.enc_bitdepth, model_options=model_options,
-                          loglevel=loglevel, subsample=n_subsample, output_fmt=output_fmt, threads=threads, print_progress=print_progress, end_sync=end_sync, manual_fps=fps, cambi_heatmap=cambi_heatmap, gpu_mode=gpu_mode)
+                          loglevel=loglevel, subsample=n_subsample, output_fmt=output_fmt, threads=threads, print_progress=print_progress, shortest=shortest, manual_fps=fps, cambi_heatmap=cambi_heatmap, gpu_mode=gpu_mode)
             if syncWin > 0:
                 offset, psnr = myVmaf.syncOffset(syncWin, ss, reverse)
                 if sync_only:

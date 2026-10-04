@@ -147,7 +147,7 @@ easyvmaf -d <distorted> -r <reference> [options]
 | `--sync-start SS` | `0` | Sync start time: offset into the reference (into the distorted video with `--reverse`) where the sync window begins. |
 | `--sync-only` | off | Measure the sync offset for every input and skip VMAF. Requires an explicit, finite `--sync-window` greater than zero. |
 | `--reverse` | off | Reverse sync direction: match the first frames of the reference against the distorted video. |
-| `--end-sync` | off | Stop when the shorter video ends. |
+| `--shortest` | off | Stop when the shorter video ends instead of repeating its last frame. Use it when the inputs have different durations. |
 
 ### Models
 
@@ -553,7 +553,7 @@ The package also exports `VmafResult`, `ModelSpec`, `CATALOG`, `select_models`,
 `UnsupportedFramerateError`. All `vmaf()` arguments after the two paths are
 keyword-only: `display`, `vmaf_versions`, `views`, `hfr`, `bitdepth`,
 `enc_size`, `enc_bitdepth`, `model_options`, `output_fmt`, `loglevel`,
-`subsample`, `threads`, `print_progress`, `end_sync`, `manual_fps`,
+`subsample`, `threads`, `print_progress`, `shortest`, `manual_fps`,
 `cambi_heatmap` and `gpu_mode`.
 
 ---
@@ -709,7 +709,7 @@ and names its replacement.
 | `-fps` | `--fps` |
 | `-subsample` | `--subsample` |
 | `-threads` | `--threads` |
-| `-endsync` | `--end-sync` |
+| `-endsync` | `--shortest` |
 | `-output_fmt` | `--output-format` |
 | `-cambi_heatmap` | `--cambi-heatmap` |
 | `-progress` | `--progress` |

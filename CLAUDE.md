@@ -119,7 +119,7 @@ Thin subprocess wrappers around ffmpeg and ffprobe binaries.
 - `FFprobe`: runs ffprobe, returns stream/frame/packet/format info as dicts
 - `FFmpegQos`: builds and runs the ffmpeg filter graph for PSNR and VMAF
   - `getVmaf(models, log_path=None, subsample=1, output_fmt='json', threads=0,
-    print_progress=False, end_sync=False, features=None, gpu=False)`: `models` is a
+    print_progress=False, shortest=False, features=None, gpu=False)`: `models` is a
     resolved `Sequence[ModelRun]`; `features` is the complete libvmaf `feature=`
     value built by layer 2. Returns the FFmpeg process; raises
     `FFmpegExecutionError` on failure. Sets `self.vmafpath`.
@@ -143,7 +143,7 @@ VMAF computation orchestration.
 - `vmaf(mainSrc, refSrc, *, display='hd', vmaf_versions=('1',), views=None,
   hfr='auto', bitdepth='auto', enc_size=None, enc_bitdepth=None, model_options=(),
   output_fmt='json', loglevel='info', subsample=1, threads=0, print_progress=False,
-  end_sync=False, manual_fps=0, cambi_heatmap=False, gpu_mode=False)`: pixel format,
+  shortest=False, manual_fps=0, cambi_heatmap=False, gpu_mode=False)`: pixel format,
   auto-scaling, auto-deinterlace, parallel sync offset search, model resolution and
   final VMAF scoring. `getVmaf()` returns a `VmafResult`.
 - `validate_model_config(display, vmaf_versions, views, hfr, bitdepth, enc_size,

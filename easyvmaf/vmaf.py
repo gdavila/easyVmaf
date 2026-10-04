@@ -316,7 +316,7 @@ class vmaf():
         - Frame rate conversion (if needed)
     """
 
-    def __init__(self, mainSrc, refSrc, *, display='hd', vmaf_versions=('1',), views=None, hfr='auto', bitdepth='auto', enc_size=None, enc_bitdepth=None, model_options=(), output_fmt='json', loglevel="info", subsample=1, threads=0, print_progress=False, end_sync=False, manual_fps=0, cambi_heatmap=False, gpu_mode=False):
+    def __init__(self, mainSrc, refSrc, *, display='hd', vmaf_versions=('1',), views=None, hfr='auto', bitdepth='auto', enc_size=None, enc_bitdepth=None, model_options=(), output_fmt='json', loglevel="info", subsample=1, threads=0, print_progress=False, shortest=False, manual_fps=0, cambi_heatmap=False, gpu_mode=False):
         """
         Args (model selection and VMAF v1 parameters):
             display:       'hd' or '4k'; target resolution of the scaling
@@ -361,7 +361,7 @@ class vmaf():
         self.output_fmt = output_fmt
         self.threads = threads
         self.print_progress = print_progress
-        self.end_sync = end_sync
+        self.shortest = shortest
         self.cambi_heatmap_path = None
         self.pix_fmt = None
         self.output_fps = None
@@ -863,7 +863,7 @@ class vmaf():
 
 
         self.ffmpegQos.getVmaf(self.models, subsample=self.subsample,
-                               output_fmt=self.output_fmt, threads=self.threads, print_progress=self.print_progress, end_sync=self.end_sync, features=self.features, gpu=self.gpu_mode)
+                               output_fmt=self.output_fmt, threads=self.threads, print_progress=self.print_progress, shortest=self.shortest, features=self.features, gpu=self.gpu_mode)
         log_path = self.ffmpegQos.vmafpath
         return VmafResult(
             scores=read_scores(log_path, self.output_fmt, model_names(self.models)),
