@@ -22,7 +22,8 @@ for the one-line migration of each change.
   `--distorted` and `--reference`). A 3.x flag exits with code 2 and names its
   replacement, e.g. `error: -sw was removed in easyVmaf 4.0, use --sync-window`.
   `-model HD|4K` becomes `--display hd|4k`. Unique prefixes of long flags are no
-  longer accepted.
+  longer accepted. Option values are case-insensitive (`--display 4K`,
+  `--output-format XML`); in 3.x `-output_fmt` only took lowercase.
 - **`--gpu` only supports `--vmaf-version 0.6`.** libvmaf 3.2.1 has no CUDA
   extractors for the v1 features. `--gpu` with any v1 model, including the
   default, is a usage error.

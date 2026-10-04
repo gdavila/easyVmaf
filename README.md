@@ -199,8 +199,9 @@ replaced with defaults.
   automatic frame rate handling.
 - `--subsample` accepts integers of at least 1; `--threads` accepts integers of
   at least 0.
-- `--display`, `--view`, `--hfr` and `--bitdepth` are case-insensitive
-  (`--display 4K` works). `--output-format` is case-sensitive.
+- Option values are case-insensitive (`--display 4K`, `--output-format XML`,
+  `--model-option CAMBI.TOPK=0.5` work). Flag names are not: write them in
+  lowercase.
 - `--view`, `--hfr on`, `--enc-size`, `--enc-bitdepth` and `--model-option`
   require a VMAF v1 model in `--vmaf-version`.
 - A view that does not exist for the display is an error, e.g. `--view 5h`

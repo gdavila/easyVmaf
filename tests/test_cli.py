@@ -76,7 +76,7 @@ def batch(tmp_path, monkeypatch, ffmpeg_ok):
     (["--subsample=0"], 2, "--subsample"),
     (["--subsample=1.5"], 2, "--subsample"),
     (["--threads=-1"], 2, "--threads"),
-    (["--output-format=JSON"], 2, "--output-format"),
+    (["--output-format=yaml"], 2, "--output-format"),
     (["--sync-only"], 2, "--sync-only"),
     (["--sync-only", "--sync-window=0"], 2, "--sync-only"),
     # GPU scripts of 3.x now get VMAF v1 by default, which libvmaf_cuda cannot compute.
@@ -155,7 +155,8 @@ DEFAULTS = dict(subsample=1, threads=0, manual_fps=0, display="hd", vmaf_version
      dict(DEFAULTS, subsample=3, threads=2, manual_fps=23.976, display="4k",
           views=("1.5h", "3h"), hfr="on", bitdepth="10", enc_size=(1280, 720), enc_bitdepth=8,
           model_options=("cambi.topk=0.5", "motion3.motion_fps_weight=1.0"))),
-    (["--vmaf-version", "1", "0.6", "--output-format", "xml"],
+    # Option values are case-insensitive, as users type them (XML, 4K, HFR=ON).
+    (["--vmaf-version", "1", "0.6", "--output-format", "XML"],
      dict(DEFAULTS, vmaf_versions=("1", "0.6"), output_fmt="xml")),
 ], ids=["defaults", "all-options-4k", "both-versions-xml"])
 def test_options_are_forwarded(batch, monkeypatch, options, forwarded):

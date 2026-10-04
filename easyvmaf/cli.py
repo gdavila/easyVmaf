@@ -231,11 +231,12 @@ def get_args():
     v1.add_argument('--enc-bitdepth', dest='enc_bitdepth', type=int, choices=(8, 10, 12),
                     help="VMAF v1 encoding bit depth for CAMBI. (Default: from the distorted pixel format).")
     v1.add_argument('--model-option', dest='model_options', action='append', default=[],
+                    type=str.lower,
                     metavar='FEATURE.OPTION=VALUE',
                     help="Advanced VMAF v1 model option override, e.g. cambi.topk=0.5. Repeatable.")
 
     output = parser.add_argument_group('output')
-    output.add_argument('--output-format', dest='output_format', type=str,
+    output.add_argument('--output-format', dest='output_format', type=str.lower,
                         choices=('json', 'xml', 'csv'), default='json',
                         help='Output vmaf file format. Options: json, xml or csv (Default: json)')
     output.add_argument('--json', dest='json', action='store_true',
