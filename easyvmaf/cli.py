@@ -23,44 +23,79 @@ SOFTWARE.
 """
 
 import argparse
-import csv
 import glob
 import json
 import logging
 import math
 import os.path
+import re
 import sys
-import xml.etree.ElementTree as ET
 from signal import signal, SIGINT
-from statistics import mean, harmonic_mean
 
-from .ffmpeg import FFmpegExecutionError, check_ffmpeg, HD_MODEL_NAME, HD_NEG_MODEL_NAME, HD_PHONE_MODEL_NAME, _4K_MODEL_NAME, HD_PHONE_MODEL_VERSION
-from .vmaf import vmaf, UnsupportedFramerateError
+from .ffmpeg import FFmpegExecutionError, check_ffmpeg
+from .models import DISPLAY_RESOLUTION, VMAF_VERSIONS
+from .vmaf import vmaf, validate_model_config, UnsupportedFramerateError
 
 logger = logging.getLogger(__name__)
 
+JSON_SCHEMA_VERSION = 2
 
-def _build_result(distorted, reference, offset, psnr, model,
-                  vmaf_scores=None, vmaf_output_file=None,
-                  cambi_heatmap_path=None):
+# How validate_model_config() errors name each vmaf() argument
+_FLAG_LABELS = {
+    'display': '--display',
+    'vmaf_versions': '--vmaf-version',
+    'views': '--view',
+    'hfr': '--hfr',
+    'bitdepth': '--bitdepth',
+    'enc_size': '--enc-size',
+    'enc_bitdepth': '--enc-bitdepth',
+    'model_options': '--model-option',
+    'gpu_mode': '--gpu',
+}
+
+# 3.x flags, removed in 4.0 without aliases: rejected with their 4.0 name
+_REMOVED_FLAGS = {
+    '-sw': '--sync-window',
+    '-ss': '--sync-start',
+    '-sync_only': '--sync-only',
+    '-reverse': '--reverse',
+    '-fps': '--fps',
+    '-subsample': '--subsample',
+    '-threads': '--threads',
+    '-endsync': '--end-sync',
+    '-output_fmt': '--output-format',
+    '-cambi_heatmap': '--cambi-heatmap',
+    '-progress': '--progress',
+    '-verbose': '--verbose',
+    '-json': '--json',
+    '-gpu': '--gpu',
+    '-model': '--display',
+}
+
+
+def _range(model_run):
+    """Score range of a model, with integral bounds as ints: [0, 100]."""
+    return [int(v) if float(v).is_integer() else v for v in model_run.spec.score_range]
+
+
+def _build_result(distorted, reference, offset, psnr, vmaf_result=None):
     """
-    Build the structured result dict for one distorted/reference pair.
+    Build the structured result dict (JSON schema 2) for one
+    distorted/reference pair.
 
     Args:
-        distorted:          path to distorted file
-        reference:          path to reference file
-        offset:             sync offset in seconds (float)
-        psnr:               sync PSNR value (float or None)
-        model:              'HD' or '4K'
-        vmaf_scores:        dict of metric_name → mean score, or None
-                            for --sync_only runs
-        vmaf_output_file:   path to VMAF output file, or None
-        cambi_heatmap_path: path to CAMBI heatmap output, or None
+        distorted:   path to distorted file
+        reference:   path to reference file
+        offset:      sync offset in seconds (float)
+        psnr:        sync PSNR value (float or None)
+        vmaf_result: VmafResult of the calculation, or None for
+                     --sync-only runs (no vmaf block)
 
     Returns:
         dict ready for json.dumps()
     """
     result = {
+        'schema_version': JSON_SCHEMA_VERSION,
         'distorted': distorted,
         'reference': reference,
         'sync': {
@@ -74,15 +109,47 @@ def _build_result(distorted, reference, offset, psnr, model,
             'nan' if math.isnan(psnr) else
             'positive_infinity' if psnr > 0 else 'negative_infinity'
         )
-    if vmaf_scores is not None:
-        vmaf_block = {'model': model}
-        vmaf_block.update({k: round(v, 6) for k, v in vmaf_scores.items()})
-        if vmaf_output_file:
-            vmaf_block['output_file'] = vmaf_output_file
-        if cambi_heatmap_path:
-            vmaf_block['cambi_heatmap_path'] = cambi_heatmap_path
+    if vmaf_result is not None:
+        vmaf_block = {
+            'display': vmaf_result.display,
+            'pix_fmt': vmaf_result.pix_fmt,
+            'hfr': vmaf_result.hfr,
+            'scores': {k: round(v, 6) for k, v in vmaf_result.scores.items()},
+            'models': [
+                {'name': run.spec.name,
+                 'libvmaf_model': run.libvmaf_model,
+                 'vmaf_version': run.spec.vmaf_version,
+                 'view': run.spec.view,
+                 'range': _range(run)}
+                for run in vmaf_result.models
+            ],
+        }
+        if vmaf_result.log_path:
+            vmaf_block['output_file'] = vmaf_result.log_path
+        if vmaf_result.cambi_heatmap_path:
+            vmaf_block['cambi_heatmap_path'] = vmaf_result.cambi_heatmap_path
         result['vmaf'] = vmaf_block
     return result
+
+
+def _print_text_result(distorted, offset, psnr, vmaf_result):
+    print("\n \n \n \n \n ")
+    print("=======================================", flush=True)
+    print("Results:", distorted, flush=True)
+    print("=======================================", flush=True)
+    print("VMAF computed", flush=True)
+    print("=======================================", flush=True)
+    print("offset: ", offset, " | psnr: ", psnr)
+    print(f"pix_fmt: {vmaf_result.pix_fmt} | HFR: {'on' if vmaf_result.hfr else 'off'}")
+    width = max(len(name) for name in vmaf_result.scores)
+    for run in vmaf_result.models:
+        low, high = _range(run)
+        print(f"{run.spec.name:<{width}}  {vmaf_result.scores[run.spec.name]:.6f}  "
+              f"[{run.libvmaf_model}, {low}-{high}]", flush=True)
+    print("VMAF output file path: ", vmaf_result.log_path)
+    if vmaf_result.cambi_heatmap_path:
+        print("CAMBI Heatmap output path: ", vmaf_result.cambi_heatmap_path)
+    print("\n \n \n \n \n ")
 
 
 def _print_json_result(result):
@@ -96,6 +163,14 @@ def _print_json_result(result):
     print(serialized)
 
 
+def _enc_size(value):
+    """argparse type for --enc-size: 'WxH' with positive integers → (W, H)."""
+    match = re.fullmatch(r'(\d+)[xX](\d+)', value)
+    if not match or not all(int(v) > 0 for v in match.groups()):
+        raise argparse.ArgumentTypeError(f"expected WxH, e.g. 1280x720, not '{value}'")
+    return int(match.group(1)), int(match.group(2))
+
+
 def handler(signal_received, frame):
     print('SIGINT or CTRL-C detected. Calculation interrupted.', file=sys.stderr)
     sys.exit(130)
@@ -103,85 +178,128 @@ def handler(signal_received, frame):
 
 def get_args():
     '''This function parses and return arguments passed in'''
-    parser = MyParser(prog='easyVmaf',
+    parser = MyParser(prog='easyVmaf', allow_abbrev=False,
                       description="Script to easy compute VMAF using FFmpeg. It allows to deinterlace, scale and sync Ref and Distorted video samples automatically: \
                         \n\n \t Autodeinterlace: If the Reference or Distorted samples are interlaced, deinterlacing is applied\
-                        \n\n \t Autoscale: Reference and Distorted samples are scaled automatically to 1920x1080 or 3840x2160 depending on the VMAF model to use\
+                        \n\n \t Autoscale: Reference and Distorted samples are scaled automatically to 1920x1080 or 3840x2160 depending on --display\
                         \n\n \t Autosync: The first frames of the distorted video are used as reference to a sync look up with the Reference video. \
                         \n \t \t The sync is doing by a frame-by-frame look up of the best PSNR\
-                        \n \t \t See [-reverse] for more options of syncing\
+                        \n \t \t See [--reverse] for more options of syncing\
                         \n\n As output, a json file with VMAF score is created",
                       formatter_class=argparse.RawTextHelpFormatter)
-    requiredgroup = parser.add_argument_group('required arguments')
-    requiredgroup.add_argument(
-        '-d', dest='d', type=str, help='Distorted video', required=True)
-    requiredgroup.add_argument(
-        '-r', dest='r', type=str, help='Reference video ', required=True)
-    parser.add_argument('-sw', dest='sw', type=float, default=0,
-                        help='Sync Window: window size in seconds of a subsample of the Reference video. The sync lookup will be done between the first frames of the Distorted input and this Subsample of the Reference. (default=0. No sync).')
-    parser.add_argument('-ss', dest='ss', type=float, default=0,
-                        help="Sync Start Time. Time in seconds from the beginning of the Reference video to which the Sync Window will be applied from. (default=0).")
-    parser.add_argument('-fps', dest='fps', type=float, default=0,
-                        help='Video Frame Rate: force frame rate conversion to <fps> value. Autodeinterlace is disabled when setting this')
-    parser.add_argument('-subsample', dest='n', type=int, default=1,
-                        help="Specifies the subsampling of frames to speed up calculation. (default=1, None).")
-    parser.add_argument('-reverse', help="If enable, it Changes the default Autosync behaviour: The first frames of the Reference video are used as reference to sync with the Distorted one. (Default = Disable).", action='store_true')
-    parser.add_argument('-model', dest='model', type=str, choices=('HD', '4K'), default="HD",
-                        help="Vmaf Model. Options: HD, 4K. (Default: HD).")
-    parser.add_argument('-threads', dest='threads', type=int,
-                        default=0, help='Number of parallel sync workers (each runs FFmpeg single-threaded) and libvmaf threads. (default=0, CPU count).')
-    parser.add_argument(
-        '-verbose', help='Activate verbose loglevel. (Default: info).', action='store_true')
-    parser.add_argument(
-        '-progress', help='Activate progress indicator for vmaf computation. (Default: false).', action='store_true')
-    parser.add_argument(
-        '-endsync', help='Activate end sync. This ends the computation when the shortest video ends. (Default: false).', action='store_true')
 
-    parser.add_argument('-output_fmt', dest='output_fmt', type=str,
+    inputs = parser.add_argument_group('input')
+    inputs.add_argument('-d', '--distorted', dest='distorted', type=str, required=True,
+                        help='Distorted video, or a glob pattern for batch processing.')
+    inputs.add_argument('-r', '--reference', dest='reference', type=str, required=True,
+                        help='Reference video.')
+    inputs.add_argument('--fps', dest='fps', type=float, default=0,
+                        help='Video Frame Rate: force frame rate conversion to <fps> value. Autodeinterlace is disabled when setting this')
+
+    sync = parser.add_argument_group('synchronization')
+    sync.add_argument('--sync-window', dest='sync_window', type=float, default=0,
+                      help='Sync Window: window size in seconds of a subsample of the Reference video. The sync lookup will be done between the first frames of the Distorted input and this Subsample of the Reference. (default=0. No sync).')
+    sync.add_argument('--sync-start', dest='sync_start', type=float, default=0,
+                      help="Sync Start Time. Time in seconds from the beginning of the Reference video to which the Sync Window will be applied from. (default=0).")
+    sync.add_argument('--sync-only', dest='sync_only', action='store_true',
+                      help='Measure sync only for every input. Requires an explicit finite --sync-window greater than zero. No Vmaf processing')
+    sync.add_argument('--reverse', dest='reverse', action='store_true',
+                      help="If enable, it Changes the default Autosync behaviour: The first frames of the Reference video are used as reference to sync with the Distorted one. (Default = Disable).")
+    sync.add_argument('--end-sync', dest='end_sync', action='store_true',
+                      help='Activate end sync. This ends the computation when the shortest video ends. (Default: false).')
+
+    models = parser.add_argument_group('models')
+    models.add_argument('--display', dest='display', type=str.lower,
+                        choices=tuple(DISPLAY_RESOLUTION), default='hd',
+                        help="Target display: inputs are scaled to 1920x1080 (hd) or 3840x2160 (4k). (Default: hd).")
+    models.add_argument('--vmaf-version', dest='vmaf_versions', nargs='+',
+                        choices=VMAF_VERSIONS, default=['1'],
+                        help="VMAF generations to compute: 1 and/or 0.6. '--vmaf-version 1 0.6' computes both in one pass. (Default: 1).")
+    models.add_argument('--bitdepth', dest='bitdepth', type=str.lower,
+                        choices=('auto', '8', '10'), default='auto',
+                        help="Measurement bit depth. auto: 10 with VMAF v1 models, otherwise the reference bit depth. (Default: auto).")
+
+    v1 = parser.add_argument_group('VMAF v1 parameters')
+    v1.add_argument('--view', dest='views', nargs='+', type=str.lower,
+                    choices=('3h', '5h', 'phone', '1.5h'),
+                    help="VMAF v1 viewing distances (phone = 5h). (Default: 3h 5h for hd; 1.5h for 4k).")
+    v1.add_argument('--hfr', dest='hfr', type=str.lower,
+                    choices=('auto', 'on', 'off'), default='auto',
+                    help="VMAF v1 high frame rate models. auto: when the effective frame rate is >= 47 fps. (Default: auto).")
+    v1.add_argument('--enc-size', dest='enc_size', type=_enc_size, metavar='WxH',
+                    help="VMAF v1 encoding resolution for CAMBI. (Default: distorted video size).")
+    v1.add_argument('--enc-bitdepth', dest='enc_bitdepth', type=int, choices=(8, 10, 12),
+                    help="VMAF v1 encoding bit depth for CAMBI. (Default: from the distorted pixel format).")
+    v1.add_argument('--model-option', dest='model_options', action='append', default=[],
+                    type=str.lower,
+                    metavar='FEATURE.OPTION=VALUE',
+                    help="Advanced VMAF v1 model option override, e.g. cambi.topk=0.5. Repeatable.")
+
+    output = parser.add_argument_group('output')
+    output.add_argument('--output-format', dest='output_format', type=str.lower,
                         choices=('json', 'xml', 'csv'), default='json',
                         help='Output vmaf file format. Options: json, xml or csv (Default: json)')
+    output.add_argument('--json', dest='json', action='store_true',
+                        help='Output final results as JSON to stdout. '
+                             'Compatible with --sync-only and full VMAF runs. '
+                             '(Default: false).')
+    output.add_argument('--cambi-heatmap', dest='cambi_heatmap', action='store_true',
+                        help='Activate cambi heatmap. (Default: false).')
+    output.add_argument('--verbose', dest='verbose', action='store_true',
+                        help='Activate verbose loglevel. (Default: info).')
+    output.add_argument('--progress', dest='progress', action='store_true',
+                        help='Activate progress indicator for vmaf computation. (Default: false).')
 
-    parser.add_argument(
-        '-cambi_heatmap', help='Activate cambi heatmap. (Default: false).', action='store_true')
-    parser.add_argument(
-        '-sync_only', action='store_true', default=False,
-        help='Measure sync only for every input. Requires an explicit finite -sw greater than zero. No Vmaf processing')
-    parser.add_argument(
-        '-json',
-        help='Output final results as JSON to stdout. '
-             'Compatible with --sync_only and full VMAF runs. '
-             '(Default: false).',
-        action='store_true',
-        default=False
-    )
-    parser.add_argument(
-        '-gpu',
-        help='Use GPU-accelerated VMAF computation via libvmaf_cuda. '
-             'Requires FFmpeg built with --enable-nonfree --enable-ffnvcodec '
-             '--enable-libvmaf and libvmaf built with -Denable_cuda=true. '
-             'Use the provided Dockerfile.cuda to build a compatible image. '
-             '(Default: false).',
-        action='store_true',
-        default=False
-    )
+    execution = parser.add_argument_group('execution')
+    execution.add_argument('--threads', dest='threads', type=int, default=0,
+                           help='Number of parallel sync workers (each runs FFmpeg single-threaded) and libvmaf threads. (default=0, CPU count).')
+    execution.add_argument('--subsample', dest='subsample', type=int, default=1,
+                           help="Specifies the subsampling of frames to speed up calculation. (default=1, None).")
+    execution.add_argument('--gpu', dest='gpu', action='store_true',
+                           help='Use GPU-accelerated VMAF computation via libvmaf_cuda. '
+                                'Only supports --vmaf-version 0.6. '
+                                'Requires FFmpeg built with --enable-nonfree --enable-ffnvcodec '
+                                '--enable-libvmaf and libvmaf built with -Denable_cuda=true. '
+                                'Use the provided Dockerfile.cuda to build a compatible image. '
+                                '(Default: false).')
 
     if len(sys.argv) == 1:
         parser.print_help(sys.stderr)
         sys.exit(1)
     args = parser.parse_args()
-    if args.sync_only and (not math.isfinite(args.sw) or args.sw <= 0):
-        parser.error('-sync_only requires an explicit finite -sw greater than zero')
-    for flag, value in (('-sw', args.sw), ('-ss', args.ss), ('-fps', args.fps)):
+    if args.sync_only and (not math.isfinite(args.sync_window) or args.sync_window <= 0):
+        parser.error('--sync-only requires an explicit finite --sync-window greater than zero')
+    for flag, value in (('--sync-window', args.sync_window), ('--sync-start', args.sync_start),
+                        ('--fps', args.fps)):
         if not math.isfinite(value) or value < 0:
             parser.error('%s must be finite and greater than or equal to zero' % flag)
-    if args.n < 1:
-        parser.error('-subsample must be an integer of at least 1')
+    if args.subsample < 1:
+        parser.error('--subsample must be an integer of at least 1')
     if args.threads < 0:
-        parser.error('-threads must be an integer greater than or equal to zero')
+        parser.error('--threads must be an integer greater than or equal to zero')
+    try:
+        validate_model_config(
+            args.display, args.vmaf_versions, args.views, args.hfr, args.bitdepth,
+            args.enc_size, args.enc_bitdepth, args.model_options, args.gpu,
+            labels=_FLAG_LABELS)
+    except ValueError as e:
+        parser.error(str(e))
     return args
 
 
 class MyParser(argparse.ArgumentParser):
+    def parse_known_args(self, args=None, namespace=None):
+        # Checked before parsing: argparse would read '-reverse' as '-r everse'.
+        args = sys.argv[1:] if args is None else list(args)
+        for arg in args:
+            if arg == '--':
+                break
+            flag = arg.split('=', 1)[0]
+            if flag in _REMOVED_FLAGS:
+                self.error('%s was removed in easyVmaf 4.0, use %s'
+                           % (flag, _REMOVED_FLAGS[flag]))
+        return super().parse_known_args(args, namespace)
+
     def error(self, message):
         sys.stderr.write('error: %s\n' % message)
         self.print_help(sys.stderr)
@@ -193,20 +311,23 @@ def main():
 
     '''reading values from cmdParser'''
     cmdParser = get_args()
-    main_pattern = cmdParser.d
-    reference = cmdParser.r
+    main_pattern = cmdParser.distorted
+    reference = cmdParser.reference
 
-    syncWin = cmdParser.sw
-    ss = cmdParser.ss
+    syncWin = cmdParser.sync_window
+    ss = cmdParser.sync_start
     fps = cmdParser.fps
-    n_subsample = cmdParser.n
+    n_subsample = cmdParser.subsample
     reverse = cmdParser.reverse
-    model = cmdParser.model
+    display = cmdParser.display
+    vmaf_versions = tuple(cmdParser.vmaf_versions)
+    views = tuple(cmdParser.views) if cmdParser.views else None
+    model_options = tuple(cmdParser.model_options)
     verbose = cmdParser.verbose
-    output_fmt = cmdParser.output_fmt
+    output_fmt = cmdParser.output_format
     threads = cmdParser.threads
     print_progress = cmdParser.progress
-    end_sync = cmdParser.endsync
+    end_sync = cmdParser.end_sync
     cambi_heatmap = cmdParser.cambi_heatmap
     sync_only = cmdParser.sync_only
     use_json = cmdParser.json
@@ -235,23 +356,25 @@ def main():
     if not ffmpeg_info['meets_minimum']:
         print(
             f"[easyVmaf] ERROR: FFmpeg {ffmpeg_info['version_str']} detected. "
-            f"easyVmaf requires FFmpeg >= 5.0 built with --enable-libvmaf. "
-            f"The 'model=' parameter for libvmaf was introduced in FFmpeg 5.0.",
+            f"easyVmaf requires FFmpeg >= 8.1 built with --enable-libvmaf. "
+            f"Use the easyVmaf Docker image or upgrade FFmpeg.",
             file=sys.stderr, flush=True
         )
         sys.exit(1)
 
-    if not ffmpeg_info['builtin_models']:
+    if not ffmpeg_info['libvmaf_v1']:
         print(
             f"[easyVmaf] ERROR: FFmpeg {ffmpeg_info['version_str']} is installed "
-            f"but libvmaf built-in models are not available. "
-            f"Rebuild libvmaf with '-Dbuilt_in_models=true' and recompile FFmpeg.",
+            f"but its libvmaf cannot compute VMAF v1 models. "
+            f"easyVmaf requires libvmaf >= 3.2.1 built with '-Dbuilt_in_models=true'. "
+            f"Use the easyVmaf Docker image, or upgrade libvmaf "
+            f"(e.g. 'brew upgrade libvmaf') and rebuild FFmpeg against it.",
             file=sys.stderr, flush=True
         )
         sys.exit(1)
 
     logger.info(
-        "FFmpeg %s detected. Built-in models: available.",
+        "FFmpeg %s detected. libvmaf VMAF v1 models: available.",
         ffmpeg_info['version_str']
     )
 
@@ -288,8 +411,11 @@ def main():
         '''check if syncWin was set. If true offset is computed automatically, otherwise manual values are used  '''
 
         try:
-            myVmaf = vmaf(main, reference, loglevel=loglevel, subsample=n_subsample, model=model,
-                          output_fmt=output_fmt, threads=threads, print_progress=print_progress, end_sync=end_sync, manual_fps=fps, cambi_heatmap=cambi_heatmap, gpu_mode=gpu_mode)
+            myVmaf = vmaf(main, reference, display=display,
+                          vmaf_versions=vmaf_versions, views=views, hfr=cmdParser.hfr,
+                          bitdepth=cmdParser.bitdepth, enc_size=cmdParser.enc_size,
+                          enc_bitdepth=cmdParser.enc_bitdepth, model_options=model_options,
+                          loglevel=loglevel, subsample=n_subsample, output_fmt=output_fmt, threads=threads, print_progress=print_progress, end_sync=end_sync, manual_fps=fps, cambi_heatmap=cambi_heatmap, gpu_mode=gpu_mode)
             if syncWin > 0:
                 offset, psnr = myVmaf.syncOffset(syncWin, ss, reverse)
                 if sync_only:
@@ -299,7 +425,6 @@ def main():
                             reference=reference,
                             offset=offset,
                             psnr=psnr,
-                            model=model,
                         )
                         _print_json_result(result)
                     else:
@@ -310,95 +435,21 @@ def main():
                 psnr = None
                 myVmaf.offset = offset
 
-            vmafProcess = myVmaf.getVmaf()
+            vmaf_result = myVmaf.getVmaf()
         except (FFmpegExecutionError, UnsupportedFramerateError, ValueError) as e:
             print(f"[easyVmaf] ERROR: {e}", file=sys.stderr)
             sys.exit(1)
-        vmafpath = myVmaf.ffmpegQos.vmafpath
-        vmafScore = []
-        vmafNegScore = []
-        vmafPhoneScore = []
-
-        if output_fmt == 'csv':
-            with open(vmafpath, mode='r', newline='') as csvFile:
-                csvReader = csv.DictReader(csvFile)
-                for row in csvReader:
-                    if model == 'HD':
-                        vmafScore.append(float(row[HD_MODEL_NAME]))
-                        vmafNegScore.append(float(row[HD_NEG_MODEL_NAME]))
-                        vmafPhoneScore.append(float(row[HD_PHONE_MODEL_NAME]))
-                    if model == '4K':
-                        vmafScore.append(float(row[_4K_MODEL_NAME]))
-
-        elif output_fmt == 'xml':
-            tree = ET.parse(vmafpath)
-            root = tree.getroot()
-            for frame in root.findall('frames/frame'):
-                if model == 'HD':
-                    vmafScore.append(float(frame.attrib[HD_MODEL_NAME]))
-                    vmafNegScore.append(float(frame.attrib[HD_NEG_MODEL_NAME]))
-                    vmafPhoneScore.append(float(frame.attrib[HD_PHONE_MODEL_NAME]))
-                if model == '4K':
-                    vmafScore.append(float(frame.attrib[_4K_MODEL_NAME]))
-        else:
-            with open(vmafpath) as jsonFile:
-                jsonData = json.load(jsonFile)
-                for frame in jsonData['frames']:
-                    if model == 'HD':
-                        vmafScore.append(frame["metrics"][HD_MODEL_NAME])
-                        vmafNegScore.append(
-                            frame["metrics"][HD_NEG_MODEL_NAME])
-                        vmafPhoneScore.append(
-                            frame["metrics"][HD_PHONE_MODEL_NAME])
-                    if model == '4K':
-                        vmafScore.append(frame["metrics"][_4K_MODEL_NAME])
 
         if use_json:
-            vmaf_scores = {}
-            if model == 'HD':
-                vmaf_scores = {
-                    HD_MODEL_NAME:       mean(vmafScore),
-                    HD_NEG_MODEL_NAME:   mean(vmafNegScore),
-                    HD_PHONE_MODEL_NAME: mean(vmafPhoneScore),
-                }
-            elif model == '4K':
-                vmaf_scores = {
-                    _4K_MODEL_NAME: mean(vmafScore),
-                }
-            result = _build_result(
+            _print_json_result(_build_result(
                 distorted=main,
                 reference=reference,
                 offset=offset,
                 psnr=psnr,
-                model=model,
-                vmaf_scores=vmaf_scores,
-                vmaf_output_file=myVmaf.ffmpegQos.vmafpath,
-                cambi_heatmap_path=(
-                    myVmaf.ffmpegQos.vmaf_cambi_heatmap_path
-                    if cambi_heatmap else None
-                ),
-            )
-            _print_json_result(result)
+                vmaf_result=vmaf_result,
+            ))
         else:
-            print("\n \n \n \n \n ")
-            print("=======================================", flush=True)
-            print("Results:", main, flush=True)
-            print("=======================================", flush=True)
-            print("VMAF computed", flush=True)
-            print("=======================================", flush=True)
-            print("offset: ", offset, " | psnr: ", psnr)
-            if model == 'HD':
-                print("VMAF HD: ", mean(vmafScore))
-                print("VMAF Neg: ", mean(vmafNegScore))
-                print("VMAF Phone: ", mean(vmafPhoneScore))
-            if model == '4K':
-                print("VMAF 4K: ", mean(vmafScore))
-            print("VMAF output file path: ", myVmaf.ffmpegQos.vmafpath)
-            if cambi_heatmap:
-                print("CAMBI Heatmap output path: ",
-                    myVmaf.ffmpegQos.vmaf_cambi_heatmap_path)
-
-            print("\n \n \n \n \n ")
+            _print_text_result(main, offset, psnr, vmaf_result)
 
 
 if __name__ == '__main__':

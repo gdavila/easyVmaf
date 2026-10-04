@@ -4,6 +4,7 @@ Each check compares easyVmaf with a plain FFmpeg command or with what a user
 of the CLI observes; they are skipped when no suitable FFmpeg is installed.
 """
 
+import dataclasses
 import json
 import math
 import os
@@ -21,6 +22,7 @@ import pytest
 from conftest import ROOT, run_cli, strict_loads
 from easyvmaf import ffmpeg, vmaf
 from easyvmaf.ffmpeg import FFmpegQos
+from easyvmaf.models import CATALOG, ModelRun
 
 SCALE = "scale=1920:1080:flags=bicubic,fps=fps=10"
 
@@ -43,10 +45,12 @@ def plain_ffmpeg(binary, first, second, graph):
                           capture_output=True, text=True, check=True, timeout=90).stderr
 
 
+@pytest.mark.requires_libvmaf_v1
 def test_check_ffmpeg_accepts_real_build(ffmpeg_bin):
+    """A build that computes VMAF v1 is rejected, e.g. by a probe frame too small for v1."""
     result = ffmpeg.check_ffmpeg()
     assert result["meets_minimum"] is True
-    assert result["builtin_models"] is True
+    assert result["libvmaf_v1"] is True
 
 
 def write_psnr_stats(binary, target):
@@ -89,7 +93,7 @@ def test_sync_and_score_match_plain_ffmpeg(ffmpeg_bin, clips, monkeypatch, rever
     # Forward: the reference leads. Reverse: the distorted clip leads.
     distorted, reference = (clips.lead, clips.late) if reverse else (clips.late, clips.lead)
     monkeypatch.chdir(clips.directory)  # PSNR writes its stats file to cwd
-    calculation = vmaf(distorted, reference, "json", manual_fps=10, threads=1)
+    calculation = vmaf(distorted, reference, vmaf_versions=("0.6",), manual_fps=10, threads=1)
 
     offset, psnr = calculation.syncOffset(0.4, reverse=reverse)
 
@@ -116,6 +120,120 @@ def test_sync_and_score_match_plain_ffmpeg(ffmpeg_bin, clips, monkeypatch, rever
     assert len(actual["frames"]) == len(expected["frames"]) == 10
     assert (actual["pooled_metrics"]["vmaf_hd"]["mean"]
             == pytest.approx(expected["pooled_metrics"]["vmaf"]["mean"], abs=1e-6))
+
+
+@pytest.mark.requires_libvmaf_v1
+def test_every_catalog_model_scores_in_one_pass(ffmpeg_bin, tmp_path):
+    """A misspelt model id or a broken override syntax would only fail in production."""
+    runs = []
+    for spec in CATALOG:
+        cambi = (("cambi.enc_width", "320"), ("cambi.enc_height", "180"),
+                 ("cambi.enc_bitdepth", "8")) if spec.vmaf_version == "1" else ()
+        runs.append(ModelRun(spec, spec.libvmaf_model, spec.options + cambi))
+        if spec.hfr_model:
+            hfr_spec = dataclasses.replace(spec, name=spec.name + "_hfr")
+            runs.append(ModelRun(hfr_spec, spec.hfr_model, spec.options + cambi))
+    log = tmp_path / "catalog.json"
+    # v1 SpEED rejects small frames; 3d0h_2160 needs about 576x324.
+    source = "testsrc2=s=640x360:r=5:d=0.4"
+    subprocess.run([ffmpeg_bin, "-v", "error", "-f", "lavfi", "-i", source, "-f", "lavfi",
+                    "-i", source + ",gblur=sigma=1", "-lavfi",
+                    "[0:v][1:v]libvmaf=log_fmt=json:log_path={}:model={}".format(
+                        FFmpegQos._escape_filter_value(str(log)),
+                        FFmpegQos._build_model_string(runs)),
+                    "-f", "null", "-"], check=True, capture_output=True, timeout=120)
+
+    frames = json.loads(log.read_text())["frames"]
+    assert frames
+    for run in runs:
+        low, high = run.spec.score_range
+        assert all(low <= frame["metrics"][run.spec.name] <= high for frame in frames), run
+
+
+@pytest.mark.requires_libvmaf_v1
+def test_vmaf_v1_scores_a_scaled_rendition(encode, tmp_path):
+    """Default v1 run end to end: 10-bit measurement, CAMBI and chroma features, heatmaps."""
+    reference, distorted = tmp_path / "ref.mkv", tmp_path / "dist.mkv"
+    encode("-f", "lavfi", "-i", "testsrc2=s=1920x1080:r=10:d=1", "-pix_fmt", "yuv420p",
+           "-c:v", "ffv1", reference)
+    encode("-i", reference, "-vf", "scale=1280:720,gblur=sigma=1", "-pix_fmt", "yuv420p",
+           "-c:v", "ffv1", distorted)
+
+    result = vmaf(str(distorted), str(reference), cambi_heatmap=True, threads=2).getVmaf()
+
+    assert set(result.scores) == {"vmaf_v1_hd", "vmaf_v1_phone"}
+    assert all(0 <= score <= 100 for score in result.scores.values())
+    assert result.pix_fmt == "yuv420p10le"
+    metrics = json.loads(Path(result.log_path).read_text())["frames"][0]["metrics"]
+    assert any(key.startswith("cambi") for key in metrics)
+    assert any(key.startswith("speed_chroma") for key in metrics)
+    assert result.cambi_heatmap_path == str(tmp_path / "dist_cambi_heatmap")
+    assert any(Path(result.cambi_heatmap_path).iterdir())
+
+
+@pytest.mark.requires_libvmaf_v1
+def test_vmaf_v1_scores_a_144p_rendition(encode, tmp_path):
+    """The lowest ABR rungs fail in libvmaf: CAMBI rejects encoding sizes below 180x150."""
+    reference, distorted = tmp_path / "ref.mkv", tmp_path / "dist.mkv"
+    encode("-f", "lavfi", "-i", "testsrc2=s=1920x1080:r=10:d=1", "-pix_fmt", "yuv420p",
+           "-c:v", "ffv1", reference)
+    encode("-i", reference, "-vf", "scale=256:144", "-pix_fmt", "yuv420p", "-c:v", "ffv1",
+           distorted)
+
+    result = vmaf(str(distorted), str(reference), threads=2).getVmaf()
+
+    assert set(result.scores) == {"vmaf_v1_hd", "vmaf_v1_phone"}
+    assert all(0 <= score <= 100 for score in result.scores.values())
+
+
+# tinterlace=mode=interleave_top from LGPL filters (the Docker image builds FFmpeg
+# without --enable-gpl): each 10i frame weaves one field of two 20p frames.
+INTERLACE_20P_TO_10I = ("separatefields,select='not(mod(n-1\\,4))+not(mod(n-2\\,4))',"
+                        "weave=first_field=top,setpts=N/(10*TB),setfield=tff")
+
+@pytest.mark.parametrize("reference_fps, reported_distorted_fps", [
+    # 20p master vs its 10i (20 fields/s) broadcast: every field must be scored.
+    (20, None),
+    # Same 10i reported at its field rate, as ffprobe does for H.264 PAFF (which
+    # free encoders cannot produce), vs a 10p reference: one frame per frame.
+    (10, "20/1"),
+], ids=["reference-at-field-rate", "distorted-reported-at-field-rate"])
+def test_interlaced_distorted_scores_each_reference_frame_once(encode, tmp_path, reference_fps,
+                                                               reported_distorted_fps):
+    """Field deinterlacing scores only the first field, or pairs fields with the wrong instant."""
+    source, reference, distorted = (tmp_path / name for name in ("src.mkv", "ref.mkv", "dist.ts"))
+    encode("-f", "lavfi", "-i", "testsrc2=s=320x240:r=20:d=1", "-pix_fmt", "yuv420p",
+           "-c:v", "ffv1", source)
+    encode("-i", source, "-vf", "fps=%d" % reference_fps, "-c:v", "ffv1", reference)
+    encode("-i", source, "-vf", INTERLACE_20P_TO_10I, "-r", "10",
+           "-c:v", "mpeg2video", "-q:v", "2", "-flags", "+ilme+ildct", distorted)
+    calculation = vmaf(str(distorted), str(reference), vmaf_versions=("0.6",), threads=2)
+    if reported_distorted_fps:
+        calculation.main.streamInfo["r_frame_rate"] = reported_distorted_fps
+
+    result = calculation.getVmaf()
+
+    assert len(json.loads(Path(result.log_path).read_text())["frames"]) == reference_fps
+    assert calculation.output_fps == reference_fps
+
+
+def test_reverse_sync_is_field_accurate_on_interlaced_distorted(encode, tmp_path):
+    """Reverse sync trimmed the interlaced distorted video before deinterlacing:
+    the right offset tied with the one a field earlier, which won, and the final
+    calculation compared every picture with the previous field."""
+    source, reference, distorted = (tmp_path / name for name in ("src.mkv", "ref.mkv", "dist.ts"))
+    encode("-f", "lavfi", "-i", "testsrc2=s=320x240:r=20:d=3", "-pix_fmt", "yuv420p",
+           "-c:v", "ffv1", source)
+    # The broadcast recording (10i, one field per source frame) started 8 fields
+    # (0.4 s) before the 20p reference clip.
+    encode("-ss", "0.4", "-i", source, "-c:v", "ffv1", reference)
+    encode("-i", source, "-vf", INTERLACE_20P_TO_10I, "-r", "10",
+           "-c:v", "mpeg2video", "-q:v", "2", "-flags", "+ilme+ildct", distorted)
+
+    offset, _ = vmaf(str(distorted), str(reference), vmaf_versions=("0.6",),
+                     threads=2).syncOffset(0.5, start=0.1, reverse=True)
+
+    assert offset == pytest.approx(-0.4)
 
 
 def test_sync_worker_stops_decoding_after_trim(encode, tmp_path, monkeypatch):
@@ -150,18 +268,22 @@ def test_sync_worker_stops_decoding_after_trim(encode, tmp_path, monkeypatch):
     assert all(int(frames) == 0 for _, kind, frames in decoded if kind != "video")
 
 
+@pytest.mark.requires_libvmaf_v1  # the real CLI startup check requires VMAF v1
 @pytest.mark.parametrize("sync_only", [True, False], ids=["sync_only-batch", "full"])
 def test_cli_json_stdout_stays_ndjson_with_verbose_progress(encode, tmp_path, sync_only):
     reference = tmp_path / "reference.mkv"
-    encode("-f", "lavfi", "-i", "testsrc2=s=64x64:r=10:d=1", "-c:v", "ffv1", reference)
+    # VMAF v1 (the default) rejects CAMBI encoding sizes below 180x150.
+    encode("-f", "lavfi", "-i", "testsrc2=s=320x180:r=10:d=1", "-c:v", "ffv1", reference)
     shutil.copyfile(reference, tmp_path / "dist-same.mkv")
-    encode("-i", reference, "-vf", "eq=brightness=0.05", "-c:v", "ffv1",
+    # Not eq=brightness: eq is GPL-only and the Docker image's FFmpeg is not.
+    encode("-i", reference, "-vf", "lutyuv=y=val+13", "-c:v", "ffv1",
            tmp_path / "dist-bright.mkv")
     pattern = "dist-*.mkv" if sync_only else "dist-same.mkv"
 
-    result = run_cli("-d", str(tmp_path / pattern), "-r", str(reference), "-sw", "0.2",
-                     "-fps", "10", "-threads", "1", "-json", "-verbose", "-progress",
-                     *(["-sync_only"] if sync_only else []), cwd=tmp_path)
+    result = run_cli("-d", str(tmp_path / pattern), "-r", str(reference),
+                     "--sync-window", "0.2", "--fps", "10", "--threads", "1", "--json",
+                     "--verbose", "--progress",
+                     *(["--sync-only"] if sync_only else []), cwd=tmp_path)
 
     assert result.returncode == 0, result.stderr
     assert "FFmpeg" in result.stderr  # logging still happens, on stderr
@@ -180,7 +302,7 @@ def test_cli_json_stdout_stays_ndjson_with_verbose_progress(encode, tmp_path, sy
 
 
 def test_cli_without_ffmpeg_fails_on_stderr(tmp_path):
-    result = run_cli("-d", "dist", "-r", "ref", "-json", cwd=tmp_path,
+    result = run_cli("-d", "dist", "-r", "ref", "--json", cwd=tmp_path,
                      FFMPEG=str(tmp_path / "missing-ffmpeg"))
     assert result.returncode == 1
     assert result.stdout == ""
@@ -195,6 +317,8 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 from easyvmaf import cli, ffmpeg
+from easyvmaf.models import select_models
+from easyvmaf.results import VmafResult
 
 root = Path(sys.argv[1])
 progress = sys.argv[2] == "True"
@@ -208,7 +332,7 @@ def tracked_popen(*args, **kwargs):
     return child
 
 ffmpeg.subprocess.Popen = tracked_popen
-cli.check_ffmpeg = lambda: dict(meets_minimum=True, builtin_models=True,
+cli.check_ffmpeg = lambda: dict(meets_minimum=True, libvmaf_v1=True,
                               version_str="test", cuda_vmaf=False)
 files = [str(root / "first.mp4"), str(root / "interrupted.mp4")]
 cli.glob.glob = lambda pattern: files
@@ -222,19 +346,20 @@ class Calculation:
         output = str(root / "result.json")
         self.ffmpegQos.vmafpath = output
         if self.main == files[0]:
-            Path(output).write_text(json.dumps({"frames": [{"metrics": {
-                "vmaf_hd": 90, "vmaf_hd_neg": 89, "vmaf_hd_phone": 95}}]}))
-            return
+            return VmafResult(scores={"vmaf_hd": 90, "vmaf_hd_neg": 89, "vmaf_hd_phone": 95},
+                              models=select_models("hd", ("0.6",)), display="hd",
+                              pix_fmt="yuv420p", hfr=False, log_path=output)
         # Exercise the real process lifecycle without media files or a long score.
         def commit():
             self.ffmpegQos._cmd = [binary, "-hide_banner", "-loglevel", "error",
                 "-re", "-f", "lavfi", "-i", "color=s=64x64:r=10",
                 "-progress", str(root / "ready"), "-f", "null", "-"]
         self.ffmpegQos._commit = commit
-        return self.ffmpegQos.getVmaf(log_path=output, print_progress=progress)
+        return self.ffmpegQos.getVmaf(select_models("hd", ("0.6",)), log_path=output,
+                                      print_progress=progress)
 
 cli.vmaf = Calculation
-sys.argv = ["easyvmaf", "-d", "*.mp4", "-r", str(root / "ref.mp4"), "-json"]
+sys.argv = ["easyvmaf", "-d", "*.mp4", "-r", str(root / "ref.mp4"), "--json"]
 try:
     cli.main()
 finally:

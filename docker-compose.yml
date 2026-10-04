@@ -14,7 +14,7 @@ services:
       dockerfile: Dockerfile
       args:
         FFMPEG_version: "8.1"
-        VMAF_version: "3.0.0"
+        VMAF_version: "3.2.1"
     image: easyvmaf:latest
     volumes:
       - ${VIDEO_DIR:-./video_samples}:/videos
@@ -27,7 +27,7 @@ services:
       dockerfile: Dockerfile.cuda
       args:
         FFMPEG_version: "8.1"
-        VMAF_version: "3.0.0"
+        VMAF_version: "3.2.1"
     image: easyvmaf:cuda
     volumes:
       - ${VIDEO_DIR:-./video_samples}:/videos
