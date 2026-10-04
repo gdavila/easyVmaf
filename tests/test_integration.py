@@ -162,6 +162,11 @@ def test_vmaf_v1_scores_a_144p_rendition(encode, tmp_path):
     assert all(0 <= score <= 100 for score in result.scores.values())
 
 
+# tinterlace=mode=interleave_top from LGPL filters (the Docker image builds FFmpeg
+# without --enable-gpl): each 10i frame weaves one field of two 20p frames.
+INTERLACE_20P_TO_10I = ("separatefields,select='not(mod(n-1\\,4))+not(mod(n-2\\,4))',"
+                        "weave=first_field=top,setpts=N/(10*TB),setfield=tff")
+
 @pytest.mark.parametrize("reference_fps, reported_distorted_fps", [
     # 20p master vs its 10i (20 fields/s) broadcast: every field must be scored.
     (20, None),
@@ -176,7 +181,7 @@ def test_interlaced_distorted_scores_each_reference_frame_once(encode, tmp_path,
     encode("-f", "lavfi", "-i", "testsrc2=s=320x240:r=20:d=1", "-pix_fmt", "yuv420p",
            "-c:v", "ffv1", source)
     encode("-i", source, "-vf", "fps=%d" % reference_fps, "-c:v", "ffv1", reference)
-    encode("-i", source, "-vf", "tinterlace=mode=interleave_top,setfield=tff",
+    encode("-i", source, "-vf", INTERLACE_20P_TO_10I, "-r", "10",
            "-c:v", "mpeg2video", "-q:v", "2", "-flags", "+ilme+ildct", distorted)
     calculation = vmaf(str(distorted), str(reference), vmaf_versions=("0.6",), threads=2)
     if reported_distorted_fps:
@@ -198,7 +203,7 @@ def test_reverse_sync_is_field_accurate_on_interlaced_distorted(encode, tmp_path
     # The broadcast recording (10i, one field per source frame) started 8 fields
     # (0.4 s) before the 20p reference clip.
     encode("-ss", "0.4", "-i", source, "-c:v", "ffv1", reference)
-    encode("-i", source, "-vf", "tinterlace=mode=interleave_top,setfield=tff",
+    encode("-i", source, "-vf", INTERLACE_20P_TO_10I, "-r", "10",
            "-c:v", "mpeg2video", "-q:v", "2", "-flags", "+ilme+ildct", distorted)
 
     offset, _ = vmaf(str(distorted), str(reference), vmaf_versions=("0.6",),
