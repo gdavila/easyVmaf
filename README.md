@@ -143,8 +143,8 @@ easyvmaf -d <distorted> -r <reference> [options]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--sync-window SW` | `0` | Sync window size in seconds. Enables automatic sync search between the first frames of the distorted video and a subsample of the reference. `0` disables sync. |
-| `--sync-start SS` | `0` | Sync start time: offset into the reference where the sync window begins. |
+| `--sync-window SW` | `0` | Sync window size in seconds. Enables automatic sync search: the first frames of the distorted video are looked for inside this window of the reference (of the distorted video with `--reverse`). `0` disables sync. |
+| `--sync-start SS` | `0` | Sync start time: offset into the reference (into the distorted video with `--reverse`) where the sync window begins. |
 | `--sync-only` | off | Measure the sync offset for every input and skip VMAF. Requires an explicit, finite `--sync-window` greater than zero. |
 | `--reverse` | off | Reverse sync direction: match the first frames of the reference against the distorted video. |
 | `--end-sync` | off | Stop when the shorter video ends. |
@@ -210,6 +210,9 @@ replaced with defaults.
 - `--model-option` must match `feature.option=value`, with lowercase names and a
   value made of letters, digits, `_`, `.` and `-`. Nothing else can reach the
   FFmpeg filter graph.
+- A sync window that ends after the video it searches (`--sync-start` +
+  `--sync-window` longer than the reference, or than the distorted video with
+  `--reverse`) is an error (exit code 1), reported before running FFmpeg.
 - easyVmaf 3.x flags are rejected with their 4.0 name, e.g.
   `error: -sw was removed in easyVmaf 4.0, use --sync-window`.
 
@@ -613,7 +616,7 @@ VIDEO_DIR=/path/to/videos docker compose run easyvmaf-cuda \
 
 ![](readme/easyVmaf1.svg)
 
-`reference.ts` starts 0.7 seconds after `distorted-A.ts`. Use `--sync-window` to search for the offset automatically:
+`reference.ts` has 0.7 extra seconds at the start: the first frame of `distorted-A.ts` appears 0.7 seconds into `reference.ts`. Use `--sync-window` to search for the offset automatically:
 
 ```bash
 easyvmaf -d distorted-A.ts -r reference.ts --sync-window 2
@@ -625,13 +628,13 @@ The sync window of 2 seconds means easyVmaf searches the first 2 seconds of `ref
 
 ![](readme/easyVmaf2.svg)
 
-`distorted-B.ts` starts 8.3 seconds after `reference.ts`. Use `--reverse` to flip the sync direction:
+This time `distorted-B.ts` has the extra seconds: the first frame of `reference.ts` appears 8.3 seconds into `distorted-B.ts`. Use `--reverse` to flip the sync direction:
 
 ```bash
 easyvmaf -d distorted-B.ts -r reference.ts --sync-window 3 --sync-start 6 --reverse
 ```
 
-`--sync-start 6` begins the sync search 6 seconds into `reference.ts`; `--reverse` matches reference first-frames against the distorted stream.
+With `--reverse`, the window slides over the distorted video: `--sync-start 6 --sync-window 3` searches from 6 to 9 seconds into `distorted-B.ts` for the first frames of `reference.ts`. The reported offset is negative (−8.3), meaning that the distorted video was trimmed.
 
 ---
 
@@ -657,11 +660,13 @@ JSON output. Every change has a one-line migration. See also
 | `FFmpegQos.vmaf_cambi_heatmap_path` | In layer 1 | `vmaf.cambi_heatmap_path` and `VmafResult.cambi_heatmap_path` | Read it from the result |
 
 Unchanged: the v0.6 score names, the libvmaf log path
-(`<distorted>_vmaf.{json,xml,csv}`), the PSNR sync search (same offsets and
-PSNR), duration handling and the libvmaf json/xml/csv log formats. Interlaced
-inputs changed: easyVmaf now deinterlaces before scaling, fixes two
-deinterlacing cases against a progressive reference, and keeps sync field
-accurate (see the changelog).
+(`<distorted>_vmaf.{json,xml,csv}`), the PSNR sync search for progressive
+inputs at the same frame rate, duration handling and the libvmaf json/xml/csv
+log formats. Interlaced inputs changed: easyVmaf now deinterlaces before
+scaling, fixes two deinterlacing cases against a progressive reference, and
+keeps sync field accurate. `--reverse` sync between inputs at different frame
+rates now converts the right one, so its reported PSNR changes (see the
+changelog).
 
 With `--vmaf-version 0.6`, easyVmaf 4.0 produces the same v0.6 scores as 3.x on
 the same libvmaf for progressive inputs; interlaced inputs can score
