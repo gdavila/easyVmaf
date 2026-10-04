@@ -53,12 +53,13 @@ _FLAG_LABELS = {
     'gpu_mode': '--gpu',
 }
 
-# 3.x flags, removed in 4.0 without aliases: rejected with their 4.0 name
+# Removed flags, without aliases: rejected with the name of their replacement
 _REMOVED_FLAGS = {
     '-sw': '--sync-window',
     '-ss': '--sync-start',
     '-sync_only': '--sync-only',
-    '-reverse': '--reverse',
+    '-reverse': '--sync-reverse',
+    '--reverse': '--sync-reverse',
     '-fps': '--fps',
     '-subsample': '--subsample',
     '-threads': '--threads',
@@ -184,7 +185,7 @@ def get_args():
                         \n\n \t Autoscale: Reference and Distorted samples are scaled automatically to 1920x1080 or 3840x2160 depending on --display\
                         \n\n \t Autosync: The first frames of the distorted video are used as reference to a sync look up with the Reference video. \
                         \n \t \t The sync is doing by a frame-by-frame look up of the best PSNR\
-                        \n \t \t See [--reverse] for more options of syncing\
+                        \n \t \t See [--sync-reverse] for more options of syncing\
                         \n\n As output, a json file with VMAF score is created",
                       formatter_class=argparse.RawTextHelpFormatter)
 
@@ -199,12 +200,14 @@ def get_args():
     sync = parser.add_argument_group('synchronization')
     sync.add_argument('--sync-window', dest='sync_window', type=float, default=0,
                       help='Sync Window: window size in seconds of a subsample of the Reference video. The sync lookup will be done between the first frames of the Distorted input and this Subsample of the Reference. (default=0. No sync).')
-    sync.add_argument('--sync-start', dest='sync_start', type=float, default=0,
-                      help="Sync Start Time. Time in seconds from the beginning of the Reference video to which the Sync Window will be applied from. (default=0).")
+    sync.add_argument('--sync-start', dest='sync_start', type=float, default=None,
+                      help="Sync Start Time. Time in seconds from the beginning of the Reference video (of the Distorted video with --sync-reverse) where the Sync Window begins. Requires --sync-window. (default=0).")
+    sync.add_argument('--sync-reverse', dest='sync_reverse', action='store_true',
+                      help="Reverse the sync search: the first frames of the Reference video are looked for inside the Sync Window of the Distorted video. Requires --sync-window. (Default = Disable).")
     sync.add_argument('--sync-only', dest='sync_only', action='store_true',
                       help='Measure sync only for every input. Requires an explicit finite --sync-window greater than zero. No Vmaf processing')
-    sync.add_argument('--reverse', dest='reverse', action='store_true',
-                      help="If enable, it Changes the default Autosync behaviour: The first frames of the Reference video are used as reference to sync with the Distorted one. (Default = Disable).")
+    sync.add_argument('--sync-offset', dest='sync_offset', type=float, default=None,
+                      help="Manual sync offset in seconds, instead of a sync search: positive trims the Reference, negative trims the Distorted video. Same sign as the reported sync offset. (default=0).")
     sync.add_argument('--shortest', dest='shortest', action='store_true',
                       help='Stop when the shorter video ends, instead of repeating its last frame until the longer one ends. Use it when the inputs have different durations. (Default: false).')
 
@@ -271,8 +274,21 @@ def get_args():
         parser.error('--sync-only requires an explicit finite --sync-window greater than zero')
     for flag, value in (('--sync-window', args.sync_window), ('--sync-start', args.sync_start),
                         ('--fps', args.fps)):
-        if not math.isfinite(value) or value < 0:
+        if value is not None and (not math.isfinite(value) or value < 0):
             parser.error('%s must be finite and greater than or equal to zero' % flag)
+    if args.sync_offset is not None and not math.isfinite(args.sync_offset):
+        parser.error('--sync-offset must be finite')
+    if args.sync_offset is not None and args.sync_window > 0:
+        parser.error('--sync-offset and --sync-window are mutually exclusive: '
+                     '--sync-offset is a manual offset, --sync-window searches for one')
+    if args.sync_window == 0 and (args.sync_start is not None or args.sync_reverse):
+        used = ' and '.join(flag for flag, value in (('--sync-start', args.sync_start is not None),
+                                                     ('--sync-reverse', args.sync_reverse)) if value)
+        message = '%s require%s --sync-window' % (used, '' if ' and ' in used else 's')
+        if args.sync_start is not None:
+            manual = -args.sync_start if args.sync_reverse else args.sync_start
+            message += '; for a manual offset use --sync-offset %g' % (manual or 0.0)
+        parser.error(message)
     if args.subsample < 1:
         parser.error('--subsample must be an integer of at least 1')
     if args.threads < 0:
@@ -296,7 +312,7 @@ class MyParser(argparse.ArgumentParser):
                 break
             flag = arg.split('=', 1)[0]
             if flag in _REMOVED_FLAGS:
-                self.error('%s was removed in easyVmaf 4.0, use %s'
+                self.error('%s was removed, use %s'
                            % (flag, _REMOVED_FLAGS[flag]))
         return super().parse_known_args(args, namespace)
 
@@ -315,10 +331,10 @@ def main():
     reference = cmdParser.reference
 
     syncWin = cmdParser.sync_window
-    ss = cmdParser.sync_start
+    ss = cmdParser.sync_start or 0
     fps = cmdParser.fps
     n_subsample = cmdParser.subsample
-    reverse = cmdParser.reverse
+    reverse = cmdParser.sync_reverse
     display = cmdParser.display
     vmaf_versions = tuple(cmdParser.vmaf_versions)
     views = tuple(cmdParser.views) if cmdParser.views else None
@@ -431,7 +447,8 @@ def main():
                         print(f"offset: {offset} | psnr: {psnr}", flush=True)
                     continue
             else:
-                offset = (-ss if reverse else ss) if ss else 0.0
+                # `or 0.0` also turns --sync-offset -0 into 0.0, never reported as -0.0.
+                offset = cmdParser.sync_offset or 0.0
                 psnr = None
                 myVmaf.offset = offset
 

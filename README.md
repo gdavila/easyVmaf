@@ -143,10 +143,11 @@ easyvmaf -d <distorted> -r <reference> [options]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--sync-window SW` | `0` | Sync window size in seconds. Enables automatic sync search: the first frames of the distorted video are looked for inside this window of the reference (of the distorted video with `--reverse`). `0` disables sync. |
-| `--sync-start SS` | `0` | Sync start time: offset into the reference (into the distorted video with `--reverse`) where the sync window begins. |
+| `--sync-window SW` | `0` | Sync window size in seconds. Enables automatic sync search: the first frames of the distorted video are looked for inside this window of the reference (of the distorted video with `--sync-reverse`). `0` disables sync. |
+| `--sync-start SS` | `0` | Time into the reference (into the distorted video with `--sync-reverse`) where the sync window begins. Requires `--sync-window`. |
+| `--sync-reverse` | off | Reverse the sync search: match the first frames of the reference against the distorted video. Requires `--sync-window`. |
 | `--sync-only` | off | Measure the sync offset for every input and skip VMAF. Requires an explicit, finite `--sync-window` greater than zero. |
-| `--reverse` | off | Reverse sync direction: match the first frames of the reference against the distorted video. |
+| `--sync-offset S` | `0` | Manual sync offset in seconds, instead of a sync search: positive trims the reference, negative trims the distorted video. Same sign as the reported offset. Cannot be combined with `--sync-window`. |
 | `--shortest` | off | Stop when the shorter video ends instead of repeating its last frame. Use it when the inputs have different durations. |
 
 ### Models
@@ -195,8 +196,13 @@ checking FFmpeg or probing videos. They are never converted to valid values or
 replaced with defaults.
 
 - `--sync-window`, `--sync-start` and `--fps` accept finite numbers greater than
-  or equal to zero. Zero keeps the defaults: no sync search, no start offset, and
-  automatic frame rate handling.
+  or equal to zero. Zero keeps the defaults: no sync search, a sync window that
+  starts at the beginning, and automatic frame rate handling. `--sync-offset`
+  accepts any finite number.
+- `--sync-start` and `--sync-reverse` only configure the sync search: without
+  `--sync-window` they are an error that names the `--sync-offset` equivalent,
+  e.g. `--sync-start 1.5 --sync-reverse` → `use --sync-offset -1.5`.
+  `--sync-offset` and `--sync-window` are mutually exclusive.
 - `--subsample` accepts integers of at least 1; `--threads` accepts integers of
   at least 0.
 - Option values are case-insensitive (`--display 4K`, `--output-format XML`,
@@ -213,9 +219,10 @@ replaced with defaults.
   FFmpeg filter graph.
 - A sync window that ends after the video it searches (`--sync-start` +
   `--sync-window` longer than the reference, or than the distorted video with
-  `--reverse`) is an error (exit code 1), reported before running FFmpeg.
-- easyVmaf 3.x flags are rejected with their 4.0 name, e.g.
-  `error: -sw was removed in easyVmaf 4.0, use --sync-window`.
+  `--sync-reverse`) is an error (exit code 1), reported before running FFmpeg.
+- Removed flags are rejected with the name of their replacement, e.g.
+  `error: -sw was removed, use --sync-window` or
+  `error: --reverse was removed, use --sync-reverse`.
 
 ## Models
 
@@ -399,8 +406,8 @@ or move the file.
 # Sync window of 2 seconds starting from the beginning of reference
 easyvmaf -d distorted.mp4 -r reference.mp4 --sync-window 2
 
-# Sync window starting at 6 s into reference, reverse direction
-easyvmaf -d distorted.mp4 -r reference.mp4 --sync-window 3 --sync-start 6 --reverse
+# Sync window starting at 6 s into the distorted video, reverse direction
+easyvmaf -d distorted.mp4 -r reference.mp4 --sync-window 3 --sync-start 6 --sync-reverse
 ```
 
 Human-readable output of the first command (logs go to stderr):
@@ -418,11 +425,11 @@ vmaf_v1_phone  95.393178  [vmaf_v1.0.16_5d0h, 0-100]
 VMAF output file path:  distorted_vmaf.json
 ```
 
-With `--sync-window 0` (the default), `--sync-start X` applies a manual offset:
-positive to trim the reference, or negative with `--reverse` to trim the
-distorted video. Both manual and automatic offsets use this sign convention in
-JSON and human output. A zero manual offset is reported as `0.0`, including with
-`--reverse`.
+Without a sync search, `--sync-offset X` applies a manual offset: positive to trim
+the reference, negative to trim the distorted video. Automatic offsets use the
+same sign convention in JSON and human output, so the offset reported by
+`--sync-only` can be passed to `--sync-offset` as is. A zero manual offset is reported
+as `0.0`, including `--sync-offset -0`.
 
 ### Sync measurement only
 
@@ -646,13 +653,13 @@ The sync window of 2 seconds means easyVmaf searches the first 2 seconds of `ref
 
 ![](readme/easyVmaf2.svg)
 
-This time `distorted-B.ts` has the extra seconds: the first frame of `reference.ts` appears 8.3 seconds into `distorted-B.ts`. Use `--reverse` to flip the sync direction:
+This time `distorted-B.ts` has the extra seconds: the first frame of `reference.ts` appears 8.3 seconds into `distorted-B.ts`. Use `--sync-reverse` to flip the sync direction:
 
 ```bash
-easyvmaf -d distorted-B.ts -r reference.ts --sync-window 3 --sync-start 6 --reverse
+easyvmaf -d distorted-B.ts -r reference.ts --sync-window 3 --sync-start 6 --sync-reverse
 ```
 
-With `--reverse`, the window slides over the distorted video: `--sync-start 6 --sync-window 3` searches from 6 to 9 seconds into `distorted-B.ts` for the first frames of `reference.ts`. The reported offset is negative (−8.3), meaning that the distorted video was trimmed.
+With `--sync-reverse`, the window slides over the distorted video: `--sync-start 6 --sync-window 3` searches from 6 to 9 seconds into `distorted-B.ts` for the first frames of `reference.ts`. The reported offset is negative (−8.3), meaning that the distorted video was trimmed.
 
 ---
 
@@ -682,7 +689,7 @@ Unchanged: the v0.6 score names, the libvmaf log path
 inputs at the same frame rate, duration handling and the libvmaf json/xml/csv
 log formats. Interlaced inputs changed: easyVmaf now deinterlaces before
 scaling, fixes two deinterlacing cases against a progressive reference, and
-keeps sync field accurate. `--reverse` sync between inputs at different frame
+keeps sync field accurate. Reverse sync between inputs at different frame
 rates now converts the right one, so its reported PSNR changes (see the
 changelog).
 
@@ -696,16 +703,17 @@ the [CHANGELOG](CHANGELOG.md) for the full verification.
 ### Flag equivalences
 
 Only `-d` and `-r` keep their short form. Every other 3.x flag exits with code 2
-and names its replacement.
+and names its replacement. After 4.0, `--reverse` became `--sync-reverse`, and
+the manual offset moved from `--sync-start` without a sync window to `--sync-offset`.
 
-| 3.x flag (removed) | 4.0 flag |
+| 3.x flag (removed) | Current flag |
 |---|---|
 | `-d` | `-d`, `--distorted` |
 | `-r` | `-r`, `--reference` |
 | `-sw` | `--sync-window` |
-| `-ss` | `--sync-start` |
+| `-ss` | `--sync-start` (sync window start) or `--sync-offset` (manual offset) |
 | `-sync_only` | `--sync-only` |
-| `-reverse` | `--reverse` |
+| `-reverse` | `--sync-reverse` |
 | `-fps` | `--fps` |
 | `-subsample` | `--subsample` |
 | `-threads` | `--threads` |

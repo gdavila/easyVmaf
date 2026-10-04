@@ -86,7 +86,12 @@ def batch(tmp_path, monkeypatch, ffmpeg_ok):
     # 3.x scripts fail with the 4.0 name of the removed flag, not a bare unknown-flag error.
     (["-sw", "2"], 2, "--sync-window"),
     (["-model", "4k"], 2, "--display"),  # 4.0 betas accepted it as an alias
-    (["-reverse"], 2, "--reverse"),  # argparse alone would read it as '-r everse'
+    (["-reverse"], 2, "--sync-reverse"),  # argparse alone would read it as '-r everse'
+    (["--reverse"], 2, "--sync-reverse"),
+    (["--sync-offset=nan"], 2, "--sync-offset"),
+    (["--sync-offset", "1", "--sync-window", "1"], 2, "mutually exclusive"),
+    # Before --sync-offset, --sync-start without a window was a manual offset, signed by -reverse.
+    (["--sync-start", "1.5", "--sync-reverse"], 2, "use --sync-offset -1.5"),
 ], ids=lambda value: " ".join(value) if isinstance(value, list) else None)
 def test_invalid_arguments_fail_on_stderr_before_ffmpeg_check(monkeypatch, capsys,
                                                               arguments, code, message):
@@ -243,11 +248,11 @@ def test_batch_processes_each_input_once_in_glob_order(batch, monkeypatch, capsy
         assert ("vmaf" in record) == full
 
 
-@pytest.mark.parametrize("seconds, reverse, use_json", [
-    ("0.2", False, False), ("0.2", True, True), ("0", True, True),
-], ids=["forward-text", "reverse-json", "zero-reverse-json"])
+@pytest.mark.parametrize("seconds, use_json", [
+    ("0.2", False), ("-0.2", True), ("-0", True),
+], ids=["reference-text", "distorted-json", "negative-zero-json"])
 def test_manual_offset_is_applied_and_reported_for_every_input(
-        tmp_path, monkeypatch, capsys, ffmpeg_ok, scored, seconds, reverse, use_json):
+        tmp_path, monkeypatch, capsys, ffmpeg_ok, scored, seconds, use_json):
     # Real preprocessing and trim construction; only probing and scoring are stubbed.
     reference = tmp_path / "reference.mkv"
     files = [tmp_path / "first.mkv", tmp_path / "second.mkv"]
@@ -264,10 +269,9 @@ def test_manual_offset_is_applied_and_reported_for_every_input(
     monkeypatch.setattr(cli, "vmaf", construct)
 
     run(monkeypatch, "-d", "*.mkv", "-r", str(reference), "--fps", "10",
-        "--sync-start", seconds,
-        *(["--reverse"] if reverse else []), *(["--json"] if use_json else []))
+        "--sync-offset", seconds, *(["--json"] if use_json else []))
 
-    expected = (-0.2 if reverse else 0.2) if float(seconds) else 0.0
+    expected = float(seconds) or 0.0
     out = capsys.readouterr().out
     if use_json:
         records = [strict_loads(line) for line in out.splitlines()]
@@ -276,7 +280,7 @@ def test_manual_offset_is_applied_and_reported_for_every_input(
     else:
         offsets = [float(line.split("|")[0].split(":", 1)[1])
                    for line in out.splitlines() if line.startswith("offset:")]
-    # Compare signs too: --sync-start 0 --reverse must not report -0.0.
+    # Compare signs too: --sync-offset -0 must not report -0.0.
     assert [(o, math.copysign(1, o)) for o in offsets] == [(expected, math.copysign(1, expected))] * 2
     assert len(instances) == 2
     for instance in instances:
@@ -285,7 +289,7 @@ def test_manual_offset_is_applied_and_reported_for_every_input(
         if not expected:
             assert "trim=" not in main + ref
             continue
-        trimmed, untrimmed = (main, ref) if reverse else (ref, main)
+        trimmed, untrimmed = (main, ref) if expected < 0 else (ref, main)
         assert "trim=start=0.2:duration=1.0" in trimmed
         assert "trim=start=0:duration=1.0" in untrimmed
 

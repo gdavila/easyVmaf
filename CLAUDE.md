@@ -33,6 +33,7 @@ FFMPEG=/path/to/ffmpeg FFPROBE=/path/to/ffprobe python3 -m easyvmaf ...
 # Installed CLI command
 easyvmaf -d distorted.mp4 -r reference.mp4                      # VMAF v1 HD (vmaf_v1_hd, vmaf_v1_phone)
 easyvmaf -d distorted.mp4 -r reference.mp4 --sync-window 2      # with sync window
+easyvmaf -d distorted.mp4 -r reference.mp4 --sync-offset 1.5    # manual sync offset
 easyvmaf -d distorted.mp4 -r reference.mp4 --display 4k         # VMAF v1 4K
 easyvmaf -d distorted.mp4 -r reference.mp4 --vmaf-version 0.6   # v0.6 models, as in 3.x
 easyvmaf -d distorted.mp4 -r reference.mp4 --vmaf-version 1 0.6 # both generations in one pass
@@ -44,8 +45,13 @@ easyvmaf -d "folder/*.mp4" -r reference.mp4                     # batch
 python3 -m easyvmaf -d distorted.mp4 -r reference.mp4
 ```
 
-3.x flags (`-sw`, `-model`, `-json`, ...) are rejected with exit code 2 and the
-name of their replacement (`_REMOVED_FLAGS` in `cli.py`).
+Removed flags (3.x `-sw`, `-model`, `-json`, ...; `--reverse`) are rejected with
+exit code 2 and the name of their replacement (`_REMOVED_FLAGS` in `cli.py`).
+
+Sync flags: `--sync-window` enables the search; `--sync-start` (window start) and
+`--sync-reverse` (search direction) only configure it and require it;
+`--sync-offset` is the signed manual offset (positive trims the reference,
+negative the distorted), mutually exclusive with `--sync-window`.
 
 ## Docker
 
@@ -176,11 +182,13 @@ printing or emitting structured JSON results.
 - Flags are `--kebab-case`, grouped in `--help` as input, synchronization, models,
   VMAF v1 parameters, output and execution. Only `-d`/`-r` have short forms.
   `allow_abbrev=False`.
-- `_REMOVED_FLAGS`: 3.x flag → 4.0 flag. `MyParser.parse_known_args()` checks it
-  **before** parsing (argparse would read `-reverse` as `-r everse`) and exits with
-  code 2: `error: -sw was removed in easyVmaf 4.0, use --sync-window`.
+- `_REMOVED_FLAGS`: removed flag → replacement. `MyParser.parse_known_args()` checks
+  it **before** parsing (argparse would read `-reverse` as `-r everse`) and exits
+  with code 2: `error: -sw was removed, use --sync-window`.
 - `get_args()` calls `validate_model_config(..., labels=_FLAG_LABELS)` and turns
   its `ValueError` into `parser.error()` (exit code 2), before `check_ffmpeg()`.
+  It also rejects `--sync-start`/`--sync-reverse` without `--sync-window` (naming
+  the `--sync-offset` equivalent) and `--sync-offset` with `--sync-window`.
 - `--json` flag: emits NDJSON to stdout (one object per file in batch); logging goes to stderr
 - `_build_result()`: constructs the JSON schema 2 dict from a `VmafResult`
   (`JSON_SCHEMA_VERSION = 2`)
