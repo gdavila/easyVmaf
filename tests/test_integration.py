@@ -49,15 +49,39 @@ def test_check_ffmpeg_accepts_real_build(ffmpeg_bin):
     assert result["builtin_models"] is True
 
 
-def test_escaped_path_reaches_the_named_file(ffmpeg_bin, tmp_path):
-    target = tmp_path / "my clips" / "take 1: video's copy [1080p];v2,final\\x.log"
-    target.parent.mkdir()
+def write_psnr_stats(binary, target):
     source = "testsrc2=s=16x16:d=0.2:r=10"
-    subprocess.run([ffmpeg_bin, "-v", "error", "-f", "lavfi", "-i", source, "-f", "lavfi",
+    subprocess.run([binary, "-v", "error", "-f", "lavfi", "-i", source, "-f", "lavfi",
                     "-i", source, "-filter_complex",
                     "[0:v][1:v]psnr=stats_file=" + FFmpegQos._escape_filter_value(str(target)),
                     "-f", "null", "-"], check=True, capture_output=True, timeout=90)
     assert target.stat().st_size > 0
+
+
+def test_escaped_path_reaches_the_named_file(ffmpeg_bin, tmp_path):
+    # Windows forbids ':' in file names and separates directories with '\';
+    # there the drive letter of tmp_path ("C:\...") carries both.
+    if os.name == "nt":
+        name = "Take 1 video's copy [1080p];v2,final.log"
+    else:
+        name = "Take 1: video's copy [1080p];v2,final\\x.log"
+    target = tmp_path / "my clips" / name
+    target.parent.mkdir()
+    write_psnr_stats(ffmpeg_bin, target)
+    # stat() also succeeds on case-insensitive file systems (macOS, Windows).
+    assert name in os.listdir(target.parent)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="UNC paths exist only on Windows")
+def test_escaped_unc_path_reaches_the_named_file(ffmpeg_bin, tmp_path):
+    # tmp_path through the admin share: C:\Users\... -> \\localhost\c$\Users\...
+    local = str(tmp_path)
+    unc = Path(f"\\\\localhost\\{local[0].lower()}$" + local[2:])
+    try:
+        (unc / "write_probe").write_text("x")
+    except OSError:
+        pytest.skip("admin share is not writable")
+    write_psnr_stats(ffmpeg_bin, unc / "stats_unc.log")
 
 
 @pytest.mark.parametrize("reverse", [False, True], ids=["forward", "reverse"])
