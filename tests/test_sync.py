@@ -72,6 +72,16 @@ def test_repeated_searches_keep_shared_sources_and_roles(fake_ffmpeg):
             assert "cuda" not in graph
 
 
+@pytest.mark.parametrize("reverse", [False, True], ids=["reference", "distorted-reverse"])
+def test_sync_window_past_the_end_is_rejected_before_ffmpeg(fake_ffmpeg, reverse):
+    """A window past the end of the searched video crashed with an IndexError."""
+    calculation = vmaf("distorted.mkv", "reference.mkv", vmaf_versions=("0.6",), manual_fps=10)
+
+    with pytest.raises(ValueError, match="sync window ends at 1.5 s"):
+        calculation.syncOffset(1.0, start=0.5, reverse=reverse)
+    assert fake_ffmpeg.commands == []
+
+
 @pytest.mark.parametrize("manual_fps", [0, 10])
 def test_interlace_is_probed_once_per_input_before_workers(fake_ffmpeg, manual_fps):
     calculation = vmaf("distorted.mkv", "reference.mkv", threads=4, manual_fps=manual_fps)

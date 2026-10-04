@@ -635,6 +635,14 @@ class vmaf():
         It returns the offset value to get REF and MAIN synced and the PSNR computed.
         """
 
+        # The window slides over the reference, or over the distorted video
+        # with reverse; past its end FFmpeg has no frame left to compare.
+        searched, role = (self.main, 'distorted') if reverse else (self.ref, 'reference')
+        if start + syncWindow > searched.duration:
+            raise ValueError(
+                f"The sync window ends at {start + syncWindow:g} s, but the {role} video "
+                f"lasts {searched.duration:g} s: lower the sync start or the sync window")
+
         logger.info("=" * 39)
         logger.info("Syncing... Computing PSNR values...")
         logger.info("=" * 39)

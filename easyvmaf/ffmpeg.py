@@ -270,9 +270,11 @@ class FFmpegQos:
         logger.debug("FFmpeg PSNR cmd: %s", self._cmd)
         stdout = subprocess.check_output(
             self._cmd, stderr=subprocess.STDOUT, shell=False).decode('utf-8')
-        stdout = stdout.split(" ")
-        psnr = [s for s in stdout if "average" in s][0].split(":")[1]
-        return float(psnr)
+        averages = [s for s in stdout.split(" ") if "average" in s]
+        if not averages:
+            # The trims left no frame to compare, e.g. a start past the end.
+            raise FFmpegExecutionError(self._cmd, 0, "the PSNR filter compared no frames")
+        return float(averages[0].split(":")[1])
 
     def getVmaf(self, models: Sequence[ModelRun], log_path=None, subsample=1, output_fmt='json', threads=0, print_progress=False, end_sync=False, features=None, gpu=False):
         """Run VMAF and return its process, raising FFmpegExecutionError on failure.
