@@ -20,9 +20,10 @@ from types import SimpleNamespace
 import pytest
 
 from conftest import ROOT, run_cli, strict_loads
-from easyvmaf import ffmpeg, vmaf
+from easyvmaf import UnsupportedRangeError, ffmpeg, vmaf
 from easyvmaf.ffmpeg import FFmpegQos
 from easyvmaf.models import CATALOG, ModelRun
+from easyvmaf.results import read_frames
 
 SCALE = "scale=1920:1080:flags=bicubic,fps=fps=10"
 
@@ -234,6 +235,95 @@ def test_reverse_sync_is_field_accurate_on_interlaced_distorted(encode, tmp_path
                      threads=2).syncOffset(0.5, start=0.1, reverse=True)
 
     assert offset == pytest.approx(-0.4)
+
+
+@pytest.fixture(scope="module")
+def gop_clips(encode, tmp_path_factory):
+    """Long-GOP MP4 clips, with keyframes at different frames in each one:
+    `lead` starts 0.3 s before `late` and `aligned`, both blurred. `interlaced`
+    is a 10i version (Matroska) of the 20p `master`."""
+    directory = tmp_path_factory.mktemp("gop")
+    source, source_20p = directory / "source.mkv", directory / "source_20p.mkv"
+    encode("-f", "lavfi", "-i", "testsrc2=s=320x240:r=10:d=2.8", "-c:v", "ffv1", source)
+    encode("-f", "lavfi", "-i", "testsrc2=s=320x240:r=20:d=2.5", "-pix_fmt", "yuv420p",
+           "-c:v", "ffv1", source_20p)
+    clips = SimpleNamespace(**{name: str(directory / name) for name in (
+        "lead.mp4", "late.mp4", "aligned.mp4", "master.mp4", "interlaced.mkv")})
+    mpeg4 = ("-c:v", "mpeg4", "-q:v", "4", "-bf", "2")
+    encode("-i", source, *mpeg4, "-g", "8", getattr(clips, "lead.mp4"))
+    encode("-i", source, "-vf", "trim=start=0.3,setpts=PTS-STARTPTS,gblur=sigma=1.5",
+           *mpeg4, "-g", "7", getattr(clips, "late.mp4"))
+    encode("-i", source, "-vf", "gblur=sigma=1.5", *mpeg4, "-g", "6",
+           getattr(clips, "aligned.mp4"))
+    encode("-i", source_20p, *mpeg4, "-g", "9", getattr(clips, "master.mp4"))
+    encode("-i", source_20p, "-vf", INTERLACE_20P_TO_10I, "-r", "10", "-c:v", "mpeg2video",
+           "-q:v", "4", "-g", "6", "-flags", "+ilme+ildct", getattr(clips, "interlaced.mkv"))
+    return clips
+
+
+@pytest.mark.requires_libvmaf_v1  # one case scores the default v1 models
+@pytest.mark.parametrize("distorted, reference, offset, options, output_fmt", [
+    ("late.mp4", "lead.mp4", 0.3, dict(vmaf_versions=("0.6",)), "json"),
+    ("lead.mp4", "late.mp4", -0.3, {}, "xml"),
+    # 0.3 s is 2.1 frames at 7 fps: the first measured reference frame is not
+    # at the offset, but at the next frame of the converted rate.
+    ("late.mp4", "lead.mp4", 0.3, dict(vmaf_versions=("0.6",), manual_fps=7), "csv"),
+    ("aligned.mp4", "lead.mp4", 0, dict(vmaf_versions=("0.6",)), "json"),
+    # Field deinterlacing doubles the distorted frame rate (yadif=1).
+    ("interlaced.mkv", "master.mp4", 0, dict(vmaf_versions=("0.6",)), "json"),
+], ids=["reference-trimmed", "distorted-trimmed-v1", "frame-rate-conversion", "no-offset",
+        "interlaced-distorted"])
+def test_frame_ranges_join_into_the_full_calculation(gop_clips, distorted, reference, offset,
+                                                     options, output_fmt):
+    """The contract an orchestrator relies on: consecutive ranges, cut between
+    keyframes, give the frames of the full calculation, with the same frame
+    numbers and identical scores."""
+    def calculate(**frame_range):
+        calculation = vmaf(getattr(gop_clips, distorted), getattr(gop_clips, reference),
+                           output_fmt=output_fmt, threads=2, **options, **frame_range)
+        calculation.offset = offset
+        result = calculation.getVmaf()
+        return result, read_frames(result.log_path, output_fmt)
+
+    full, frames = calculate()
+    size = math.ceil(len(frames) / 3)
+    joined, logs = [], set()
+    for start in range(0, len(frames), size):
+        result, chunk = calculate(start_frame=start, frame_count=size)
+        assert result.frames_scored == len(chunk)
+        joined += chunk
+        logs.add(result.log_path)
+
+    assert len(frames) >= 15  # three ranges of several frames, cut between keyframes
+    assert joined == frames
+    assert len(logs) == 3 and full.log_path not in logs
+
+
+def test_frame_range_past_the_end_fails_instead_of_reading_a_stale_log(gop_clips, tmp_path):
+    """An orchestrator plans ranges from an estimated frame count; the range
+    past the end measures nothing, and libvmaf then writes no log at all."""
+    distorted = tmp_path / "late.mp4"
+    shutil.copyfile(getattr(gop_clips, "late.mp4"), distorted)
+    stale = tmp_path / "late_vmaf_f1000-1009.json"
+    # What an earlier run of the same range left, e.g. on a longer video with the same name.
+    stale.write_text(json.dumps({"frames": [
+        {"frameNum": n, "metrics": dict.fromkeys(("vmaf_hd", "vmaf_hd_neg", "vmaf_hd_phone"), 99.0)}
+        for n in range(1000, 1010)], "pooled_metrics": {}}))
+    calculation = vmaf(str(distorted), getattr(gop_clips, "lead.mp4"), vmaf_versions=("0.6",),
+                       threads=2, start_frame=1000, frame_count=10)
+    calculation.offset = 0.3
+
+    with pytest.raises(UnsupportedRangeError, match="after the last measured frame"):
+        calculation.getVmaf()
+
+
+def test_frame_range_rejects_mpegts(gop_clips, encode, tmp_path):
+    """MPEG-TS seeks to the next keyframe: a range would silently score other frames."""
+    ts = tmp_path / "lead.ts"
+    encode("-i", getattr(gop_clips, "lead.mp4"), "-c", "copy", ts)
+
+    with pytest.raises(UnsupportedRangeError, match="mpegts"):
+        vmaf(str(ts), getattr(gop_clips, "late.mp4"), start_frame=10, frame_count=10)
 
 
 def test_sync_worker_stops_decoding_after_trim(encode, tmp_path, monkeypatch):

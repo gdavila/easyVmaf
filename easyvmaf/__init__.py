@@ -5,6 +5,7 @@ Public API:
     from easyvmaf import vmaf, VmafResult
     from easyvmaf import validate_model_config, UnsupportedModelConfigError
     from easyvmaf import UnsupportedFramerateError
+    from easyvmaf import validate_range_config, UnsupportedRangeError
     from easyvmaf import ModelSpec, CATALOG, select_models
     from easyvmaf.ffmpeg import FFprobe, FFmpegQos, inputFFmpeg
 
@@ -16,6 +17,8 @@ from .vmaf import (
     validate_model_config,
     UnsupportedFramerateError,
     UnsupportedModelConfigError,
+    validate_range_config,
+    UnsupportedRangeError,
 )
 from .results import VmafResult
 from .models import ModelSpec, CATALOG, select_models
@@ -28,6 +31,8 @@ __all__ = [
     "validate_model_config",
     "UnsupportedFramerateError",
     "UnsupportedModelConfigError",
+    "validate_range_config",
+    "UnsupportedRangeError",
     "ModelSpec",
     "CATALOG",
     "select_models",

@@ -92,6 +92,10 @@ def batch(tmp_path, monkeypatch, ffmpeg_ok):
     (["--sync-offset", "1", "--sync-window", "1"], 2, "mutually exclusive"),
     # Before --sync-offset, --sync-start without a window was a manual offset, signed by -reverse.
     (["--sync-start", "1.5", "--sync-reverse"], 2, "use --sync-offset -1.5"),
+    (["--start-frame=-1"], 2, "--start-frame"),
+    # Not supported with a range yet: each would score other frames than the full calculation.
+    (["--frame-count", "100", "--subsample", "2"], 2, "--subsample"),
+    (["--start-frame", "100", "--sync-only", "--sync-window", "1"], 2, "--sync-only"),
 ], ids=lambda value: " ".join(value) if isinstance(value, list) else None)
 def test_invalid_arguments_fail_on_stderr_before_ffmpeg_check(monkeypatch, capsys,
                                                               arguments, code, message):
@@ -147,7 +151,7 @@ def test_missing_input_fails_on_stderr(batch, monkeypatch, capsys, missing, mess
 
 DEFAULTS = dict(subsample=1, threads=0, manual_fps=0, display="hd", vmaf_versions=("1",),
                 views=None, hfr="auto", bitdepth="auto", enc_size=None, enc_bitdepth=None,
-                model_options=(), output_fmt="json")
+                model_options=(), output_fmt="json", start_frame=None, frame_count=None)
 
 
 @pytest.mark.parametrize("options, forwarded", [
@@ -163,7 +167,9 @@ DEFAULTS = dict(subsample=1, threads=0, manual_fps=0, display="hd", vmaf_version
     # Option values are case-insensitive, as users type them (XML, 4K, HFR=ON).
     (["--vmaf-version", "1", "0.6", "--output-format", "XML"],
      dict(DEFAULTS, vmaf_versions=("1", "0.6"), output_fmt="xml")),
-], ids=["defaults", "all-options-4k", "both-versions-xml"])
+    (["--start-frame", "9000", "--frame-count", "9000"],
+     dict(DEFAULTS, start_frame=9000, frame_count=9000)),
+], ids=["defaults", "all-options-4k", "both-versions-xml", "frame-range"])
 def test_options_are_forwarded(batch, monkeypatch, options, forwarded):
     distorted = batch.files[0]
     calculation = batch.calc[distorted]
@@ -221,6 +227,19 @@ def test_vmaf_v06_keeps_its_metrics(tmp_path, monkeypatch, capsys, ffmpeg_ok, sc
     record = strict_loads(capsys.readouterr().out)
     assert list(record["vmaf"]["scores"]) == ["vmaf_hd", "vmaf_hd_neg", "vmaf_hd_phone"]
     assert record["vmaf"]["pix_fmt"] == "yuv420p"
+
+
+def test_json_reports_the_frame_range(batch, monkeypatch, capsys):
+    """An orchestrator weights each range by frames_scored; the last range can be short."""
+    distorted = batch.files[0]
+    result = batch.calc[distorted].getVmaf.return_value
+    result.start_frame, result.frame_count, result.frames_scored = 9000, 9000, 1234
+
+    run(monkeypatch, "-d", distorted, "-r", batch.reference, "--start-frame", "9000",
+        "--frame-count", "9000", "--json")
+
+    assert strict_loads(capsys.readouterr().out)["vmaf"]["range"] == {
+        "start_frame": 9000, "frame_count": 9000, "frames_scored": 1234}
 
 
 @pytest.mark.parametrize("options", [["--sync-only"], ["--sync-only", "--json"], ["--json"]],

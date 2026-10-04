@@ -150,6 +150,13 @@ easyvmaf -d <distorted> -r <reference> [options]
 | `--sync-offset S` | `0` | Manual sync offset in seconds, instead of a sync search: positive trims the reference, negative trims the distorted video. Same sign as the reported offset. Cannot be combined with `--sync-window`. |
 | `--shortest` | off | Stop when the shorter video ends instead of repeating its last frame. Use it when the inputs have different durations. |
 
+### Frame range
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--start-frame N` | `0` | First frame to measure, numbered as in the log of the full calculation. See [Frame ranges](#frame-ranges). |
+| `--frame-count N` | to the end | Number of frames to measure. The last range of a video can have fewer. |
+
 ### Models
 
 | Flag | Default | Description |
@@ -220,6 +227,9 @@ replaced with defaults.
 - A sync window that ends after the video it searches (`--sync-start` +
   `--sync-window` longer than the reference, or than the distorted video with
   `--sync-reverse`) is an error (exit code 1), reported before running FFmpeg.
+- `--start-frame` accepts integers of at least 0 and `--frame-count` integers of
+  at least 1. A frame range cannot be combined with `--sync-only`, and, for now,
+  not with `--subsample`, `--cambi-heatmap` or `--gpu`.
 - Removed flags are rejected with the name of their replacement, e.g.
   `error: -sw was removed, use --sync-window` or
   `error: --reverse was removed, use --sync-reverse`.
@@ -356,6 +366,58 @@ ffprobe -v error -select_streams v:0 \
 
 An interlaced `field_order` (`tt`, `bb`, `tb`, `bt`) with `r_frame_rate` twice
 `avg_frame_rate` (for example `50/1` and `25/1`) is a `1080i25*` input.
+
+## Frame ranges
+
+`--start-frame` and `--frame-count` measure a range of frames instead of the
+whole video, without cutting or re-encoding the inputs. Frames are numbered as
+in the log of the full calculation: after sync, deinterlacing and frame rate
+conversion, at the frame rate libvmaf receives.
+
+A range returns exactly the frames of the full calculation, with the same frame
+numbers and identical scores. Consecutive ranges therefore join into the full
+calculation: concatenating their logs gives its log, and its mean is the mean
+of the joined frames, or the mean of each range weighted by its
+`vmaf.range.frames_scored`. This lets a higher layer split a long video into
+ranges and compute them in parallel, on one machine or on several:
+
+```bash
+# 1. Sync once
+easyvmaf -d distorted.mp4 -r reference.mp4 --sync-window 3 --sync-only --json   # sync.offset: 1.5
+
+# 2. One range per process or instance, with the same offset and options
+easyvmaf -d distorted.mp4 -r reference.mp4 --sync-offset 1.5 --start-frame 0    --frame-count 9000 --json
+easyvmaf -d distorted.mp4 -r reference.mp4 --sync-offset 1.5 --start-frame 9000 --frame-count 9000 --json
+```
+
+A range can also search the sync itself with `--sync-window`: the search always
+runs at the beginning of the videos and finds the same offset for every range,
+but each range then repeats its cost.
+
+How a range keeps the frames of the full calculation:
+
+- Each input is read from shortly before the range (`-ss`), keeping its original
+  timestamps, so deinterlacing and frame rate conversion select the same frames.
+- The first frame the full calculation measures is found by running the same
+  filters up to it, and each range counts its frames from there.
+- Two extra frames are measured on each side of the range and dropped from its
+  log: the motion features of a frame depend on the previous and the next frame.
+
+Each range writes its own log, named after the requested frames:
+`<distorted>_vmaf_f<first>-<last>.{json,xml,csv}` (`-end` without
+`--frame-count`). Its frames keep their frame numbers in the full calculation,
+and its pooled metrics cover only the range.
+
+Limits:
+
+- Only MP4, MOV, Matroska and WebM inputs. Other containers are an error
+  (exit code 1): MPEG-TS seeks to the next keyframe, which would silently
+  score other frames, and raw elementary streams have no timestamps.
+- A range that starts after the last frame is an error. A range that loses
+  frames before the end of the videos, e.g. after an inexact seek, is an error
+  too, never a partial result.
+- Without a sync offset, both videos must start at the same timestamp.
+- Not yet with `--subsample`, `--cambi-heatmap` or `--gpu`.
 
 ## Examples
 
@@ -516,8 +578,9 @@ easyvmaf -d distorted.mp4 -r reference.mp4 --sync-window 2 --json
 | `vmaf.hfr` | `true` when the v1 HFR variants were used. |
 | `vmaf.scores` | Mean score of each model over all frames, keyed by score name. |
 | `vmaf.models` | One entry per score: libvmaf model id (the `_hfr_` variant when HFR is on), VMAF version, view (`default`, `neg` or `phone` for v0.6) and score range. |
-| `vmaf.output_file` | Per-frame libvmaf log: same directory and base name as the distorted video, plus `_vmaf.{json,xml,csv}`. |
+| `vmaf.output_file` | Per-frame libvmaf log: same directory and base name as the distorted video, plus `_vmaf.{json,xml,csv}` (`_vmaf_f<first>-<last>.{json,xml,csv}` for a frame range). |
 | `vmaf.cambi_heatmap_path` | Heatmap directory, only with `--cambi-heatmap`. |
+| `vmaf.range` | Only with a frame range: `start_frame`, `frame_count` (`null` without `--frame-count`) and `frames_scored`, which is lower than `frame_count` for the last range of a video. |
 
 `vmaf.scores` is the flat view for quick reads; `vmaf.models` carries the context
 needed to avoid comparing scores of different generations.
@@ -555,13 +618,22 @@ result.pix_fmt   # 'yuv420p10le'
 result.log_path  # 'distorted_vmaf.json'
 ```
 
+```python
+# Frames 9000-17999 of the full calculation, with a manual offset
+v = vmaf('distorted.mp4', 'reference.mp4', start_frame=9000, frame_count=9000)
+v.offset = 1.5
+result = v.getVmaf()
+result.frames_scored  # 9000, or fewer for the last range
+```
+
 The package also exports `VmafResult`, `ModelSpec`, `CATALOG`, `select_models`,
-`validate_model_config`, `UnsupportedModelConfigError` and
-`UnsupportedFramerateError`. All `vmaf()` arguments after the two paths are
+`validate_model_config`, `UnsupportedModelConfigError`,
+`UnsupportedFramerateError`, `validate_range_config` and
+`UnsupportedRangeError`. All `vmaf()` arguments after the two paths are
 keyword-only: `display`, `vmaf_versions`, `views`, `hfr`, `bitdepth`,
 `enc_size`, `enc_bitdepth`, `model_options`, `output_fmt`, `loglevel`,
 `subsample`, `threads`, `print_progress`, `shortest`, `manual_fps`,
-`cambi_heatmap` and `gpu_mode`.
+`cambi_heatmap`, `gpu_mode`, `start_frame` and `frame_count`.
 
 ---
 

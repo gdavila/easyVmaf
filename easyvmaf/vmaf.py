@@ -24,9 +24,10 @@ SOFTWARE.
 from .ffmpeg import FFprobe
 from .ffmpeg import FFmpegQos
 from .models import DISPLAY_RESOLUTION, model_names, select_models
-from .results import VmafResult, read_scores
+from .results import VmafResult, read_frames, read_scores, trim_log
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
+import copy
 from typing import Dict, List, Optional, Tuple
 import logging
 import math
@@ -46,6 +47,19 @@ CAMBI_MIN_ENC_SIDE = 216
 # Sync workers drop the frames up to this long before each offset without
 # filtering them; the margin feeds deinterlacing its neighbouring frames.
 SYNC_PREROLL = 1.0
+# A frame range starts decoding this long before its first frame, so that
+# yadif and fps see the same neighbouring frames as a full calculation.
+RANGE_PREROLL = 1.0
+# Frames measured and discarded on each side of a range: the motion features
+# of a frame depend on the previous and the next frame (one is enough with
+# the catalog models; the second is a margin).
+RANGE_CONTEXT_FRAMES = 2
+# Range bounds sit a quarter frame before a frame: trim rounds them to the
+# nearest timestamp, and half a frame could round either way.
+_RANGE_BOUND_MARGIN = 0.25
+# Containers whose seek lands on the requested frame. MPEG-TS seeks to the
+# next keyframe instead, and raw elementary streams have no timestamps.
+_RANGE_FORMATS = ('mov', 'mp4', 'matroska', 'webm')
 
 # --model-option syntax: no ':', '|', '[', ']', ';' or quotes can reach the filtergraph.
 _MODEL_OPTION_RE = re.compile(r'^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*=[A-Za-z0-9_.\-]+$')
@@ -193,6 +207,50 @@ class UnsupportedFramerateError(ValueError):
     pass
 
 
+class UnsupportedRangeError(ValueError):
+    """
+    Raised when a frame range cannot be measured with the same frames and
+    scores as the full calculation: options not supported with a range, an
+    input whose container cannot seek exactly, or frames missing after a seek.
+    """
+    pass
+
+
+def validate_range_config(start_frame=None, frame_count=None, subsample=1,
+                          cambi_heatmap=False, gpu_mode=False, labels=None):
+    """
+    Check a frame range and the options it is combined with, without probing
+    any input. vmaf() runs it in its constructor; the CLI runs it once.
+
+    Args:
+        start_frame ... gpu_mode: as in vmaf()
+        labels: names shown in error messages for each argument
+
+    Raises:
+        UnsupportedRangeError
+    """
+    if start_frame is None and frame_count is None:
+        return
+    labels = labels or {}
+
+    def label(argument):
+        return labels.get(argument, argument)
+
+    for argument, value, minimum in (('start_frame', start_frame, 0),
+                                     ('frame_count', frame_count, 1)):
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int)
+                                  or value < minimum):
+            raise UnsupportedRangeError(
+                f"{label(argument)} must be an integer of at least {minimum}, not {value!r}")
+    unsupported = [name for name, used in (
+        (label('subsample'), subsample != 1), (label('cambi_heatmap'), cambi_heatmap),
+        (label('gpu_mode'), gpu_mode)) if used]
+    if unsupported:
+        raise UnsupportedRangeError(
+            f"{', '.join(unsupported)}: not supported with a frame range "
+            f"({label('start_frame')}, {label('frame_count')})")
+
+
 class UnsupportedModelConfigError(ValueError):
     """
     Raised when the requested models cannot be computed with the given
@@ -316,7 +374,7 @@ class vmaf():
         - Frame rate conversion (if needed)
     """
 
-    def __init__(self, mainSrc, refSrc, *, display='hd', vmaf_versions=('1',), views=None, hfr='auto', bitdepth='auto', enc_size=None, enc_bitdepth=None, model_options=(), output_fmt='json', loglevel="info", subsample=1, threads=0, print_progress=False, shortest=False, manual_fps=0, cambi_heatmap=False, gpu_mode=False):
+    def __init__(self, mainSrc, refSrc, *, display='hd', vmaf_versions=('1',), views=None, hfr='auto', bitdepth='auto', enc_size=None, enc_bitdepth=None, model_options=(), output_fmt='json', loglevel="info", subsample=1, threads=0, print_progress=False, shortest=False, manual_fps=0, cambi_heatmap=False, gpu_mode=False, start_frame=None, frame_count=None):
         """
         Args (model selection and VMAF v1 parameters):
             display:       'hd' or '4k'; target resolution of the scaling
@@ -332,9 +390,18 @@ class vmaf():
                            distorted pix_fmt
             model_options: 'feature.option=value' overrides for the v1 models
 
+        Args (frame range):
+            start_frame:   first frame to measure, numbered as in the log of the
+                           full calculation; None: 0
+            frame_count:   number of frames to measure; None: to the end.
+                           With either one set, the log holds exactly those
+                           frames of the full calculation, with the same
+                           frame numbers and scores.
+
         Raises:
             UnsupportedModelConfigError: options that the selected models
                 cannot honour (see validate_model_config)
+            UnsupportedRangeError: a range with unsupported options or inputs
             ValueError: unknown display, version or view
         """
         self.display = str(display).lower()
@@ -348,9 +415,14 @@ class vmaf():
         self.gpu_mode = gpu_mode
         self.cambi_heatmap = cambi_heatmap
         self._validateModelConfig(mainSrc)
+        validate_range_config(start_frame, frame_count, subsample, cambi_heatmap, gpu_mode)
+        self.start_frame = start_frame
+        self.frame_count = frame_count
         self.loglevel = loglevel
         self.main = video(mainSrc, self.loglevel)
         self.ref = video(refSrc, self.loglevel)
+        if self._hasRange():
+            self._checkRangeInputs()
         self.subsample = subsample
         self.ffmpegQos = FFmpegQos(
             self.main.videoSrc, self.ref.videoSrc, self.loglevel,
@@ -369,6 +441,18 @@ class vmaf():
 
     def _hasV1(self):
         return '1' in self.vmaf_versions
+
+    def _hasRange(self):
+        return self.start_frame is not None or self.frame_count is not None
+
+    def _checkRangeInputs(self):
+        """Reject inputs whose container cannot seek to the requested frame."""
+        for stream, role in ((self.main, 'distorted'), (self.ref, 'reference')):
+            format_name = stream.formatInfo.get('format_name', '')
+            if not set(format_name.split(',')) & set(_RANGE_FORMATS):
+                raise UnsupportedRangeError(
+                    f"A frame range needs inputs that seek to an exact frame (MP4, MOV, "
+                    f"Matroska or WebM); the {role} video {stream.videoSrc} is {format_name}")
 
     def _validateModelConfig(self, mainSrc):
         self.models = validate_model_config(
@@ -688,17 +772,126 @@ class vmaf():
             """ overrides the value in self.offset"""
             self.offset = value
 
+        trims = self._syncTrims()
+        if trims:
+            main_start, ref_start, duration = trims
+            self.ffmpegQos.ref.setTrimFilter(ref_start, duration)
+            self.ffmpegQos.main.setTrimFilter(main_start, duration)
+
+    def _syncTrims(self):
+        """
+        (main start, ref start, duration) in seconds of the trims that sync
+        the inputs at self.offset, or None when the offset is 0.
+        """
         if self.offset > 0:
             offset = self.offset
-            duration = min(self.main.duration, self.ref.duration-offset)
-            self.ffmpegQos.ref.setTrimFilter(offset, duration)
-            self.ffmpegQos.main.setTrimFilter(0, duration)
-
-        elif self.offset < 0:
+            return 0, offset, min(self.main.duration, self.ref.duration-offset)
+        if self.offset < 0:
             offset = abs(self.offset)
-            duration = min(self.main.duration - offset, self.ref.duration)
-            self.ffmpegQos.main.setTrimFilter(offset, duration)
-            self.ffmpegQos.ref.setTrimFilter(0, duration)
+            return offset, 0, min(self.main.duration - offset, self.ref.duration)
+        return None
+
+    def _rangeBounds(self):
+        """(first, end) frames measured for the range, context included;
+        end is exclusive, None to the end."""
+        start = self.start_frame or 0
+        first = max(0, start - RANGE_CONTEXT_FRAMES)
+        if self.frame_count is None:
+            return first, None
+        return first, start + self.frame_count + RANGE_CONTEXT_FRAMES
+
+    def _applyRange(self):
+        """
+        Apply the sync trims and the frame range, instead of setOffset().
+
+        Precondition: as setOffset(). Each chain is the one of the full
+        calculation with three changes:
+          1. a seek shortly before the range, keeping the original timestamps;
+          2. setpts=PTS-<anchor> instead of setpts=PTS-STARTPTS, the anchor
+             being the first frame the full calculation measures;
+          3. a final trim to the range plus RANGE_CONTEXT_FRAMES on each side.
+        The anchors come from running the chains up to their first measured
+        frame: FFmpeg picks that frame, not a computation that could round
+        differently.
+        """
+        fps = self.output_fps
+        trims = self._syncTrims()
+        chains = (self.ffmpegQos.main, self.ffmpegQos.ref)
+        starts = trims[:2] if trims else (0, 0)
+
+        probe = copy.deepcopy(self.ffmpegQos)
+        for chain, start in zip((probe.main, probe.ref), starts):
+            chain.setSeek(max(0.0, start - RANGE_PREROLL))
+            if trims:
+                chain.setPreTrimFilter(start)
+        anchors = probe.getFirstFrameTimestamps()
+        times = [float(pts * time_base) for pts, time_base in anchors]
+        logger.info("Range anchors: distorted %s s, reference %s s", times[0], times[1])
+        if not trims and abs(times[0] - times[1]) > _RANGE_BOUND_MARGIN / fps:
+            # Unsynced, libvmaf pairs frames by timestamp from the first one;
+            # a range starts each input at its own first frame.
+            raise UnsupportedRangeError(
+                f"The distorted and reference videos start at different timestamps "
+                f"({times[0]:g} s and {times[1]:g} s); a frame range needs them synced: "
+                f"set an offset or a sync window")
+
+        first, end = self._rangeBounds()
+        range_start = max(0.0, (first - _RANGE_BOUND_MARGIN) / fps)
+        range_end = (end - _RANGE_BOUND_MARGIN) / fps if end is not None else None
+        for chain, start, (pts, _), time in zip(chains, starts, anchors, times):
+            chain.setSeek(max(0.0, time + first / fps - RANGE_PREROLL))
+            if trims:
+                chain.setPreTrimFilter(start)
+            chain.setPtsShiftFilter(pts)
+            if trims:
+                chain.setEndTrimFilter(trims[2])
+            chain.setRangeTrimFilter(range_start, range_end)
+
+    def _rangeLogPath(self):
+        """libvmaf log of a range: named after the frames requested, so that
+        ranges of the same distorted video do not overwrite each other."""
+        start = self.start_frame or 0
+        last = start + self.frame_count - 1 if self.frame_count is not None else 'end'
+        ext = self.output_fmt if self.output_fmt in ('xml', 'csv') else 'json'
+        return f'{os.path.splitext(self.main.videoSrc)[0]}_vmaf_f{start}-{last}.{ext}'
+
+    def _trimRangeLog(self, log_path):
+        """
+        Drop the context frames from the range log and number its frames as
+        in the full calculation. Returns the number of frames kept.
+
+        Raises:
+            UnsupportedRangeError: if frames are missing before the end of
+                the inputs (a seek that did not land on the requested frame),
+                or if the range starts after the last frame
+        """
+        first, end = self._rangeBounds()
+        start = self.start_frame or 0
+        # libvmaf writes no log when no frame reaches it.
+        measured = len(read_frames(log_path, self.output_fmt)) if os.path.exists(log_path) else 0
+        if end is not None and first + measured < end:
+            trims = self._syncTrims()
+            if trims:
+                last_time = trims[2]
+            elif self.shortest:
+                last_time = min(self.main.duration, self.ref.duration)
+            else:
+                last_time = max(self.main.duration, self.ref.duration)
+            # Container durations are approximate: two frames of tolerance.
+            if (first + measured + 2) / self.output_fps < last_time:
+                raise UnsupportedRangeError(
+                    f"The range measured {measured} frames from frame {first} instead of "
+                    f"{end - first}, before the end of the inputs ({last_time:g} s): "
+                    f"an input could not be read from the requested frame")
+        kept = first + measured - start
+        if self.frame_count is not None:
+            kept = min(kept, self.frame_count)
+        if kept <= 0:
+            last = f" ({first + measured - 1})" if measured else ""
+            raise UnsupportedRangeError(
+                f"The range starts at frame {start}, after the last measured frame{last}")
+        trim_log(log_path, self.output_fmt, start - first, kept, first)
+        return kept
 
     @staticmethod
     def _cambiEncodingSize(width, height):
@@ -802,7 +995,9 @@ class vmaf():
             3. _normalizeChains()   — deinterlace or convert the frame rate
                                       (--fps), then scale to the display
                                       resolution; records output_fps
-            4. setOffset()          — apply trim filters for temporal sync
+            4. setOffset()          — apply trim filters for temporal sync,
+               or _applyRange()     — with a frame range: seek, sync trims
+                                      anchored to the full calculation, range
             5. _resolveModels()     — HFR choice from output_fps, v1 overrides
             6. ffmpegQos.getVmaf()  — with gpu, inserts hwupload_cuda last
 
@@ -829,8 +1024,11 @@ class vmaf():
         """
         if autoSync:
             self.syncOffset()
-        """Apply Offset filters, if offset =0 nothing happens """
-        self.setOffset()
+        if self._hasRange():
+            self._applyRange()
+        else:
+            """Apply Offset filters, if offset =0 nothing happens """
+            self.setOffset()
 
         if self.cambi_heatmap:
             self.cambi_heatmap_path = self._cambiHeatmapPath(self.main.videoSrc)
@@ -859,12 +1057,22 @@ class vmaf():
         logger.debug("loglevel:   %s", self.loglevel)
         logger.info("subsample:  %s", self.subsample)
         logger.info("output_fmt: %s", self.output_fmt)
+        if self._hasRange():
+            logger.info("Range:      frames %s, %s", self.start_frame or 0,
+                        self.frame_count if self.frame_count is not None else "to the end")
         logger.info("=" * 39)
 
 
-        self.ffmpegQos.getVmaf(self.models, subsample=self.subsample,
+        log_path = None
+        if self._hasRange():
+            log_path = self._rangeLogPath()
+            # A range past the end writes no log: never read one left by an earlier run.
+            if os.path.exists(log_path):
+                os.remove(log_path)
+        self.ffmpegQos.getVmaf(self.models, subsample=self.subsample, log_path=log_path,
                                output_fmt=self.output_fmt, threads=self.threads, print_progress=self.print_progress, shortest=self.shortest, features=self.features, gpu=self.gpu_mode)
         log_path = self.ffmpegQos.vmafpath
+        frames_scored = self._trimRangeLog(log_path) if self._hasRange() else None
         return VmafResult(
             scores=read_scores(log_path, self.output_fmt, model_names(self.models)),
             models=list(self.models),
@@ -874,6 +1082,9 @@ class vmaf():
             log_path=log_path,
             cambi_heatmap_path=self.cambi_heatmap_path,
             offset=self.offset,
+            start_frame=(self.start_frame or 0) if self._hasRange() else None,
+            frame_count=self.frame_count,
+            frames_scored=frames_scored,
         )
 
 

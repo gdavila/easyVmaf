@@ -30,7 +30,8 @@ import subprocess
 import json
 import logging
 import os
-from typing import Sequence
+from fractions import Fraction
+from typing import Sequence, Tuple
 from ffmpeg_progress_yield import FfmpegProgress
 
 logger = logging.getLogger(__name__)
@@ -216,8 +217,13 @@ class FFmpegQos:
         """
         # Decoder threads are an input option: it must precede each -i.
         decoder = ['-threads', '1'] if self._single_thread else []
-        return (decoder + ['-i', self.main.videoSrc] +
-                decoder + ['-i', self.ref.videoSrc] +
+        # A seek keeps the timestamps the inputs have without it, so that the
+        # filters see the same timeline as a calculation from the beginning.
+        timestamps = (['-copyts', '-start_at_zero']
+                      if self.main.extraOptions or self.ref.extraOptions else [])
+        return (timestamps +
+                decoder + self.main.extraOptions + ['-i', self.main.videoSrc] +
+                decoder + self.ref.extraOptions + ['-i', self.ref.videoSrc] +
                 ['-an', '-sn', '-dn'])
 
     def _commitOutputs(self):
@@ -275,6 +281,42 @@ class FFmpegQos:
             # The trims left no frame to compare, e.g. a start past the end.
             raise FFmpegExecutionError(self._cmd, 0, "the PSNR filter compared no frames")
         return float(averages[0].split(":")[1])
+
+    def getFirstFrameTimestamps(self) -> Tuple[Tuple[int, Fraction], Tuple[int, Fraction]]:
+        """
+        Run the current filter chains until each one outputs its first frame.
+
+        Returns:
+            ((pts, time_base), (pts, time_base)) of the first frame of the main
+            and ref chains, in the time base of the end of each chain
+
+        Raises:
+            FFmpegExecutionError: if FFmpeg fails or a chain outputs no frame
+        """
+        firsts = {}
+        filters = list(self.main.filtersList + self.ref.filtersList)
+        outputs = []
+        for name, stream in (('main', self.main), ('ref', self.ref)):
+            filters.append(f'[{stream.lastOutputID}]showinfo@{name}[first_{name}]')
+            outputs += ['-map', f'[first_{name}]', '-frames:v', '1', '-f', 'null', '-']
+        # showinfo reports at the info level.
+        loglevel = self.loglevel if self.loglevel == 'verbose' else 'info'
+        self._cmd = ([FFmpegQos._executable, '-y', '-hide_banner', '-loglevel', loglevel] +
+                     self._commitInputs() + ['-lavfi', ';'.join(filters)] + outputs)
+        logger.debug("FFmpeg first frame cmd: %s", self._cmd)
+        result = subprocess.run(self._cmd, capture_output=True, text=True, shell=False)
+        if result.returncode != 0:
+            detail = (result.stderr.strip().splitlines() or ['no diagnostic output'])[-1]
+            raise FFmpegExecutionError(self._cmd, result.returncode, detail)
+        for name in ('main', 'ref'):
+            prefix = r'\[showinfo@%s @ [^\]]+\] ' % name
+            time_base = re.search(prefix + r'config in time_base: (\d+)/(\d+)', result.stderr)
+            frame = re.search(prefix + r'n:\s*0 pts:\s*(-?\d+)', result.stderr)
+            if not (time_base and frame):
+                raise FFmpegExecutionError(self._cmd, 0, f"the {name} chain output no frame")
+            firsts[name] = (int(frame.group(1)),
+                            Fraction(int(time_base.group(1)), int(time_base.group(2))))
+        return firsts['main'], firsts['ref']
 
     def getVmaf(self, models: Sequence[ModelRun], log_path=None, subsample=1, output_fmt='json', threads=0, print_progress=False, shortest=False, features=None, gpu=False):
         """Run VMAF and return its process, raising FFmpegExecutionError on failure.
@@ -393,8 +435,11 @@ class inputFFmpeg:
     - setDeintFrameFilter()
     - setDeintFieldFilter()
     - setTrimFilter()
+    - setPreTrimFilter(), setEndTrimFilter(), setRangeTrimFilter()
+    - setPtsShiftFilter()
     - setFpsFilter()
     - setFormatFilter()
+    - setSeek() (input option)
     - clearFilters()
     '''
 
@@ -503,6 +548,32 @@ class inputFFmpeg:
         self._setFilter(f'[{inputID}]trim=start={start}[{outputID}]')
         self._updateOutputId(outputID)
 
+    def setEndTrimFilter(self, end):
+        """Drop the frames from end (seconds) on, keeping the timestamps."""
+        inputID, outputID = self._newInOutForFilter()
+        self._setFilter(f'[{inputID}]trim=end={end}[{outputID}]')
+        self._updateOutputId(outputID)
+
+    def setRangeTrimFilter(self, start, end=None):
+        """Keep the frames in [start, end) seconds (to the end without end),
+        then make the first one start at 0."""
+        inputID, outputID = self._newInOutForFilter()
+        bounds = f'start={start}' + (f':end={end}' if end is not None else '')
+        self._setFilter(f'[{inputID}]trim={bounds}, setpts=PTS-STARTPTS[{outputID}]')
+        self._updateOutputId(outputID)
+
+    def setPtsShiftFilter(self, pts):
+        """Subtract pts, in time base units, from every timestamp."""
+        inputID, outputID = self._newInOutForFilter()
+        self._setFilter(f'[{inputID}]setpts=PTS-{int(pts)}[{outputID}]')
+        self._updateOutputId(outputID)
+
+    def setSeek(self, seconds):
+        """Start reading the input at seconds (-ss before -i): FFmpeg decodes
+        from the keyframe before it and drops the frames up to it. FFmpegQos
+        then keeps the original timestamps (-copyts -start_at_zero)."""
+        self.extraOptions = ['-ss', f'{seconds:.6f}']
+
     def setFpsFilter(self, fps):
         inputID, outputID = self._newInOutForFilter()
         fpsFilter = f'[{inputID}]fps=fps={fps}[{outputID}]'
@@ -519,6 +590,7 @@ class inputFFmpeg:
         self.filtersList = []
         self.lastOutputID = f'{str(self.id)}:v'
         self._hwupload_done = False   # reset so hwupload can be re-inserted
+        self.extraOptions = []        # the seek belongs to the chain it was set for
 
 
 def check_ffmpeg() -> dict:

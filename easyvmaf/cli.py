@@ -34,7 +34,7 @@ from signal import signal, SIGINT
 
 from .ffmpeg import FFmpegExecutionError, check_ffmpeg
 from .models import DISPLAY_RESOLUTION, VMAF_VERSIONS
-from .vmaf import vmaf, validate_model_config, UnsupportedFramerateError
+from .vmaf import vmaf, validate_model_config, validate_range_config, UnsupportedFramerateError
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +51,10 @@ _FLAG_LABELS = {
     'enc_bitdepth': '--enc-bitdepth',
     'model_options': '--model-option',
     'gpu_mode': '--gpu',
+    'start_frame': '--start-frame',
+    'frame_count': '--frame-count',
+    'subsample': '--subsample',
+    'cambi_heatmap': '--cambi-heatmap',
 }
 
 # Removed flags, without aliases: rejected with the name of their replacement
@@ -129,6 +133,12 @@ def _build_result(distorted, reference, offset, psnr, vmaf_result=None):
             vmaf_block['output_file'] = vmaf_result.log_path
         if vmaf_result.cambi_heatmap_path:
             vmaf_block['cambi_heatmap_path'] = vmaf_result.cambi_heatmap_path
+        if vmaf_result.start_frame is not None:
+            vmaf_block['range'] = {
+                'start_frame': vmaf_result.start_frame,
+                'frame_count': vmaf_result.frame_count,
+                'frames_scored': vmaf_result.frames_scored,
+            }
         result['vmaf'] = vmaf_block
     return result
 
@@ -142,6 +152,10 @@ def _print_text_result(distorted, offset, psnr, vmaf_result):
     print("=======================================", flush=True)
     print("offset: ", offset, " | psnr: ", psnr)
     print(f"pix_fmt: {vmaf_result.pix_fmt} | HFR: {'on' if vmaf_result.hfr else 'off'}")
+    if vmaf_result.start_frame is not None:
+        last = vmaf_result.start_frame + vmaf_result.frames_scored - 1
+        print(f"range: frames {vmaf_result.start_frame}-{last} "
+              f"({vmaf_result.frames_scored} frames)")
     width = max(len(name) for name in vmaf_result.scores)
     for run in vmaf_result.models:
         low, high = _range(run)
@@ -210,6 +224,18 @@ def get_args():
                       help="Manual sync offset in seconds, instead of a sync search: positive trims the Reference, negative trims the Distorted video. Same sign as the reported sync offset. (default=0).")
     sync.add_argument('--shortest', dest='shortest', action='store_true',
                       help='Stop when the shorter video ends, instead of repeating its last frame until the longer one ends. Use it when the inputs have different durations. (Default: false).')
+
+    frame_range = parser.add_argument_group(
+        'frame range',
+        'Measure only a range of frames, numbered as in the log of the full calculation '
+        '(after sync, deinterlacing and frame rate conversion). Joining the logs of '
+        'consecutive ranges gives the log of the full calculation. MP4, MOV, Matroska and '
+        'WebM inputs only.')
+    frame_range.add_argument('--start-frame', dest='start_frame', type=int, default=None,
+                             help='First frame to measure. (Default: 0).')
+    frame_range.add_argument('--frame-count', dest='frame_count', type=int, default=None,
+                             help='Number of frames to measure; the last range of a video can '
+                                  'have fewer. (Default: to the end).')
 
     models = parser.add_argument_group('models')
     models.add_argument('--display', dest='display', type=str.lower,
@@ -293,11 +319,15 @@ def get_args():
         parser.error('--subsample must be an integer of at least 1')
     if args.threads < 0:
         parser.error('--threads must be an integer greater than or equal to zero')
+    if args.sync_only and (args.start_frame is not None or args.frame_count is not None):
+        parser.error('--start-frame and --frame-count measure VMAF; --sync-only does not')
     try:
         validate_model_config(
             args.display, args.vmaf_versions, args.views, args.hfr, args.bitdepth,
             args.enc_size, args.enc_bitdepth, args.model_options, args.gpu,
             labels=_FLAG_LABELS)
+        validate_range_config(args.start_frame, args.frame_count, args.subsample,
+                              args.cambi_heatmap, args.gpu, labels=_FLAG_LABELS)
     except ValueError as e:
         parser.error(str(e))
     return args
@@ -431,7 +461,8 @@ def main():
                           vmaf_versions=vmaf_versions, views=views, hfr=cmdParser.hfr,
                           bitdepth=cmdParser.bitdepth, enc_size=cmdParser.enc_size,
                           enc_bitdepth=cmdParser.enc_bitdepth, model_options=model_options,
-                          loglevel=loglevel, subsample=n_subsample, output_fmt=output_fmt, threads=threads, print_progress=print_progress, shortest=shortest, manual_fps=fps, cambi_heatmap=cambi_heatmap, gpu_mode=gpu_mode)
+                          loglevel=loglevel, subsample=n_subsample, output_fmt=output_fmt, threads=threads, print_progress=print_progress, shortest=shortest, manual_fps=fps, cambi_heatmap=cambi_heatmap, gpu_mode=gpu_mode,
+                          start_frame=cmdParser.start_frame, frame_count=cmdParser.frame_count)
             if syncWin > 0:
                 offset, psnr = myVmaf.syncOffset(syncWin, ss, reverse)
                 if sync_only:
