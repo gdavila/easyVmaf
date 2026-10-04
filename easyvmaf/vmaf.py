@@ -43,6 +43,9 @@ HFR_MAX_CALIBRATED_FPS = 60
 CAMBI_MIN_ENC_WIDTH = 180
 CAMBI_MIN_ENC_HEIGHT = 150
 CAMBI_MIN_ENC_SIDE = 216
+# Sync workers drop the frames up to this long before each offset without
+# filtering them; the margin feeds deinterlacing its neighbouring frames.
+SYNC_PREROLL = 1.0
 
 # --model-option syntax: no ':', '|', '[', ']', ';' or quotes can reach the filtergraph.
 _MODEL_OPTION_RE = re.compile(r'^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*=[A-Za-z0-9_.\-]+$')
@@ -363,7 +366,6 @@ class vmaf():
         self.pix_fmt = None
         self.output_fps = None
         self.hfr_active = False
-        self._filters_applied = False
 
     def _hasV1(self):
         return '1' in self.vmaf_versions
@@ -384,39 +386,36 @@ class vmaf():
     def _cambiHeatmapPath(mainSrc):
         return os.path.splitext(mainSrc)[0] + '_cambi_heatmap'
 
+    @staticmethod
+    def _chains(qos):
+        """(distorted, reference) filter chains of qos: reverse sync workers
+        open the reference first, so their main chain is the reference."""
+        return (qos.ref, qos.main) if qos.invertedSrc else (qos.main, qos.ref)
+
     def _applyScaleFilters(self, qos):
-        """Apply scale filters to the given FFmpegQos instance."""
-        refResolution = [self.ref.streamInfo['width'],
-                         self.ref.streamInfo['height']]
-        mainResolution = [self.main.streamInfo['width'],
-                          self.main.streamInfo['height']]
-        if refResolution != self.target_resolution:
-            if not qos.invertedSrc:
-                qos.ref.setScaleFilter(
-                    self.target_resolution[0], self.target_resolution[1])
-            if qos.invertedSrc:
-                qos.main.setScaleFilter(
-                    self.target_resolution[0], self.target_resolution[1])
+        """Scale each input that is not at the display resolution."""
+        distorted, reference = self._chains(qos)
+        for stream, chain in ((self.main, distorted), (self.ref, reference)):
+            if [stream.streamInfo['width'], stream.streamInfo['height']] != self.target_resolution:
+                chain.setScaleFilter(self.target_resolution[0], self.target_resolution[1])
 
-        if mainResolution != self.target_resolution:
-            if not qos.invertedSrc:
-                qos.main.setScaleFilter(
-                    self.target_resolution[0], self.target_resolution[1])
-            if qos.invertedSrc:
-                qos.ref.setScaleFilter(
-                    self.target_resolution[0], self.target_resolution[1])
+    def _normalizeChains(self, qos):
+        """
+        Bring both inputs of qos to a common frame rate, then to the display
+        resolution: deinterlacing must see the original fields, which scaling
+        would blend. The sync workers and the final calculation share it, so
+        a sync offset lands on the same frame in both.
 
-    def _autoScale(self):
+        Returns the effective frame rate of the distorted input.
         """
-        scaling MAIN and REF if they dont match with the resolution requiered by the vmaf model (target resolution)
-        """
-        if self._filters_applied:
-            logger.warning(
-                "_autoScale() called without clearFilters() since last application. "
-                "Filter chains may contain duplicates. Call clearFilters() first."
-            )
-        self._applyScaleFilters(self.ffmpegQos)
-        self._filters_applied = True
+        if self.manual_fps == 0:
+            output_fps = self._applyDeinterlaceFilters(qos)
+        else:
+            for chain in self._chains(qos):
+                chain.setFpsFilter(self.manual_fps)
+            output_fps = self.manual_fps
+        self._applyScaleFilters(qos)
+        return output_fps
 
     def _measurementPixFmt(self):
         """
@@ -457,25 +456,25 @@ class vmaf():
             if stream.streamInfo.get('pix_fmt') != self.pix_fmt:
                 chain.setFormatFilter(self.pix_fmt)
 
-    def _deinterlaceFrame(self, factor, stream):
-        """Returns the fps forced on the stream, or None if yadif sets its rate."""
+    def _deinterlaceFrame(self, factor, chain):
+        """Returns the fps forced on the chain, or None if yadif sets its rate."""
         ref_fps = getFrameRate(self.ref.streamInfo['r_frame_rate'])
         main_fps = getFrameRate(self.main.streamInfo['r_frame_rate'])
 
-        stream.setDeintFrameFilter()
+        chain.setDeintFrameFilter()
         if round(ref_fps, 2) != round(factor*main_fps, 2):
-            stream.setFpsFilter(round(main_fps, 5))
+            chain.setFpsFilter(round(main_fps, 5))
             return round(main_fps, 5)
         return None
 
-    def _deinterlaceField(self, factor, stream):
-        """Returns the fps forced on the stream, or None if yadif sets its rate."""
+    def _deinterlaceField(self, factor, chain):
+        """Returns the fps forced on the chain, or None if yadif sets its rate."""
         ref_fps = getFrameRate(self.ref.streamInfo['r_frame_rate'])
         main_fps = getFrameRate(self.main.streamInfo['r_frame_rate'])
 
-        stream.setDeintFieldFilter()
+        chain.setDeintFieldFilter()
         if round(ref_fps, 2) != round(factor*main_fps, 2):
-            stream.setFpsFilter(round(main_fps, 5))
+            chain.setFpsFilter(round(main_fps, 5))
             return round(main_fps, 5)
         return None
 
@@ -487,20 +486,21 @@ class vmaf():
         """
         ref_fps = getFrameRate(self.ref.streamInfo['r_frame_rate'])
         main_fps = getFrameRate(self.main.streamInfo['r_frame_rate'])
+        distorted, reference = self._chains(qos)
 
         if self.ref.interlaced == self.main.interlaced:
             """ Not Deinterlace would be required. So this functions normalizes the fps between REF and MAIN
             """
             if round(ref_fps) < round(main_fps):
                 logger.warning("Frame rate conversion can produce bad vmaf scores")
-                qos.main.setFpsFilter(round(ref_fps, 5))
+                distorted.setFpsFilter(round(ref_fps, 5))
                 return round(ref_fps, 5)
             elif round(ref_fps) > round(main_fps):
                 logger.warning("Frame rate conversion can produce bad vmaf scores")
-                qos.ref.setFpsFilter(round(main_fps, 5))
+                reference.setFpsFilter(round(main_fps, 5))
             else:
-                qos.main.setFpsFilter(round(main_fps, 5))
-                qos.ref.setFpsFilter(round(ref_fps, 5))
+                distorted.setFpsFilter(round(main_fps, 5))
+                reference.setFpsFilter(round(ref_fps, 5))
             return round(main_fps, 5)
 
         elif self.ref.interlaced and not self.main.interlaced:
@@ -508,22 +508,13 @@ class vmaf():
             REF interlaced  | MAIN progressive: MAIN keeps its frame rate
             """
             if round(ref_fps) == round(main_fps*2):
-                if not qos.invertedSrc:
-                    self._deinterlaceFrame(2, qos.ref)
-                else:
-                    self._deinterlaceFrame(2, qos.main)
+                self._deinterlaceFrame(2, reference)
 
             elif round(ref_fps) == round(main_fps):
-                if not qos.invertedSrc:
-                    self._deinterlaceFrame(1, qos.ref)
-                else:
-                    self._deinterlaceFrame(1, qos.main)
+                self._deinterlaceFrame(1, reference)
 
             elif round(ref_fps) == round(main_fps/2):
-                if not qos.invertedSrc:
-                    self._deinterlaceField(0.5, qos.ref)
-                else:
-                    self._deinterlaceField(0.5, qos.main)
+                self._deinterlaceField(0.5, reference)
 
             else:
                 raise UnsupportedFramerateError(
@@ -541,26 +532,17 @@ class vmaf():
             """
             if round(ref_fps) == round(main_fps*2):
                 # REF=50p, MAIN=25i: one MAIN frame per field matches REF's rate.
-                if not qos.invertedSrc:
-                    forced = self._deinterlaceField(2, qos.main)
-                else:
-                    forced = self._deinterlaceField(2, qos.ref)
+                forced = self._deinterlaceField(2, distorted)
                 return forced or round(main_fps*2, 5)
 
             elif round(ref_fps) == round(main_fps):
-                if not qos.invertedSrc:
-                    forced = self._deinterlaceFrame(1, qos.main)
-                else:
-                    forced = self._deinterlaceFrame(1, qos.ref)
+                forced = self._deinterlaceFrame(1, distorted)
                 return forced or round(main_fps, 5)
 
             elif round(ref_fps) == round(main_fps/2):
                 # REF=25p, MAIN=25i reported at its field rate (50): one MAIN
                 # frame per frame, the mirror of REF interlaced at 2x MAIN.
-                if not qos.invertedSrc:
-                    forced = self._deinterlaceFrame(0.5, qos.main)
-                else:
-                    forced = self._deinterlaceFrame(0.5, qos.ref)
+                forced = self._deinterlaceFrame(0.5, distorted)
                 return forced or round(main_fps/2, 5)
 
             else:
@@ -570,19 +552,6 @@ class vmaf():
                     f"main={round(main_fps, 5)}fps (interlaced={self.main.interlaced}). "
                     f"Consider using the --fps flag to force a frame rate manually."
                 )
-
-    def _autoDeinterlace(self):
-        """
-        This functions normalizes the framerate between MAIN and REF video streams (if needed)
-        and records the effective frame rate of MAIN in self.output_fps.
-        """
-        self.output_fps = self._applyDeinterlaceFilters(self.ffmpegQos)
-
-    def _forceFps(self):
-        logger.warning("Forcing frame rate conversion manually")
-        self.ffmpegQos.main.setFpsFilter(self.manual_fps)
-        self.ffmpegQos.ref.setFpsFilter(self.manual_fps)
-        self.output_fps = self.manual_fps
 
     def _computePsnrAtOffset(self, offset, reverse):
         """
@@ -608,14 +577,16 @@ class vmaf():
         # FFmpeg threads on top of that oversubscribe them.
         qos._single_thread = True
 
+        # The ref slot holds the searched input. Trim it after the same filters
+        # as setOffset() in the final calculation, so the offset selects the
+        # same frame or field; the pre-trim only skips filtering what comes
+        # well before it.
+        preroll_start = offset - SYNC_PREROLL
+        if preroll_start > 0:
+            qos.ref.setPreTrimFilter(preroll_start)
+        self._normalizeChains(qos)
         qos.ref.setTrimFilter(offset, 0.5)
         qos.main.setTrimFilter(0, 0.5)
-        self._applyScaleFilters(qos)
-        if self.manual_fps == 0:
-            self._applyDeinterlaceFilters(qos)
-        else:
-            qos.main.setFpsFilter(self.manual_fps)
-            qos.ref.setFpsFilter(self.manual_fps)
 
         psnr_value = qos.getPsnr()
         return (offset, psnr_value)
@@ -702,8 +673,8 @@ class vmaf():
         """
         Apply trim filters to synchronize main and distorted streams.
 
-        Precondition: _autoScale() and _autoDeinterlace() (or _forceFps())
-        must have been applied to self.ffmpegQos before calling this method.
+        Precondition: _normalizeChains() must have been applied to
+        self.ffmpegQos before calling this method.
         Trim filters are appended to the existing filter chain — they must
         come last in the sequence.
 
@@ -828,20 +799,17 @@ class vmaf():
             1. clearFilters()       — reset all filter chains on ffmpegQos
             2. _applyPixelFormat()  — format=<measurement pix_fmt> as the first
                                       filter of each chain that needs it (CPU only)
-            3. _autoScale()         — scale both streams to the display resolution
-            4. _autoDeinterlace()   — normalize frame rate and deinterlace if needed
-               OR _forceFps()       — if manual_fps is set; both record output_fps
-            5. setOffset()          — apply trim filters for temporal sync
-            6. _resolveModels()     — HFR choice from output_fps, v1 overrides
-            7. ffmpegQos.getVmaf()  — with gpu, inserts hwupload_cuda last
+            3. _normalizeChains()   — deinterlace or convert the frame rate
+                                      (--fps), then scale to the display
+                                      resolution; records output_fps
+            4. setOffset()          — apply trim filters for temporal sync
+            5. _resolveModels()     — HFR choice from output_fps, v1 overrides
+            6. ffmpegQos.getVmaf()  — with gpu, inserts hwupload_cuda last
 
-        Note: syncOffset() (when autoSync=True) is called between steps 4 and 5.
-        syncOffset() uses independent FFmpegQos instances per worker and does
-        not mutate self.ffmpegQos filter chains, so earlier filters remain
-        intact when setOffset() runs.
-
-        Calling _autoScale() or _autoDeinterlace() without a preceding
-        clearFilters() will stack duplicate filters — always clear first.
+        Note: syncOffset() (when autoSync=True) is called between steps 3 and 4.
+        Its workers build their own FFmpegQos with the same _normalizeChains()
+        and trim after it, like setOffset(), so the offset they choose selects
+        the same frame here; self.ffmpegQos filter chains are left intact.
 
         Returns:
             VmafResult with the mean score of every model
@@ -849,17 +817,12 @@ class vmaf():
         self.ffmpegQos.clearFilters()
         self.ffmpegQos.main.clearFilters()
         self.ffmpegQos.ref.clearFilters()
-        self._filters_applied = False
 
         self._applyPixelFormat()
 
-        """AutoScale according to vmaf model and deinterlace the source if needed """
-        self._autoScale()
-
-        if self.manual_fps == 0:
-            self._autoDeinterlace()
-        else:
-            self._forceFps()
+        if self.manual_fps:
+            logger.warning("Forcing frame rate conversion manually")
+        self.output_fps = self._normalizeChains(self.ffmpegQos)
 
         """Lookup for sync between Main and reference. Default: dissable
            It is suggested to run syncOffset manually before getVmaf()

@@ -82,6 +82,22 @@ def test_sync_window_past_the_end_is_rejected_before_ffmpeg(fake_ffmpeg, reverse
     assert fake_ffmpeg.commands == []
 
 
+def test_reverse_workers_convert_the_reference_frame_rate(fake_ffmpeg, monkeypatch):
+    """Reverse workers swap the inputs: the fps filter meant for a 20p reference landed
+    on the 10p distorted, and each distorted frame was compared with two references."""
+    monkeypatch.setattr(ffmpeg.FFprobe, "getStreamInfo", lambda self: dict(
+        STREAM, width=1920, height=1080,
+        r_frame_rate="20/1" if "reference" in self.videoSrc else "10/1"))
+    calculation = vmaf("distorted.mkv", "reference.mkv", vmaf_versions=("0.6",), threads=1)
+
+    calculation.syncOffset(0.2, reverse=True)
+
+    for cmd in fake_ffmpeg.commands:
+        graph = cmd[cmd.index("-lavfi") + 1]
+        # Reverse workers open the reference as input 0.
+        assert re.findall(r"\[(?:(\d):v|input(\d)_\d+)\]fps=", graph) == [("0", "")]
+
+
 @pytest.mark.parametrize("manual_fps", [0, 10])
 def test_interlace_is_probed_once_per_input_before_workers(fake_ffmpeg, manual_fps):
     calculation = vmaf("distorted.mkv", "reference.mkv", threads=4, manual_fps=manual_fps)
@@ -124,7 +140,7 @@ def test_gpu_vmaf_uploads_after_cpu_filters_and_trims_distorted_on_reverse(fake_
     assert qos.vmafpath == "distorted_vmaf.json"
     upload = ["format", "setparams", "hwupload_cuda"]
     for chain, steps, trim in (
-            (qos.main, ["scale", "fps", "trim"] + upload, "trim=start=0.2:duration=1.0"),
+            (qos.main, ["fps", "scale", "trim"] + upload, "trim=start=0.2:duration=1.0"),
             (qos.ref, ["fps", "trim"] + upload, "trim=start=0:duration=1.0")):
         assert [re.match(r"\[[^]]+\](\w+)", f).group(1) for f in chain.filtersList] == steps
         assert trim in chain.filtersList[steps.index("trim")]
@@ -181,6 +197,16 @@ def test_cambi_uses_the_distorted_encoding_parameters(final_vmaf):
     for run in result.models:
         assert dict(run.options).items() >= {"cambi.enc_width": "1280", "cambi.enc_height": "720",
                                              "cambi.enc_bitdepth": "8"}.items()
+
+
+def test_interlaced_input_is_deinterlaced_before_scaling(final_vmaf):
+    """Scaling an interlaced picture blends its two fields before yadif separates them."""
+    calculation, _ = final_vmaf(stream(720, 576, interlaced=True), stream(fps="50/1"),
+                                vmaf_versions=("0.6",))
+
+    steps = [re.match(r"\[[^]]+\](\w+)", f).group(1)
+             for f in calculation.ffmpegQos.main.filtersList]
+    assert steps.index("yadif") < steps.index("scale")
 
 
 @pytest.mark.parametrize("distorted, reference, hfr", [

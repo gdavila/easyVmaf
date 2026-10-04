@@ -188,6 +188,25 @@ def test_interlaced_distorted_scores_each_reference_frame_once(encode, tmp_path,
     assert calculation.output_fps == reference_fps
 
 
+def test_reverse_sync_is_field_accurate_on_interlaced_distorted(encode, tmp_path):
+    """Reverse sync trimmed the interlaced distorted video before deinterlacing:
+    the right offset tied with the one a field earlier, which won, and the final
+    calculation compared every picture with the previous field."""
+    source, reference, distorted = (tmp_path / name for name in ("src.mkv", "ref.mkv", "dist.ts"))
+    encode("-f", "lavfi", "-i", "testsrc2=s=320x240:r=20:d=3", "-pix_fmt", "yuv420p",
+           "-c:v", "ffv1", source)
+    # The broadcast recording (10i, one field per source frame) started 8 fields
+    # (0.4 s) before the 20p reference clip.
+    encode("-ss", "0.4", "-i", source, "-c:v", "ffv1", reference)
+    encode("-i", source, "-vf", "tinterlace=mode=interleave_top,setfield=tff",
+           "-c:v", "mpeg2video", "-q:v", "2", "-flags", "+ilme+ildct", distorted)
+
+    offset, _ = vmaf(str(distorted), str(reference), vmaf_versions=("0.6",),
+                     threads=2).syncOffset(0.5, start=0.1, reverse=True)
+
+    assert offset == pytest.approx(-0.4)
+
+
 def test_sync_worker_stops_decoding_after_trim(encode, tmp_path, monkeypatch):
     # With -map 0:v/1:v every 300-frame input was decoded to EOF, and audio
     # was decoded without -an. Frame counts are deterministic, not timing.

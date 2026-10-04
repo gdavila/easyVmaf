@@ -496,6 +496,14 @@ class inputFFmpeg:
         self._updateOutputId(outputID)
         return
 
+    def setPreTrimFilter(self, start):
+        """Drop the frames before start, keeping their timestamps: the filters
+        that follow see the original timeline, and a later setTrimFilter()
+        cuts at the same instant as without this filter."""
+        inputID, outputID = self._newInOutForFilter()
+        self._setFilter(f'[{inputID}]trim=start={start}[{outputID}]')
+        self._updateOutputId(outputID)
+
     def setFpsFilter(self, fps):
         inputID, outputID = self._newInOutForFilter()
         fpsFilter = f'[{inputID}]fps=fps={fps}[{outputID}]'

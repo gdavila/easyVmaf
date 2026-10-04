@@ -168,9 +168,11 @@ def test_cleanup_timeout_preserves_interruption(monkeypatch, caplog):
 
 # Captured from easyVmaf 3.x before layer 1 moved to ModelRun. The v0.6 model=
 # string, the filter order and the libvmaf options must not change: a different
-# command means different v0.6 scores or log paths for existing users.
+# command means different v0.6 scores or log paths for existing users. Only
+# change (fps before scale, so deinterlacing runs before scaling) was authorized
+# in 4.0: fps only picks frames, so the frames and the v0.6 scores are the same.
 GOLDEN_CHAINS = {
-    "HD": (r"[0:v]scale=1920:1080:flags=bicubic[input0_0];[input0_0]fps=fps=25.0[input0_1];"
+    "HD": (r"[0:v]fps=fps=25.0[input0_0];[input0_0]scale=1920:1080:flags=bicubic[input0_1];"
            r"[input0_1]trim=start=0:duration=10.0, setpts=PTS-STARTPTS[input0_2];"
            r"[1:v]fps=fps=25.0[input1_0];"
            r"[input1_0]trim=start=1.5:duration=10.0, setpts=PTS-STARTPTS[input1_1];"
@@ -178,9 +180,9 @@ GOLDEN_CHAINS = {
            r"version=vmaf_v0.6.1\\:name=vmaf_hd|version=vmaf_v0.6.1neg\\:name=vmaf_hd_neg|"
            r"version=vmaf_v0.6.1\\:name=vmaf_hd_phone\\:enable_transform=true"
            r":n_subsample=1:log_path=dist_vmaf.json:n_threads=4:shortest=0:feature=name=psnr"),
-    "4K": (r"[0:v]scale=3840:2160:flags=bicubic[input0_0];[input0_0]fps=fps=25.0[input0_1];"
+    "4K": (r"[0:v]fps=fps=25.0[input0_0];[input0_0]scale=3840:2160:flags=bicubic[input0_1];"
            r"[input0_1]trim=start=0:duration=10.0, setpts=PTS-STARTPTS[input0_2];"
-           r"[1:v]scale=3840:2160:flags=bicubic[input1_0];[input1_0]fps=fps=25.0[input1_1];"
+           r"[1:v]fps=fps=25.0[input1_0];[input1_0]scale=3840:2160:flags=bicubic[input1_1];"
            r"[input1_1]trim=start=1.5:duration=10.0, setpts=PTS-STARTPTS[input1_2];"
            r"[input0_2][input1_2]libvmaf=log_fmt=json:model=version=vmaf_4k_v0.6.1\\:name=vmaf_4k"
            r":n_subsample=1:log_path=dist_vmaf.json:n_threads=4:shortest=0:feature=name=psnr"),

@@ -102,6 +102,27 @@ for the one-line migration of each change.
   distorted video is deinterlaced to one frame per frame. Since `d94297e`
   (2026-03) it was deinterlaced per field, pairing half of its pictures with
   the wrong reference instant (about -25 VMAF in the clip measured).
+- Interlaced inputs are deinterlaced before scaling. Scaling first blended the
+  two fields of an SD or 720i input (or a 1080i input with `--display 4k`)
+  before `yadif` separated them: a 720i29.97 distorted video against its
+  720p59.94 reference scored 56.6 (v0.6) / 54.3 (v1) instead of 78.7 / 80.5.
+  The v0.6 FFmpeg command now puts `fps` before `scale` for every input; for
+  progressive inputs the frames and scores are identical.
+- `--reverse` sync is field accurate on interlaced inputs. The sync workers
+  trimmed the searched video before deinterlacing, unlike the final
+  calculation: the right offset tied with the one a field earlier, which won,
+  and every picture was then compared with the previous field (about 40 VMAF
+  instead of 84 in the clip measured). Workers now build their chains like the
+  final calculation and trim after them; a pre-trim that keeps timestamps
+  avoids filtering the frames well before each offset.
+- `--reverse` sync converts the frame rate of the right input when both inputs
+  are progressive (or both interlaced) at different rates (50p reference vs
+  25p distorted). The `fps` filter for the reference landed on the distorted
+  video, so half of the comparisons were 20 ms off: same offset in the clip
+  measured, but a sync PSNR of 30.4 instead of 41.7.
+- A sync window past the end of the searched video (the reference, or the
+  distorted video with `--reverse`) is rejected with a clear error instead of
+  an `IndexError` traceback.
 
 ### Migration verification
 

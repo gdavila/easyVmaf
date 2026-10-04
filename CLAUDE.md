@@ -198,10 +198,10 @@ Understand this before touching easyvmaf/vmaf.py or easyvmaf/ffmpeg.py.
 
 | Data               | Method            | Consumers in vmaf.py                          | Cost  |
 |--------------------|-------------------|-----------------------------------------------|-------|
-| `streamInfo`       | `getStreamInfo()` | `_autoScale` (width, height)                  | low   |
+| `streamInfo`       | `getStreamInfo()` | `_applyScaleFilters` (width, height)          | low   |
 |                    |                   | `_applyPixelFormat` / `_measurementPixFmt`    |       |
 |                    |                   |   (pix_fmt of both inputs)                    |       |
-|                    |                   | `_autoDeinterlace` (r_frame_rate)             |       |
+|                    |                   | `_applyDeinterlaceFilters` (r_frame_rate)     |       |
 |                    |                   | `_deinterlaceFrame/Field` (r_frame_rate)      |       |
 |                    |                   | `syncOffset` (r_frame_rate, width, height)    |       |
 |                    |                   | `_resolveModels` (distorted width, height,    |       |
@@ -211,7 +211,8 @@ Understand this before touching easyvmaf/vmaf.py or easyvmaf/ffmpeg.py.
 |                    |                   | `getVmaf` (r_frame_rate, width, height logs)  |       |
 |                    |                   | `getDuration` (primary: duration, start_time) |       |
 | `formatInfo`       | `getFormatInfo()` | `getDuration` fallback only (KeyError path)   | low   |
-| `framesInfo` /     | `getFramesInfo()` | `_autoDeinterlace` and sync workers, via      | HIGH  |
+| `framesInfo` /     | `getFramesInfo()` | `_applyDeinterlaceFilters` (final calculation | HIGH  |
+|                    |                   |   and sync workers), via                      |       |
 | `interlaced`       |                   |   `self.interlaced` only                      |       |
 |                    |                   | `syncOffset` probes once per input before     |       |
 |                    |                   |   starting its worker pool                    |       |
@@ -237,7 +238,17 @@ would run its own frames probe.
 - Runs PSNR at each frame offset in the sync window **in parallel** via `ThreadPoolExecutor`
 - Each worker creates its own `FFmpegQos` instance with `gpu_mode=False` — sync is always CPU-only even when `--gpu` is set
 - Each worker sets the private `FFmpegQos._single_thread` switch: FFmpeg runs single-threaded (`-threads 1` before each `-i`, global `-filter_complex_threads 1`), since the pool already runs one process per CPU. The final VMAF command keeps FFmpeg's default threading
-- Workers apply scale and deinterlace/fps filters only; no pixel format normalization
+- Workers build their chains with the same `_normalizeChains()` as the final
+  calculation (deinterlace or `--fps`, then scale; no pixel format normalization)
+  and trim **after** it, like `setOffset()`: the offset a worker scores selects the
+  same frame or field in the final calculation. Trimming before deinterlacing made
+  offsets one field apart tie on interlaced inputs
+- Before filtering, the searched input (ref slot) gets `setPreTrimFilter(offset -
+  SYNC_PREROLL)`: a `trim` that keeps timestamps, so the frames well before the
+  offset are only decoded, not deinterlaced or scaled, and `fps`/`yadif` see the
+  original timeline
+- Filters are placed by role, not by slot: `_chains(qos)` returns the
+  (distorted, reference) chains, swapped in reverse workers (`invertedSrc=True`)
 - Reverse-search workers construct their own QoS instances with swapped paths and `invertedSrc=True`
 - The shared `ffmpegQos` retains main=distorted, ref=reference and its `invertedSrc` state after every search; no restoration swap is needed
 - Reverse search returns a negative offset so the final calculation trims distorted and names its output after distorted
@@ -248,14 +259,16 @@ would run its own frames probe.
 2. `_applyPixelFormat()` — resolve the measurement `pix_fmt` and add
    `format=<pix_fmt>` as the **first** filter of each chain whose native format
    differs (CPU only; in GPU mode `pix_fmt = 'yuv420p'` and no filter is added)
-3. `_autoScale()` — scale to `DISPLAY_RESOLUTION[display]` (CPU `scale` filter; warns if called without preceding `clearFilters()`)
-4. `_autoDeinterlace()` OR `_forceFps()` — normalize frame rate (mutually exclusive);
-   both record the effective distorted frame rate in `self.output_fps`
-5. `setOffset()` — apply trim filters for sync
-6. `_resolveModels()` — HFR decision from `output_fps`, `select_models()`, v1 overrides
-7. `ffmpegQos.getVmaf(models, ...)` — if `gpu=True`, auto-inserts `hwupload_cuda` on both chains as the last CPU→GPU step before `libvmaf_cuda`
+3. `_normalizeChains()` — `_applyDeinterlaceFilters()` (yadif and/or fps), or the
+   `--fps` filter on both chains, **then** `_applyScaleFilters()` to
+   `DISPLAY_RESOLUTION[display]`; records the effective distorted frame rate in
+   `self.output_fps`. Deinterlacing goes before scaling: `scale` treats the picture
+   as progressive and would blend the two fields (−22 VMAF on a 720i input)
+4. `setOffset()` — apply trim filters for sync
+5. `_resolveModels()` — HFR decision from `output_fps`, `select_models()`, v1 overrides
+6. `ffmpegQos.getVmaf(models, ...)` — if `gpu=True`, auto-inserts `hwupload_cuda` on both chains as the last CPU→GPU step before `libvmaf_cuda`
 
-`syncOffset()` (with `autoSync=True`) runs between steps 4 and 5.
+`syncOffset()` (with `autoSync=True`) runs between steps 3 and 4.
 
 The format conversion goes first on purpose: with `scale` in the chain FFmpeg
 negotiates the output format into the scaler, but without scaling and with `yadif`
@@ -431,7 +444,12 @@ distorted reported at 2x (`_deinterlaceFrame(0.5, main)`), pinned by
 - The v0.6 FFmpeg command: `test_v06_vmaf_command_is_unchanged` in
   `tests/test_ffmpeg.py` (`GOLDEN_CHAINS`, `GOLDEN_CAMBI`) pins the full command for
   v0.6 HD/4K with and without CAMBI heatmap. Never edit its expected strings to
-  make a change pass
+  make a change pass. Its only authorized change (4.0) put `fps` before `scale`,
+  so deinterlacing runs before scaling; `fps` only picks frames, so the frames
+  and the v0.6 scores are identical
+- Sync workers and the final calculation build their chains with the same
+  `_normalizeChains()` and trim after it; a different order lets the sync offset
+  select a different frame or field than the final calculation
 - The v0.6 score names (`vmaf_hd`, `vmaf_hd_neg`, `vmaf_hd_phone`, `vmaf_4k`) and
   the `vmaf_v1_` prefix of v1 score names
 - JSON schema 2 field names (`schema_version`, `vmaf.scores`, `vmaf.models`, ...);
