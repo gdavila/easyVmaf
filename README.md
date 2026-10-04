@@ -313,25 +313,42 @@ variants and logs a warning, since that is outside their calibration.
 
 ## Interlaced sources
 
-easyVmaf deinterlaces with `yadif` when only one of the inputs is interlaced:
-one frame per frame when both end at the same rate (1080i25 vs 25p), one frame
-per field when the progressive input runs at the field rate (1080i25 vs 50p, in
-either direction). Deinterlacing runs before scaling, so an SD or 720i input is
-not blended across fields, and the sync search trims at the same point as the
-final calculation, so it can align on a single field. These combinations are
-**not supported** yet and give misleading scores:
+easyVmaf detects interlacing by sampling the first 5 seconds of each input and
+deinterlaces with `yadif` when only one of them is interlaced. Deinterlacing
+runs before scaling, so the two fields of an SD or 720i picture are never
+blended, and the sync search aligns on single fields.
 
-- **Both inputs interlaced** (1080i25 vs 1080i25): nothing is deinterlaced, so
-  VMAF scores woven frames, with both fields combined, not what a viewer sees.
-- **An interlaced input that ffprobe reports at its field rate** (1080i25
-  reported as 50 fps, typical of H.264 PAFF) **against a progressive input at
-  that field rate** (50p), in either direction. easyVmaf decides from
-  `r_frame_rate` and takes the interlaced input for a 50 frames/s one, so half
-  of the pictures are paired with the wrong instant (interlaced reference) or
-  only the first field is scored (interlaced distorted).
+In the table, `1080i25` is an interlaced video with 25 frames (50 fields) per
+second; the 29.97/59.94 family behaves the same (`1080i29.97` vs `59.94p`).
+`1080i25*` is the same video when ffprobe reports it at its field rate
+(`r_frame_rate` of 50, typical of H.264 PAFF broadcast streams).
 
-Use `--fps` to force a common frame rate in these cases, knowing that it does
-not deinterlace.
+| Reference | Distorted | Typical case | What easyVmaf does | Compared at | Supported |
+|---|---|---|---|---|---|
+| `1080i25` | `25p` | Broadcast source, OTT rendition at frame rate | Reference: one frame per frame (`yadif=0`) | 25 fps | Yes |
+| `1080i25` | `50p` | Broadcast source, OTT rendition at field rate | Reference: one frame per field (`yadif=1`) | 50 fps (HFR models with v1) | Yes |
+| `25p` | `1080i25` | Progressive master, interlaced broadcast | Distorted: one frame per frame | 25 fps | Yes |
+| `50p` | `1080i25` | 50p master, interlaced broadcast | Distorted: one frame per field | 50 fps (HFR models with v1) | Yes |
+| `1080i25*` | `25p` | PAFF source, OTT rendition at frame rate | Reference: one frame per frame | 25 fps | Yes |
+| `25p` | `1080i25*` | Progressive master, PAFF broadcast | Distorted: one frame per frame | 25 fps | Yes |
+| `1080i25` | `1080i25` | Interlaced transcode | Nothing is deinterlaced | 25 fps, both fields woven | **No** |
+| `1080i25*` | `50p` | PAFF source, OTT rendition at field rate | Reference: one frame per frame, instead of per field | Reference at 25 vs distorted at 50: half of the pairs are 20 ms off | **No** |
+| `50p` | `1080i25*` | 50p master, PAFF broadcast | Distorted: one frame per frame, instead of per field | 25 fps, only the first field (HFR models picked as if 50 fps) | **No** |
+
+Any other frame rate pair with an interlaced input (for example `1080i25` vs
+`30p`) stops with an error that suggests `--fps`. `--fps` forces a common frame
+rate on both inputs but does not deinterlace, so it is a workaround, not a fix,
+for the unsupported rows.
+
+To check whether an interlaced file is reported at its field rate:
+
+```bash
+ffprobe -v error -select_streams v:0 \
+  -show_entries stream=r_frame_rate,avg_frame_rate,field_order -of default=nw=1 file.ts
+```
+
+An interlaced `field_order` (`tt`, `bb`, `tb`, `bt`) with `r_frame_rate` twice
+`avg_frame_rate` (for example `50/1` and `25/1`) is a `1080i25*` input.
 
 ## Examples
 
