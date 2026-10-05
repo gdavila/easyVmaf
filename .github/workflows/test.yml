@@ -145,9 +145,14 @@ jobs:
         with:
           enable-cache: false
 
+      # The runner image ships a Homebrew index from the day it was built and
+      # does not auto-update it: without `brew update`, `brew install ffmpeg`
+      # installed libvmaf 3.2.0, which cannot compute VMAF v1.
       - name: Install FFmpeg
         run: |
+          brew update
           brew install ffmpeg
+          brew list --versions ffmpeg libvmaf
           ffmpeg -version | head -1
 
       - name: Install

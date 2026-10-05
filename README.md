@@ -137,9 +137,13 @@ easyVmaf needs FFmpeg >= 8.1 with libvmaf >= 3.2.1 and its built-in models (see
 **macOS.** Homebrew's FFmpeg is built against libvmaf 3.2.1:
 
 ```bash
-brew install ffmpeg
+brew update && brew install ffmpeg
 # already installed: brew update && brew upgrade libvmaf ffmpeg
 ```
+
+`brew update` matters when Homebrew does not update itself, e.g. with
+`HOMEBREW_NO_AUTO_UPDATE` set: an old Homebrew index installs libvmaf 3.2.0,
+which cannot compute VMAF v1.
 
 **Linux.** Distribution packages are older than 8.1 (Ubuntu 24.04 ships FFmpeg
 6.1). Use a static build from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases),
