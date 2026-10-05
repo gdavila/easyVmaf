@@ -258,19 +258,15 @@ class FFmpegQos:
             parts.append('\\\\:'.join(tokens))
         return '|'.join(parts)
 
-    def getPsnr(self, stats_file=False):
+    def getPsnr(self):
         """
         It adds PSNR filter to lavfi chain and run the ffmpeg cmd.
-        The output is returned and saved as stats_file_psnr.log
+        Returns the average PSNR that FFmpeg reports; no file is written.
         """
         main = self.main.lastOutputID
         ref = self.ref.lastOutputID
-        if stats_file == True:
-            stats_file = os.path.splitext(self.main.videoSrc)[0] + '_psnr.log'
-        else:
-            stats_file = 'stats_file_psnr.log'
 
-        self.psnrFilter = [f'[{main}][{ref}]psnr=stats_file={self._escape_filter_value(stats_file)}']
+        self.psnrFilter = [f'[{main}][{ref}]psnr']
         self._commit()
 
         logger.debug("FFmpeg PSNR cmd: %s", self._cmd)

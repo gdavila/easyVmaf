@@ -362,6 +362,8 @@ def test_sync_worker_stops_decoding_after_trim(encode, tmp_path, monkeypatch):
     qos.ref.setTrimFilter(0.2, 0.5)
     qos.main.setTrimFilter(0, 0.5)
     qos.getPsnr()
+    # Sync runs from the user's directory, which may not be writable.
+    assert list(tmp_path.iterdir()) == [clip]
 
     decoded = re.findall(r"Input stream #(\d+):\d+ \((\w+)\): \d+ packets read .*?; "
                          r"(\d+) frames decoded", captured[0])
