@@ -93,6 +93,7 @@ def batch(tmp_path, monkeypatch, ffmpeg_ok):
     (["-model", "4k"], 2, "--display"),  # 4.0 betas accepted it as an alias
     (["-reverse"], 2, "--sync-reverse"),  # argparse alone would read it as '-r everse'
     (["--reverse"], 2, "--sync-reverse"),
+    (["--end-sync"], 2, "--shortest"),  # 4.0 name
     (["--json"], 2, "_summary.json"),
     (["--sync-offset=nan"], 2, "--sync-offset"),
     (["--sync-offset", "1", "--sync-window", "1"], 2, "mutually exclusive"),

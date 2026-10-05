@@ -13,7 +13,8 @@ each change.
 
 - **`--end-sync` is now `--shortest`.** The flag never synchronized anything: it
   sets libvmaf `shortest=1`, so the calculation stops when the shorter input ends.
-  The new name matches libvmaf and FFmpeg's `-shortest`. No alias is kept.
+  The new name matches libvmaf and FFmpeg's `-shortest`. No alias is kept:
+  `--end-sync` exits with code 2: `error: --end-sync was removed, use --shortest`.
 - **`--reverse` is now `--sync-reverse`**, and it requires `--sync-window`.
   `--reverse` exits with code 2: `error: --reverse was removed, use --sync-reverse`.
 - **The manual offset moved to `--sync-offset`.** In 4.0, `--sync-start` without
@@ -92,6 +93,10 @@ each change.
   package as `UNKNOWN-0.0.0`, and the image only worked because it imported
   easyvmaf from its working directory; pip is now upgraded first, so the
   `easyvmaf` command exists in the image.
+- When FFmpeg cannot run, is older than 8.1 or its libvmaf cannot compute VMAF
+  v1, the error says how to install a suitable FFmpeg on the platform (Homebrew
+  on macOS, the BtbN static build on Linux) and links the README instead of
+  recommending a Docker image that is not published.
 
 ## 4.0.0
 

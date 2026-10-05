@@ -77,7 +77,27 @@ _REMOVED_FLAGS = {
     '--json': _JSON_REMOVED,
     '-gpu': 'use --gpu',
     '-model': 'use --display',
+    '--end-sync': 'use --shortest',
 }
+
+_FFMPEG_DOCS = 'https://github.com/gdavila/easyVmaf#ffmpeg'
+
+
+def _exit_unusable_ffmpeg(problem):
+    """Print what is wrong with FFmpeg and how to fix it on this platform, then exit 1."""
+    if sys.platform == 'darwin':
+        fix = ("Fix: brew install ffmpeg "
+               "(already installed: brew update && brew upgrade libvmaf ffmpeg).")
+    elif sys.platform.startswith('linux'):
+        fix = ("Fix: use the BtbN static build ffmpeg-n8.1-latest-linux64-gpl-8.1 "
+               "(arm64: ffmpeg-n8.1-latest-linuxarm64-gpl-8.1),\n"
+               "on PATH or with FFMPEG=/path/to/ffmpeg FFPROBE=/path/to/ffprobe.")
+    else:
+        fix = "Fix: build FFmpeg 8.1 against libvmaf 3.2.1 with its built-in models."
+    print(f"[easyVmaf] ERROR: {problem}\n{fix}\n"
+          f"See {_FFMPEG_DOCS} (or build the Docker image from the repository).",
+          file=sys.stderr, flush=True)
+    sys.exit(1)
 
 
 def _range(model_run):
@@ -405,28 +425,19 @@ def main():
     try:
         ffmpeg_info = check_ffmpeg()
     except RuntimeError as e:
-        print(f"[easyVmaf] ERROR: {e}", file=sys.stderr, flush=True)
-        sys.exit(1)
+        _exit_unusable_ffmpeg(e)
 
     if not ffmpeg_info['meets_minimum']:
-        print(
-            f"[easyVmaf] ERROR: FFmpeg {ffmpeg_info['version_str']} detected. "
-            f"easyVmaf requires FFmpeg >= 8.1 built with --enable-libvmaf. "
-            f"Use the easyVmaf Docker image or upgrade FFmpeg.",
-            file=sys.stderr, flush=True
+        _exit_unusable_ffmpeg(
+            f"FFmpeg {ffmpeg_info['version_str']} detected. "
+            f"easyVmaf requires FFmpeg >= 8.1 built with --enable-libvmaf."
         )
-        sys.exit(1)
 
     if not ffmpeg_info['libvmaf_v1']:
-        print(
-            f"[easyVmaf] ERROR: FFmpeg {ffmpeg_info['version_str']} is installed "
-            f"but its libvmaf cannot compute VMAF v1 models. "
-            f"easyVmaf requires libvmaf >= 3.2.1 built with '-Dbuilt_in_models=true'. "
-            f"Use the easyVmaf Docker image, or upgrade libvmaf "
-            f"(e.g. 'brew upgrade libvmaf') and rebuild FFmpeg against it.",
-            file=sys.stderr, flush=True
+        _exit_unusable_ffmpeg(
+            f"FFmpeg {ffmpeg_info['version_str']} cannot compute VMAF v1 models: "
+            f"easyVmaf requires libvmaf >= 3.2.1 built with -Dbuilt_in_models=true."
         )
-        sys.exit(1)
 
     logger.info(
         "FFmpeg %s detected. libvmaf VMAF v1 models: available.",
