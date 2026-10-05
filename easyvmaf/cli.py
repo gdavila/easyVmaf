@@ -54,7 +54,6 @@ _FLAG_LABELS = {
     'start_frame': '--start-frame',
     'frame_count': '--frame-count',
     'subsample': '--subsample',
-    'cambi_heatmap': '--cambi-heatmap',
 }
 
 _JSON_REMOVED = 'the result is always written to a <log>_summary.json file'
@@ -339,7 +338,7 @@ def get_args():
             args.enc_size, args.enc_bitdepth, args.model_options, args.gpu,
             labels=_FLAG_LABELS)
         validate_range_config(args.start_frame, args.frame_count, args.subsample,
-                              args.cambi_heatmap, args.gpu, labels=_FLAG_LABELS)
+                              args.gpu, labels=_FLAG_LABELS)
     except ValueError as e:
         parser.error(str(e))
     return args

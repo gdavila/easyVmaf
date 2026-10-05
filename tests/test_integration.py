@@ -271,13 +271,18 @@ def gop_clips(encode, tmp_path_factory):
     ("aligned.mp4", "lead.mp4", 0, dict(vmaf_versions=("0.6",)), "json"),
     # Field deinterlacing doubles the distorted frame rate (yadif=1).
     ("interlaced.mkv", "master.mp4", 0, dict(vmaf_versions=("0.6",)), "json"),
+    # A 1080p encoding size halves the heatmap pictures (cambi_high_res_speedup):
+    # their size is not the one in the file names.
+    ("aligned.mp4", "late.mp4", -0.3,
+     dict(views=("3h",), enc_size=(1920, 1080), cambi_heatmap=True), "json"),
 ], ids=["reference-trimmed", "distorted-trimmed-v1", "frame-rate-conversion", "no-offset",
-        "interlaced-distorted"])
+        "interlaced-distorted", "cambi-heatmaps-v1"])
 def test_frame_ranges_join_into_the_full_calculation(gop_clips, distorted, reference, offset,
                                                      options, output_fmt):
     """The contract an orchestrator relies on: consecutive ranges, cut between
     keyframes, give the frames of the full calculation, with the same frame
-    numbers and identical scores."""
+    numbers and identical scores; each CAMBI heatmap is the concatenation of
+    the ranges' heatmaps."""
     def calculate(**frame_range):
         calculation = vmaf(getattr(gop_clips, distorted), getattr(gop_clips, reference),
                            output_fmt=output_fmt, threads=2, **options, **frame_range)
@@ -285,18 +290,29 @@ def test_frame_ranges_join_into_the_full_calculation(gop_clips, distorted, refer
         result = calculation.getVmaf()
         return result, read_frames(result.log_path, output_fmt)
 
+    def heatmaps(result):
+        if not result.cambi_heatmap_path:
+            return {}
+        return {path.name: path.read_bytes()
+                for path in sorted(Path(result.cambi_heatmap_path).iterdir())}
+
     full, frames = calculate()
     size = math.ceil(len(frames) / 3)
-    joined, logs = [], set()
+    joined, logs, joined_heatmaps = [], set(), {}
     for start in range(0, len(frames), size):
         result, chunk = calculate(start_frame=start, frame_count=size)
         assert result.frames_scored == len(chunk)
         joined += chunk
         logs.add(result.log_path)
+        for name, data in heatmaps(result).items():
+            joined_heatmaps[name] = joined_heatmaps.get(name, b"") + data
 
     assert len(frames) >= 15  # three ranges of several frames, cut between keyframes
     assert joined == frames
     assert len(logs) == 3 and full.log_path not in logs
+    assert joined_heatmaps == heatmaps(full)
+    if options.get("cambi_heatmap"):
+        assert len(joined_heatmaps) == 5 and all(joined_heatmaps.values())
 
 
 def test_frame_range_past_the_end_fails_instead_of_reading_a_stale_log(gop_clips, tmp_path):

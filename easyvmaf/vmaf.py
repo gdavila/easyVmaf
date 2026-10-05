@@ -24,7 +24,7 @@ SOFTWARE.
 from .ffmpeg import FFprobe
 from .ffmpeg import FFmpegQos
 from .models import DISPLAY_RESOLUTION, model_names, select_models
-from .results import VmafResult, read_frames, read_scores, trim_log
+from .results import VmafResult, heatmap_files, read_frames, read_scores, trim_heatmaps, trim_log
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 import copy
@@ -217,7 +217,7 @@ class UnsupportedRangeError(ValueError):
 
 
 def validate_range_config(start_frame=None, frame_count=None, subsample=1,
-                          cambi_heatmap=False, gpu_mode=False, labels=None):
+                          gpu_mode=False, labels=None):
     """
     Check a frame range and the options it is combined with, without probing
     any input. vmaf() runs it in its constructor; the CLI runs it once.
@@ -243,8 +243,7 @@ def validate_range_config(start_frame=None, frame_count=None, subsample=1,
             raise UnsupportedRangeError(
                 f"{label(argument)} must be an integer of at least {minimum}, not {value!r}")
     unsupported = [name for name, used in (
-        (label('subsample'), subsample != 1), (label('cambi_heatmap'), cambi_heatmap),
-        (label('gpu_mode'), gpu_mode)) if used]
+        (label('subsample'), subsample != 1), (label('gpu_mode'), gpu_mode)) if used]
     if unsupported:
         raise UnsupportedRangeError(
             f"{', '.join(unsupported)}: not supported with a frame range "
@@ -414,10 +413,10 @@ class vmaf():
         self.model_options = tuple(model_options)
         self.gpu_mode = gpu_mode
         self.cambi_heatmap = cambi_heatmap
-        self._validateModelConfig(mainSrc)
-        validate_range_config(start_frame, frame_count, subsample, cambi_heatmap, gpu_mode)
+        validate_range_config(start_frame, frame_count, subsample, gpu_mode)
         self.start_frame = start_frame
         self.frame_count = frame_count
+        self._validateModelConfig(mainSrc)
         self.loglevel = loglevel
         self.main = video(mainSrc, self.loglevel)
         self.ref = video(refSrc, self.loglevel)
@@ -466,9 +465,17 @@ class vmaf():
                     f"{' '.join(_HEATMAP_PATH_FORBIDDEN)} with VMAF v1 models; "
                     f"rename or move the distorted file")
 
-    @staticmethod
-    def _cambiHeatmapPath(mainSrc):
-        return os.path.splitext(mainSrc)[0] + '_cambi_heatmap'
+    def _rangeSuffix(self):
+        """'_f<start>-<last>' ('-end' without a count) for a range, '' otherwise:
+        outputs of ranges of the same distorted video do not overwrite each other."""
+        if not self._hasRange():
+            return ''
+        start = self.start_frame or 0
+        last = start + self.frame_count - 1 if self.frame_count is not None else 'end'
+        return f'_f{start}-{last}'
+
+    def _cambiHeatmapPath(self, mainSrc):
+        return os.path.splitext(mainSrc)[0] + '_cambi_heatmap' + self._rangeSuffix()
 
     @staticmethod
     def _chains(qos):
@@ -848,22 +855,21 @@ class vmaf():
             chain.setRangeTrimFilter(range_start, range_end)
 
     def _rangeLogPath(self):
-        """libvmaf log of a range: named after the frames requested, so that
-        ranges of the same distorted video do not overwrite each other."""
-        start = self.start_frame or 0
-        last = start + self.frame_count - 1 if self.frame_count is not None else 'end'
+        """libvmaf log of a range, named after the frames requested."""
         ext = self.output_fmt if self.output_fmt in ('xml', 'csv') else 'json'
-        return f'{os.path.splitext(self.main.videoSrc)[0]}_vmaf_f{start}-{last}.{ext}'
+        return f'{os.path.splitext(self.main.videoSrc)[0]}_vmaf{self._rangeSuffix()}.{ext}'
 
     def _trimRangeLog(self, log_path):
         """
-        Drop the context frames from the range log and number its frames as
-        in the full calculation. Returns the number of frames kept.
+        Drop the context frames from the range log, and from the CAMBI
+        heatmaps, and number its frames as in the full calculation. Returns
+        the number of frames kept.
 
         Raises:
             UnsupportedRangeError: if frames are missing before the end of
                 the inputs (a seek that did not land on the requested frame),
-                or if the range starts after the last frame
+                if the range starts after the last frame, or if a heatmap does
+                not hold one picture per measured frame
         """
         first, end = self._rangeBounds()
         start = self.start_frame or 0
@@ -891,6 +897,11 @@ class vmaf():
             raise UnsupportedRangeError(
                 f"The range starts at frame {start}, after the last measured frame{last}")
         trim_log(log_path, self.output_fmt, start - first, kept, first)
+        if self.cambi_heatmap:
+            try:
+                trim_heatmaps(self.cambi_heatmap_path, start - first, kept, measured)
+            except ValueError as e:
+                raise UnsupportedRangeError(str(e)) from None
         return kept
 
     @staticmethod
@@ -1069,6 +1080,10 @@ class vmaf():
             # A range past the end writes no log: never read one left by an earlier run.
             if os.path.exists(log_path):
                 os.remove(log_path)
+            # Nor heatmaps of another encoding size, which libvmaf does not truncate.
+            if self.cambi_heatmap:
+                for path in heatmap_files(self.cambi_heatmap_path):
+                    os.remove(path)
         self.ffmpegQos.getVmaf(self.models, subsample=self.subsample, log_path=log_path,
                                output_fmt=self.output_fmt, threads=self.threads, print_progress=self.print_progress, shortest=self.shortest, features=self.features, gpu=self.gpu_mode)
         log_path = self.ffmpegQos.vmafpath

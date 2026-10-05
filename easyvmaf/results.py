@@ -22,7 +22,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 import csv
+import glob
 import json
+import os
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from statistics import mean
@@ -163,3 +165,41 @@ def trim_log(log_path: str, output_fmt: str, start: int, count: int, first_frame
             for name in log.get('pooled_metrics', {})}
         with open(log_path, 'w') as jsonFile:
             json.dump(log, jsonFile, indent=2)
+
+
+def heatmap_files(path: str) -> List[str]:
+    """CAMBI heatmaps of a libvmaf heatmaps_path directory, one per scale."""
+    return sorted(glob.glob(os.path.join(glob.escape(path), 'cambi_heatmap_scale_*.gray')))
+
+
+def trim_heatmaps(path: str, start: int, count: int, frames: int, block: int = 1 << 24):
+    """
+    Keep `count` pictures of each CAMBI heatmap from its picture `start`, in place.
+
+    libvmaf writes picture n of a run at n * picture size; the file name gives
+    the encoding size, not the picture size (cambi_high_res_speedup halves the
+    picture), so the size comes from the file size and the frames measured.
+
+    Args:
+        path: heatmaps_path directory of the run
+        start: index of the first picture to keep
+        count: number of pictures to keep (at least 1)
+        frames: frames measured by the run (frames of its libvmaf log)
+
+    Raises:
+        ValueError: if a heatmap does not hold one picture per measured frame
+    """
+    for heatmap in heatmap_files(path):
+        size = os.path.getsize(heatmap)
+        if size == 0 or size % frames:
+            raise ValueError(f"CAMBI heatmap {heatmap} ({size} bytes) does not hold "
+                             f"{frames} pictures, one per measured frame")
+        picture = size // frames
+        begin, end = start * picture, (start + count) * picture
+        with open(heatmap, 'r+b') as f:
+            for offset in range(begin, end, block):
+                f.seek(offset)
+                data = f.read(min(block, end - offset))
+                f.seek(offset - begin)
+                f.write(data)
+            f.truncate(end - begin)
