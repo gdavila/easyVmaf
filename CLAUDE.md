@@ -395,6 +395,11 @@ identical:
   to `enc_size` overrides and to the v0.6-only CAMBI feature too
 - `cambi_heatmap`: with v1, `cambi.heatmaps_path` only on the first v1 run; with
   v0.6 only, a separate `cambi` feature in the `feature=` string (as in 3.x)
+- `cambi_heatmap` forces libvmaf `n_threads=1` (`_libvmafThreads()`, with a
+  warning): libvmaf 3.2.1 creates a CAMBI context per extraction thread and each
+  one opens the heatmaps with `fopen("w")` on its first frame, truncating what
+  the other threads wrote. Keep it until a fixed libvmaf is the minimum
+  (`reports/libvmaf-cambi-heatmap/`)
 - Never add `enable_transform` to a v1 model: v1 model JSONs already enable
   `score_transform`
 
@@ -601,9 +606,11 @@ distorted reported at 2x (`_deinterlaceFrame(0.5, main)`), pinned by
 - The v0.6 FFmpeg command: `test_v06_vmaf_command_is_unchanged` in
   `tests/test_ffmpeg.py` (`GOLDEN_CHAINS`, `GOLDEN_CAMBI`) pins the full command for
   v0.6 HD/4K with and without CAMBI heatmap. Never edit its expected strings to
-  make a change pass. Its only authorized change (4.0) put `fps` before `scale`,
-  so deinterlacing runs before scaling; `fps` only picks frames, so the frames
-  and the v0.6 scores are identical
+  make a change pass. Its authorized changes: 4.0 put `fps` before `scale`,
+  so deinterlacing runs before scaling (`fps` only picks frames, so the frames
+  and the v0.6 scores are identical); 5.0 runs the CAMBI case with
+  `n_threads=1` (heatmaps are corrupted with more threads; scores do not depend
+  on the number of threads)
 - Sync workers and the final calculation build their chains with the same
   `_normalizeChains()` and trim after it; a different order lets the sync offset
   select a different frame or field than the final calculation

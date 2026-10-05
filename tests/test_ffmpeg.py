@@ -211,6 +211,10 @@ def test_v06_vmaf_command_is_unchanged(monkeypatch, unscored, model, cambi_heatm
     calculation.compute()
 
     graph = GOLDEN_CHAINS[model] + (GOLDEN_CAMBI if cambi_heatmap else "")
+    if cambi_heatmap:
+        # Authorized in 5.0: libvmaf 3.2.1 corrupts CAMBI heatmaps with more
+        # than one thread, so they are computed on one. Scores do not change.
+        graph = graph.replace(":n_threads=4:", ":n_threads=1:")
     assert calculation.ffmpegQos._cmd == [
         "ffmpeg", "-y", "-hide_banner", "-stats", "-loglevel", "info",
         "-i", "dist.mp4", "-i", "ref.mp4", "-an", "-sn", "-dn",
