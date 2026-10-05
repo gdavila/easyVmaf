@@ -476,7 +476,8 @@ With `--cambi-heatmap`, a range writes its heatmaps to
 `<distorted>_cambi_heatmap_f<first>-<last>/`, and its summary points to that
 directory (`vmaf.cambi_heatmap_path`). Each file holds only the pictures of the
 range: concatenating the files of the same name of consecutive ranges, in range
-order, gives the heatmaps of the full calculation byte for byte.
+order, gives the heatmaps of the full calculation byte for byte (with more
+than one thread, see [Known bugs](#known-bugs)).
 
 Limits:
 
@@ -821,6 +822,16 @@ easyvmaf -d distorted-B.ts -r reference.ts --sync-window 3 --sync-start 6 --sync
 ```
 
 With `--sync-reverse`, the window slides over the distorted video: `--sync-start 6 --sync-window 3` searches from 6 to 9 seconds into `distorted-B.ts` for the first frames of `reference.ts`. The reported offset is negative (−8.3), meaning that the distorted video was trimmed.
+
+---
+
+## Known bugs
+
+- **CAMBI heatmaps with more than one thread.** libvmaf 3.2.1 can leave part of
+  the first pictures of a `--cambi-heatmap` file as zeros when it runs on more
+  than one thread, which is the default
+  ([Netflix/vmaf#1676](https://github.com/Netflix/vmaf/issues/1676)). Scores are
+  not affected. Use `--threads 1` if you need exact heatmaps.
 
 ---
 

@@ -73,7 +73,8 @@ each change.
   the summary adds `vmaf.range` (`start_frame`, `frame_count`, `frames_scored`).
   With `--cambi-heatmap`, a range writes its heatmaps to
   `<distorted>_cambi_heatmap_f<first>-<last>/`; concatenating the files of
-  consecutive ranges gives the full calculation's heatmaps byte for byte. MP4,
+  consecutive ranges gives the full calculation's heatmaps byte for byte (with
+  more than one thread, see the README Known bugs). MP4,
   MOV, Matroska and WebM inputs only; not yet with `--subsample` or `--gpu`. See
   [Frame ranges](README.md#frame-ranges).
 - Summary file: every successful input writes its schema 2 result next to the

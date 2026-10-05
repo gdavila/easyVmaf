@@ -332,7 +332,9 @@ calculation's log (frames numbered as libvmaf receives them, at `output_fps`),
 with the same `frameNum` and identical metric values, so consecutive ranges join
 into the full calculation; with `cambi_heatmap`, concatenating each heatmap file
 of consecutive ranges, in range order, gives the full calculation's file byte for
-byte. Pinned by `test_frame_ranges_join_into_the_full_calculation`.
+byte with `threads=1`; with more threads libvmaf may zero part of the first
+pictures (Netflix/vmaf#1676), so that case only warns. Pinned by
+`test_frame_ranges_join_into_the_full_calculation`.
 `_applyRange()` replaces `_applyOffset()` and keeps every other step of the chain
 identical:
 - **Anchor**: the only part of the full chain that depends on seeing its first
@@ -395,6 +397,11 @@ identical:
   to `enc_size` overrides and to the v0.6-only CAMBI feature too
 - `cambi_heatmap`: with v1, `cambi.heatmaps_path` only on the first v1 run; with
   v0.6 only, a separate `cambi` feature in the `feature=` string (as in 3.x)
+- Known libvmaf 3.2.1 bug (Netflix/vmaf#1676, README Known bugs): with
+  `n_threads > 1` each thread's CAMBI context opens the heatmaps with
+  `fopen("w")` and may zero part of the first pictures; scores are unaffected.
+  Accepted: do not force one thread with `cambi_heatmap` (measured ~3.5x slower;
+  reverted in 94b59bb)
 - Never add `enable_transform` to a v1 model: v1 model JSONs already enable
   `score_transform`
 
@@ -620,7 +627,8 @@ distorted reported at 2x (`_deinterlaceFrame(0.5, main)`), pinned by
   >= 320x240
 - The frame range contract: `test_frame_ranges_join_into_the_full_calculation`
   compares ranges with the full calculation exactly (logs, and CAMBI heatmaps byte
-  for byte); never loosen it to a tolerance or drop cases to make a change pass
+  for byte with one thread; a warning with two, Netflix/vmaf#1676); never loosen
+  it to a tolerance or drop cases to make a change pass
 
 ---
 
