@@ -167,12 +167,12 @@ VMAF computation orchestration.
   start_frame=None, frame_count=None)`: pixel format, auto-scaling,
   auto-deinterlace, parallel sync offset search, model resolution, optional frame
   range and final VMAF scoring. `getVmaf()` returns a `VmafResult`.
-- `validate_range_config(start_frame, frame_count, subsample, cambi_heatmap,
-  gpu_mode, labels=None)`: run by the constructor and once by the CLI. Raises
+- `validate_range_config(start_frame, frame_count, subsample, gpu_mode,
+  labels=None)`: run by the constructor and once by the CLI. Raises
   `UnsupportedRangeError(ValueError)` for a non-integer or negative start, a count
-  below 1, or a range with `subsample > 1`, `cambi_heatmap` or `gpu_mode`. With a
-  range, the constructor also rejects containers outside `_RANGE_FORMATS`
-  (mp4/mov, matroska/webm) via `formatInfo['format_name']`.
+  below 1, or a range with `subsample > 1` or `gpu_mode`. With a range, the
+  constructor also rejects containers outside `_RANGE_FORMATS` (mp4/mov,
+  matroska/webm) via `formatInfo['format_name']`.
 - `validate_model_config(display, vmaf_versions, views, hfr, bitdepth, enc_size,
   enc_bitdepth, model_options, gpu_mode, labels=None)`: the single source of model
   option validation. Run by the `vmaf` constructor and once by the CLI before the
@@ -183,7 +183,8 @@ VMAF computation orchestration.
   view raise `ValueError` from `select_models()`.
 - The constructor also rejects, with v1 + `cambi_heatmap`, a heatmap path containing
   `:`, `|`, `\` or `'` (`_HEATMAP_PATH_FORBIDDEN`): it cannot be escaped inside a
-  `model=` override.
+  `model=` override. It runs `validate_range_config()` first, so the check sees the
+  path actually written (with the range suffix).
 - `UnsupportedFramerateError`: raised when no deinterlace filter covers the fps combination
 - `UnsupportedModelConfigError(ValueError)`: options the selected models cannot honour
 - `FeatureConfig`: dataclass for building the libvmaf `feature=` parameter string
@@ -196,7 +197,11 @@ VMAF computation orchestration.
   returns `(frameNum, metrics)` per frame; `trim_log(log_path, output_fmt, start,
   count, first_frame)` keeps `count` frames from `start`, renumbers them and
   recomputes the pooled metrics (libvmaf harmonic mean: `n / Σ 1/(x+1) − 1`), in
-  place and in the same format.
+  place and in the same format. `heatmap_files(path)` lists the
+  `cambi_heatmap_scale_*.gray` files of a heatmaps directory, sorted;
+  `trim_heatmaps(path, start, count, frames)` keeps pictures `start..start+count-1`
+  of each, in place, with picture size = file size / `frames` (frames measured),
+  and raises `ValueError` when a file does not hold one picture per measured frame.
 
 Reading libvmaf logs is a layer 2 responsibility since 4.0.
 
@@ -318,9 +323,11 @@ FFmpeg inserts the conversion at the end and deinterlaces at 8 bits.
 Contract: a range returns exactly frames `start..start+count-1` of the full
 calculation's log (frames numbered as libvmaf receives them, at `output_fps`),
 with the same `frameNum` and identical metric values, so consecutive ranges join
-into the full calculation. Pinned by
-`test_frame_ranges_join_into_the_full_calculation`. `_applyRange()` replaces
-`setOffset()` and keeps every other step of the chain identical:
+into the full calculation; with `cambi_heatmap`, concatenating each heatmap file
+of consecutive ranges, in range order, gives the full calculation's file byte for
+byte. Pinned by `test_frame_ranges_join_into_the_full_calculation`.
+`_applyRange()` replaces `setOffset()` and keeps every other step of the chain
+identical:
 - **Anchor**: the only part of the full chain that depends on seeing its first
   frame is `setpts=PTS-STARTPTS` of the sync trim. A deep copy of `ffmpegQos`
   seeks to `RANGE_PREROLL` before each sync start, adds `setPreTrimFilter(start)`
@@ -335,17 +342,28 @@ into the full calculation. Pinned by
 - **Timestamps**: the seek implies `-copyts -start_at_zero`, so every frame keeps
   its full-calculation timestamp and `fps`/`yadif` pick the same frames
 - **Context**: `RANGE_CONTEXT_FRAMES` (2) extra frames on each side, dropped by
-  `trim_log()`; motion features use the previous and the next frame (1 measured
-  as enough)
+  `trim_log()` and, from the CAMBI heatmaps, by `trim_heatmaps()`; motion features
+  use the previous and the next frame (1 measured as enough); CAMBI is intra-frame
 - **Bounds** a quarter frame (`_RANGE_BOUND_MARGIN`) before each frame: trim
   rounds to the nearest tick, so half a frame can round either way
 - **Without an offset** both inputs must start within a quarter frame of each
   other (`UnsupportedRangeError`): unsynced, libvmaf pairs by timestamp
 - **Guards** (`_trimRangeLog`): fewer frames than requested before the end of the
-  inputs (two frames of duration tolerance) and a range past the last frame raise
+  inputs (two frames of duration tolerance), a range past the last frame and a
+  heatmap file not holding one picture per measured frame raise
   `UnsupportedRangeError`. libvmaf writes no log when no frame reaches it, so
-  `getVmaf()` deletes an existing log at the range path before running
-- Log path: `<distorted>_vmaf_f<start>-<last>.<ext>` (`-end` without a count)
+  `getVmaf()` deletes an existing log at the range path before running, and the
+  `cambi_heatmap_scale_*.gray` files of the range heatmap directory: libvmaf
+  truncates only the files named after the current encoding size
+- **Heatmap pictures**: one raw 16-bit file per scale (5), distorted picture n at
+  n × picture size. The file name gives the scale size from the encoding size,
+  not the picture size: v1 models set `cambi_high_res_speedup: 1080`, which halves
+  every scale from a 1920x1080 encoding size (the v0.6-only CAMBI feature has no
+  speedup). Never compute the picture size from the name
+- Paths: `_rangeSuffix()` (`_f<start>-<last>`, `-end` without a count) names the
+  log `<distorted>_vmaf_f<start>-<last>.<ext>` and the heatmap directory
+  `<distorted>_cambi_heatmap_f<start>-<last>` (`VmafResult.cambi_heatmap_path`);
+  the full calculation keeps `<distorted>_cambi_heatmap`
 - The interlace decision still reads the first 5 s of each file, so every range
   takes the same decision as the full calculation
 
@@ -428,7 +446,8 @@ feature only when `--cambi-heatmap` is passed and no v1 model is computed. Built
 ### Output formats
 VMAF results written to file: json (default), xml, csv.
 File path: same directory as distorted input, same base name + `_vmaf.{ext}`
-(`_vmaf_f<start>-<last>.{ext}` for a frame range)
+(`_vmaf_f<start>-<last>.{ext}` for a frame range). CAMBI heatmaps:
+`<distorted>_cambi_heatmap/` (`_cambi_heatmap_f<start>-<last>/` for a frame range)
 
 Summary file (always written, one per input, schema 2), named after the log:
 `<log>_summary.json` (`<distorted>_vmaf_summary.json`,
@@ -538,8 +557,8 @@ distorted reported at 2x (`_deinterlaceFrame(0.5, main)`), pinned by
 - The `check_ffmpeg()` v1 probe computing a frame (not only loading the model) at
   >= 320x240
 - The frame range contract: `test_frame_ranges_join_into_the_full_calculation`
-  compares ranges with the full calculation exactly; never loosen it to a
-  tolerance or drop cases to make a change pass
+  compares ranges with the full calculation exactly (logs, and CAMBI heatmaps byte
+  for byte); never loosen it to a tolerance or drop cases to make a change pass
 
 ---
 

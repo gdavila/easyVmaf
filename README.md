@@ -232,7 +232,7 @@ replaced with defaults.
   `--sync-reverse`) is an error (exit code 1), reported before running FFmpeg.
 - `--start-frame` accepts integers of at least 0 and `--frame-count` integers of
   at least 1. A frame range cannot be combined with `--sync-only`, and, for now,
-  not with `--subsample`, `--cambi-heatmap` or `--gpu`.
+  not with `--subsample` or `--gpu`.
 - Removed flags are rejected with the name of their replacement, e.g.
   `error: -sw was removed, use --sync-window` or
   `error: --reverse was removed, use --sync-reverse`.
@@ -413,6 +413,12 @@ and its pooled metrics cover only the range. Its summary file is named after
 the log (`<distorted>_vmaf_f<first>-<last>_summary.json`), so ranges computed in
 parallel never overwrite each other's results.
 
+With `--cambi-heatmap`, a range writes its heatmaps to
+`<distorted>_cambi_heatmap_f<first>-<last>/`, and its summary points to that
+directory (`vmaf.cambi_heatmap_path`). Each file holds only the pictures of the
+range: concatenating the files of the same name of consecutive ranges, in range
+order, gives the heatmaps of the full calculation byte for byte.
+
 Limits:
 
 - Only MP4, MOV, Matroska and WebM inputs. Other containers are an error
@@ -422,7 +428,7 @@ Limits:
   frames before the end of the videos, e.g. after an inexact seek, is an error
   too, never a partial result.
 - Without a sync offset, both videos must start at the same timestamp.
-- Not yet with `--subsample`, `--cambi-heatmap` or `--gpu`.
+- Not yet with `--subsample` or `--gpu`.
 
 ## Examples
 
@@ -466,6 +472,15 @@ With v1 models the heatmap directory is passed inside the libvmaf `model=`
 option, where `:`, `|`, `\` and `'` cannot be escaped. If the distorted file path
 contains any of them, easyVmaf stops with an error before running FFmpeg; rename
 or move the file.
+
+The heatmaps are of the distorted picture: one raw 16-bit gray file per CAMBI
+scale (`cambi_heatmap_scale_<s>_<W>x<H>_16b.gray`, 5 scales), with picture n at
+n × picture size. `<W>x<H>` is the size of the scale computed from the
+encoding size, not always the picture size: from a 1920x1080 encoding size the
+v1 models compute CAMBI at half resolution (`cambi_high_res_speedup`), so every
+scale holds pictures of half the size in its name (scale 0 of a 1080p encoding
+size, `..._1920x1080_16b.gray`, holds 960x540 pictures). The picture size in
+bytes is the file size divided by the frames scored.
 
 ### With automatic sync
 
