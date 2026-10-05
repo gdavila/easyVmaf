@@ -908,21 +908,6 @@ class Vmaf():
                 raise UnsupportedRangeError(str(e)) from None
         return kept
 
-    def _libvmafThreads(self):
-        """
-        libvmaf n_threads: self.threads, or 1 with CAMBI heatmaps. libvmaf
-        3.2.1 creates a CAMBI context per extraction thread, and each one
-        opens the heatmaps with fopen("w") when its thread gets its first
-        frame: a thread that starts late truncates the pictures the others
-        already wrote. Scores are not affected.
-        """
-        if self.cambi_heatmap and self.threads != 1:
-            logger.warning("CAMBI heatmaps: libvmaf runs on 1 thread instead of %s, since "
-                           "libvmaf 3.2.1 corrupts the heatmaps with more than one",
-                           self.threads or "one per CPU")
-            return 1
-        return self.threads
-
     @staticmethod
     def _cambiEncodingSize(width, height):
         """CAMBI-accepted encoding size, with a warning when it differs."""
@@ -1099,7 +1084,7 @@ class Vmaf():
                 for path in heatmap_files(self.cambi_heatmap_path):
                     os.remove(path)
         self.ffmpegQos.getVmaf(self.models, subsample=self.subsample, log_path=log_path,
-                               output_fmt=self.output_format, threads=self._libvmafThreads(), print_progress=self.progress, shortest=self.shortest, features=self.features, gpu=self.gpu)
+                               output_fmt=self.output_format, threads=self.threads, print_progress=self.progress, shortest=self.shortest, features=self.features, gpu=self.gpu)
         log_path = self.ffmpegQos.vmafpath
         frames_scored = self._trimRangeLog(log_path) if self._hasRange() else None
         return VmafResult(

@@ -242,7 +242,7 @@ These flags apply only to VMAF v1 models. Using them without `1` in
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--output-format {json,xml,csv}` | `json` | Format of the per-frame libvmaf log. The [summary file](#summary-file) is always JSON. |
-| `--cambi-heatmap` | off | Compute and save CAMBI banding heatmaps. libvmaf then runs on one thread (see [CAMBI encoding parameters](#cambi-encoding-parameters)). |
+| `--cambi-heatmap` | off | Compute and save CAMBI banding heatmaps. |
 | `--verbose` | off | Enable verbose log level. |
 | `--progress` | off | Show FFmpeg progress during the VMAF computation. |
 
@@ -526,11 +526,6 @@ easyvmaf -d distorted.mp4 -r reference.mp4 --enc-size 1280x720 --enc-bitdepth 8
 # CAMBI heatmaps, written to <distorted>_cambi_heatmap/
 easyvmaf -d distorted.mp4 -r reference.mp4 --cambi-heatmap
 ```
-
-With `--cambi-heatmap`, libvmaf runs on a single thread, whatever `--threads`
-says, and easyVmaf logs a warning: with more than one thread, libvmaf 3.2.1
-truncates the heatmap files from every extraction thread and the first pictures
-are lost at random. The scores do not depend on the number of threads.
 
 With v1 models the heatmap directory is passed inside the libvmaf `model=`
 option, where `:`, `|`, `\` and `'` cannot be escaped. If the distorted file path

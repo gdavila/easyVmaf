@@ -97,11 +97,6 @@ each change.
   v1, the error says how to install a suitable FFmpeg on the platform (Homebrew
   on macOS, the BtbN static build on Linux) and links the README instead of
   recommending a Docker image that is not published.
-- `--cambi-heatmap` runs libvmaf on one thread. With more than one, libvmaf
-  3.2.1 truncated the heatmaps from every extraction thread when that thread
-  received its first frame, so the first pictures were lost (zeros) at random,
-  in full calculations and in frame ranges alike. The scores were never
-  affected. `--threads` still sets the sync search workers.
 
 ## 4.0.0
 
