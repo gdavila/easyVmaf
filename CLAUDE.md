@@ -524,6 +524,19 @@ writes `<distorted>_sync_summary.json`:
 libvmaf, failed v1 probe) into failures; CI sets it so that an integration job
 cannot pass by skipping. Other skips (Windows-only UNC, ...) are unchanged.
 
+CI (`.github/workflows/test.yml`: pushes to master, pull requests, manual runs,
+and `workflow_call`) runs the full suite in four jobs:
+- `unit`: Python 3.10 to 3.14 on Ubuntu, with `FFMPEG`/`FFPROBE` pointing to
+  nonexistent paths, so the integration tests skip
+- `integration-docker`: inside the `Dockerfile` image, the minimum FFmpeg 8.1
+  and libvmaf 3.2.1 (the pytest command of the Docker section). The build stage
+  is cached with the GitHub Actions cache, written only by pushes to master
+- `integration-btbn`: pip users on Linux x86_64, BtbN `n8.1-latest` FFmpeg and
+  Python 3.10
+- `integration-macos`: pip users on macOS, Homebrew FFmpeg and Python 3.12
+
+The integration jobs set `EASYVMAF_REQUIRE_FFMPEG=1`.
+
 Each test must protect against a real user-visible failure or a forbidden
 change; no tests of implementation details, duplicated cases or unrealistic inputs.
 

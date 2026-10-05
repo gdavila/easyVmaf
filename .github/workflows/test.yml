@@ -1,0 +1,159 @@
+# Runs the test suite. Every integration job sets EASYVMAF_REQUIRE_FFMPEG=1, so
+# a test that needs FFmpeg with libvmaf v1 fails instead of skipping.
+# - unit: every supported Python, without FFmpeg (the integration tests skip)
+# - integration-docker: the Dockerfile image (minimum FFmpeg 8.1, libvmaf 3.2.1)
+# - integration-btbn: pip users on Linux x86_64, BtbN FFmpeg 8.1 and the
+#   minimum Python
+# - integration-macos: pip users on macOS, Homebrew FFmpeg
+#
+# release.yml calls this workflow before publishing.
+
+name: tests
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions: {}
+
+# A called workflow gets the caller's github context: github.workflow is the
+# caller's name and github.ref its tag. Called runs get a group of their own,
+# so they never queue behind, or cancel, another run.
+concurrency:
+  group: ${{ startsWith(github.workflow_ref, format('{0}/.github/workflows/test.yml@', github.repository)) && format('tests-{0}', github.ref) || format('tests-called-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  unit:
+    name: Unit (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    env:
+      # Never use an FFmpeg preinstalled on the runner image.
+      FFMPEG: /nonexistent/ffmpeg
+      FFPROBE: /nonexistent/ffprobe
+      PYTHON: ${{ matrix.python }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+
+      - name: Install
+        run: |
+          uv venv --python "$PYTHON"
+          uv pip install -e ".[dev]"
+
+      - name: Test
+        run: .venv/bin/python -m pytest -q -rs
+
+  integration-docker:
+    name: Integration (Docker image)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # The FFmpeg build stage is cached (mode=max keeps the build stage). Only
+      # pushes to master write the cache: pull requests and the release workflow
+      # (a tag push) only read it, and the published package is built in
+      # release.yml without it.
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          push: false
+          tags: easyvmaf:ci
+          cache-from: type=gha
+          cache-to: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && 'type=gha,mode=max' || '' }}
+
+      - name: Test
+        run: |
+          docker run --rm -e EASYVMAF_REQUIRE_FFMPEG=1 -v "$PWD:/src" -w /src --entrypoint sh easyvmaf:ci \
+            -c 'pip install -q --root-user-action=ignore pytest && python3 -m pytest -q -rs -p no:cacheprovider'
+
+  integration-btbn:
+    name: Integration (Linux x86_64, BtbN FFmpeg, Python 3.10)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      EASYVMAF_REQUIRE_FFMPEG: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+
+      - name: Install FFmpeg
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSLO https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-linux64-gpl-8.1.tar.xz
+          tar -xf ffmpeg-n8.1-latest-linux64-gpl-8.1.tar.xz
+          echo "$RUNNER_TEMP/ffmpeg-n8.1-latest-linux64-gpl-8.1/bin" >> "$GITHUB_PATH"
+
+      - name: FFmpeg version
+        run: |
+          command -v ffmpeg
+          ffmpeg -version | head -1
+
+      - name: Install
+        run: |
+          uv venv --python 3.10
+          uv pip install -e ".[dev]"
+
+      - name: Test
+        run: .venv/bin/python -m pytest -q -rs
+
+  integration-macos:
+    name: Integration (macOS, Homebrew FFmpeg)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      EASYVMAF_REQUIRE_FFMPEG: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+
+      - name: Install FFmpeg
+        run: |
+          brew install ffmpeg
+          ffmpeg -version | head -1
+
+      - name: Install
+        run: |
+          uv venv --python 3.12
+          uv pip install -e ".[dev]"
+
+      - name: Test
+        run: .venv/bin/python -m pytest -q -rs
