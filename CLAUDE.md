@@ -488,10 +488,20 @@ writes `<distorted>_sync_summary.json`:
   allowed; existing `typing.List`/`Tuple`/`Optional` code is not rewritten. Use
   `functools.cached_property` or lazy `@property` where appropriate.
 - **Public API**: the names exported by `easyvmaf/__init__.py` and their
-  signatures are the public API (SemVer after the first PyPI release). Do not
-  rename or change them without explicit instruction. The submodules are internal:
-  `ffmpeg.py` names may change, but the never-change items about it below
-  (separators, `_hwupload_done` guard, `-read_intervals`) still hold.
+  signatures are the public API. Do not rename or change them without explicit
+  instruction. The submodules are internal: `ffmpeg.py` names may change, but the
+  never-change items about it below (separators, `_hwupload_done` guard,
+  `-read_intervals`) still hold.
+- **Versioning (SemVer from 5.0.0)**, as in README "Versioning". The contract:
+  CLI flags and exit codes, output file names (log, summary, CAMBI heatmap
+  directory), the summary JSON format (`schema_version`), score names and
+  `easyvmaf.__all__`. Breaking it is a major release. A new default that changes
+  scores is major; a bug fix that changes scores is minor, with a prominent
+  CHANGELOG note saying which inputs change. Deprecate in a minor release (the
+  old name keeps working and warns), remove in the next major. Every change to
+  the contract gets a CHANGELOG entry under the next version. Before 5.0.0 there
+  were no compatibility guarantees; until 5.0.0 is published, breaking changes
+  still go into its `(unreleased)` CHANGELOG entry.
 - **Test clips for VMAF v1**: frames passed straight to a v1 model need at least
   ~320x240 (`3d0h`), ~400x300 (`5d0h`) or ~576x324 (`3d0h_2160`), or SpEED fails.
   Through easyVmaf the inputs are always scaled to 1080p/2160p first.
@@ -566,6 +576,9 @@ distorted reported at 2x (`_deinterlaceFrame(0.5, main)`), pinned by
   the `vmaf_v1_` prefix of v1 score names
 - JSON schema 2 field names (`schema_version`, `vmaf.scores`, `vmaf.models`, ...);
   a breaking change needs a new `schema_version`
+- Anything in the versioning contract (CLI flags, exit codes, output file
+  names, summary format, score names, `easyvmaf.__all__`) except as the
+  Versioning rule allows: a breaking change waits for a major release
 - The `check_ffmpeg()` v1 probe computing a frame (not only loading the model) at
   >= 320x240
 - The frame range contract: `test_frame_ranges_join_into_the_full_calculation`

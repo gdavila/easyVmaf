@@ -10,7 +10,8 @@ Python tool based on FFmpeg and FFprobe to handle the video preprocessing requir
 
 Since 4.0, easyVmaf computes [VMAF v1](https://github.com/Netflix/vmaf/blob/master/resource/doc/models_v1.md)
 by default. The VMAF v0.6 models of easyVmaf 3.x are still available with
-`--vmaf-version 0.6`. Upgrading from 3.x? See [Migrating from 3.x](#migrating-from-3x).
+`--vmaf-version 0.6`. Upgrading? See [Migrating from 4.x](#migrating-from-4x) or
+[Migrating from 3.x](#migrating-from-3x).
 
 Details about **How it Works** can be found [here](https://ottverse.com/vmaf-easyvmaf/).
 
@@ -48,19 +49,10 @@ and the `version` field of the libvmaf log both say `3.2.0`, because the upstrea
 The only reliable test is to compute a frame with a v1 model, which is what
 easyVmaf does at startup (see [Verifying your build](#verifying-your-build)).
 
-### Getting a valid build
+### Building FFmpeg from source
 
-**Docker (recommended).** The project images build FFmpeg 8.1 with libvmaf
-3.2.1 and its built-in models. See [Docker](#docker).
-
-**macOS (Homebrew).** Homebrew ships libvmaf 3.2.1:
-
-```bash
-brew update
-brew upgrade libvmaf ffmpeg
-```
-
-**From source.** Build libvmaf 3.2.1 with meson, then build FFmpeg >= 8.1 against it:
+Packaged builds that pass the check are listed in [Installation](#ffmpeg).
+Otherwise, build libvmaf 3.2.1 with meson, then build FFmpeg >= 8.1 against it:
 
 ```bash
 curl -LO https://github.com/Netflix/vmaf/archive/v3.2.1.tar.gz
@@ -105,23 +97,80 @@ For GPU-accelerated VMAF (`--gpu`, VMAF v0.6 only, see [GPU](#gpu)):
 
 ## Installation
 
+easyVmaf needs Python >= 3.10 and an FFmpeg build that passes the startup
+check. Install both.
+
+### easyVmaf
+
 ```bash
+pipx install easyvmaf
+# or
+uv tool install easyvmaf
+```
+
+Both install the `easyvmaf` command in its own environment and put it on `PATH`,
+so it runs from any directory. A plain `pip install easyvmaf` outside a virtual
+environment fails with `externally-managed-environment` (PEP 668) on Homebrew
+Python and on Debian 12 / Ubuntu 23.04 and later.
+
+To use the [Python API](#python-api), install the package in a virtual
+environment:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
 pip install easyvmaf
 ```
 
-Or from source:
+### FFmpeg
+
+easyVmaf needs FFmpeg >= 8.1 with libvmaf >= 3.2.1 and its built-in models (see
+[Requirements](#requirements)). After installing it, run the probe in
+[Verifying your build](#verifying-your-build).
+
+**macOS.** Homebrew's FFmpeg is built against libvmaf 3.2.1:
 
 ```bash
-git clone https://github.com/gdavila/easyVmaf.git
-cd easyVmaf
-pip install -e .
+brew install ffmpeg
+# already installed: brew update && brew upgrade libvmaf ffmpeg
 ```
 
-FFmpeg must be on `PATH`, or override via environment variables:
+**Linux.** Distribution packages are older than 8.1 (Ubuntu 24.04 ships FFmpeg
+6.1). Use a static build from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases),
+which includes libvmaf with its built-in models:
+
+```bash
+# x86_64; on arm64 use ffmpeg-n8.1-latest-linuxarm64-gpl-8.1
+curl -LO https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-linux64-gpl-8.1.tar.xz
+tar -xf ffmpeg-n8.1-latest-linux64-gpl-8.1.tar.xz
+export PATH="$PWD/ffmpeg-n8.1-latest-linux64-gpl-8.1/bin:$PATH"
+```
+
+**Docker.** The [Docker](#docker) image bundles FFmpeg 8.1 and libvmaf 3.2.1.
+It is not published to a registry yet: clone the repository and build it with
+`docker build -t easyvmaf .`.
+
+**Other platforms or builds.** See [Building FFmpeg from source](#building-ffmpeg-from-source).
+
+easyVmaf runs the `ffmpeg` and `ffprobe` found on `PATH`, or the ones given in
+environment variables:
 
 ```bash
 FFMPEG=/path/to/ffmpeg FFPROBE=/path/to/ffprobe easyvmaf ...
 ```
+
+### From source (development)
+
+```bash
+git clone https://github.com/gdavila/easyVmaf.git
+cd easyVmaf
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e ".[dev]"     # or: uv venv && uv pip install -e ".[dev]"
+python -m pytest -q
+```
+
+The integration tests run the FFmpeg on `PATH`; they are skipped when it has no
+libvmaf, and the VMAF v1 ones when its libvmaf cannot compute a v1 frame.
 
 ## Usage
 
@@ -741,7 +790,7 @@ VIDEO_DIR=/path/to/videos docker compose run easyvmaf-cuda \
 
 ### Reference delayed relative to distorted
 
-![](readme/easyVmaf1.svg)
+![](https://raw.githubusercontent.com/gdavila/easyVmaf/master/readme/easyVmaf1.svg)
 
 `reference.ts` has 0.7 extra seconds at the start: the first frame of `distorted-A.ts` appears 0.7 seconds into `reference.ts`. Use `--sync-window` to search for the offset automatically:
 
@@ -753,7 +802,7 @@ The sync window of 2 seconds means easyVmaf searches the first 2 seconds of `ref
 
 ### Distorted delayed relative to reference
 
-![](readme/easyVmaf2.svg)
+![](https://raw.githubusercontent.com/gdavila/easyVmaf/master/readme/easyVmaf2.svg)
 
 This time `distorted-B.ts` has the extra seconds: the first frame of `reference.ts` appears 8.3 seconds into `distorted-B.ts`. Use `--sync-reverse` to flip the sync direction:
 
@@ -765,11 +814,59 @@ With `--sync-reverse`, the window slides over the distorted video: `--sync-start
 
 ---
 
+## Versioning
+
+From 5.0.0, easyVmaf follows [Semantic Versioning](https://semver.org). The
+versioned contract is:
+
+- the CLI flags and exit codes;
+- the output file names: libvmaf log, summary file and CAMBI heatmap directory;
+- the [summary file](#summary-file) format, versioned by its `schema_version`;
+- the score names (`vmaf_v1_hd`, `vmaf_hd`, ...);
+- what the `easyvmaf` package exports (`easyvmaf.__all__`). The submodules are
+  internal.
+
+A new default that changes scores, such as a different model or measurement
+format, is a major release. A bug fix that changes scores is a minor release,
+with a prominent CHANGELOG note that says which inputs change.
+
+Deprecated flags and API names keep working, with a warning, in a minor release
+and are removed in the next major release.
+
+Releases before 5.0.0 made no compatibility guarantees.
+
+## Migrating from 4.x
+
+easyVmaf 5.0 keeps the models, the scores and the summary schema 2 of 4.0. It
+renames two flags, moves the manual offset to its own flag, replaces `--json`
+with the summary file and renames the Python API after the CLI flags. See also
+[CHANGELOG.md](https://github.com/gdavila/easyVmaf/blob/master/CHANGELOG.md#500-unreleased).
+
+| Contract | 4.x | 5.0 | Migration |
+|---|---|---|---|
+| Python | >= 3.8 | >= 3.10 | Upgrade Python |
+| `--end-sync` | Stops when the shorter video ends | `--shortest` | Rename the flag |
+| `--reverse` | Reverse sync search | `--sync-reverse`, requires `--sync-window` | Rename the flag |
+| Manual offset | `--sync-start S` without `--sync-window`, negative with `--reverse` | `--sync-offset S`: positive trims the reference, negative the distorted video | `--sync-start 1.5 --reverse` → `--sync-offset -1.5` |
+| `--json` | Schema 2 record printed to stdout | Always written to the [summary file](#summary-file) (`<log>_summary.json`) | Read the summary file |
+| `docker-compose.yml` | `VIDEO_DIR` defaults to `./video_samples` | `VIDEO_DIR` is required | Set `VIDEO_DIR` |
+| `vmaf(mainSrc, refSrc, ...)` | Class `vmaf` | `Vmaf(distorted, reference, ...)` | `from easyvmaf import Vmaf` |
+| `vmaf()` arguments | `manual_fps=`, `output_fmt=`, `print_progress=`, `end_sync=`, `gpu_mode=` | `fps=`, `output_format=`, `progress=`, `shortest=`, `gpu=` | Rename the arguments; `gpu=` also in `validate_model_config()` |
+| Manual offset (API) | `v.offset = 1.5` | `Vmaf(..., sync_offset=1.5)` | Pass it to the constructor |
+| `syncOffset(syncWindow=3, start=0, reverse=False)` | Returns `[offset, psnr]` | `sync(window, start=0, reverse=False)` returns `SyncResult(offset, psnr)`; `window` has no default | Rename the method; pass the window |
+| `getVmaf(autoSync=False)` | `autoSync=True` runs `syncOffset()` first | `compute()`, no `autoSync` | Call `sync()` before `compute()` |
+| `setOffset()` | Public | Removed | Use `sync_offset` |
+| `VmafResult.offset` | Offset applied | `VmafResult.sync_offset` | Rename the field |
+| `FFprobe`, `FFmpegQos`, `inputFFmpeg` | Exported by `easyvmaf` | Not exported: the submodules are internal | Use `Vmaf` |
+
+The package also exports `SyncResult`, `ModelRun`, `FFmpegExecutionError`,
+`check_ffmpeg`, `validate_range_config` and `UnsupportedRangeError`.
+
 ## Migrating from 3.x
 
 easyVmaf 4.0 changes the default model, the CLI flags, the Python API and the
 JSON output. Every change has a one-line migration. See also
-[CHANGELOG.md](CHANGELOG.md).
+[CHANGELOG.md](https://github.com/gdavila/easyVmaf/blob/master/CHANGELOG.md).
 
 | Contract | 3.x | 4.0 | Migration |
 |---|---|---|---|
@@ -800,7 +897,7 @@ the same libvmaf for progressive inputs; interlaced inputs can score
 differently because of those fixes. Moving from libvmaf 3.0.0 to 3.2.1 changed them by at most
 0.00002 in our checks. With `--vmaf-version 1 0.6`, the v0.6 models are measured
 at 10 bits, which moved them by at most 0.028 when the inputs are scaled. See
-the [CHANGELOG](CHANGELOG.md) for the full verification.
+the [CHANGELOG](https://github.com/gdavila/easyVmaf/blob/master/CHANGELOG.md) for the full verification.
 
 ### Flag equivalences
 

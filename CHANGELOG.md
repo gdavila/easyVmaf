@@ -1,5 +1,98 @@
 # Changelog
 
+## 5.0.0 (unreleased)
+
+easyVmaf 5.0 is the first release published on PyPI (`pipx install easyvmaf`).
+From this version easyVmaf follows Semantic Versioning: see
+[Versioning](README.md#versioning) for what the contract covers. It requires
+Python >= 3.10. The models and scores of 4.0 are unchanged. See
+[Migrating from 4.x](README.md#migrating-from-4x) for the one-line migration of
+each change.
+
+### Breaking changes
+
+- **`--end-sync` is now `--shortest`.** The flag never synchronized anything: it
+  sets libvmaf `shortest=1`, so the calculation stops when the shorter input ends.
+  The new name matches libvmaf and FFmpeg's `-shortest`. No alias is kept.
+- **`--reverse` is now `--sync-reverse`**, and it requires `--sync-window`.
+  `--reverse` exits with code 2: `error: --reverse was removed, use --sync-reverse`.
+- **The manual offset moved to `--sync-offset`.** In 4.0, `--sync-start` without
+  `--sync-window` was a manual offset whose sign came from `--reverse`. Now
+  `--sync-start` and `--sync-reverse` only configure the sync search and require
+  `--sync-window`; without it they exit with code 2 and name the equivalent,
+  e.g. `--sync-start 1.5 --sync-reverse` → `use --sync-offset -1.5`.
+- **`--json` is removed.** Every run writes its schema 2 result to a summary
+  file next to the libvmaf log (`<log>_summary.json`; see New). `--json` exits
+  with code 2 and says so.
+- **Python 3.8 and 3.9 are no longer supported.** Both are end of life upstream.
+- **The Python API is renamed after the CLI flags.** The CLI is a client of the
+  API, so the API now uses the flag names (`--sync-offset` is `sync_offset=`):
+
+  | 4.x | 5.0 |
+  |---|---|
+  | `vmaf(mainSrc, refSrc, ...)` | `Vmaf(distorted, reference, ...)` |
+  | `manual_fps=` | `fps=` |
+  | `v.offset = 1.5` | `Vmaf(..., sync_offset=1.5)` |
+  | `output_fmt=` | `output_format=` |
+  | `print_progress=` | `progress=` |
+  | `end_sync=` | `shortest=` |
+  | `gpu_mode=` | `gpu=` (also in `validate_model_config()`) |
+  | `syncOffset(syncWindow, start, reverse)` → `[offset, psnr]` | `sync(window, start=0, reverse=False)` → `SyncResult(offset, psnr)` |
+  | `getVmaf(autoSync=False)` | `compute()` |
+  | `VmafResult.offset` | `VmafResult.sync_offset` |
+
+  - `sync()` returns a `SyncResult` NamedTuple (`offset, psnr = v.sync(2)` still
+    works), and `window` has no default (`syncOffset()` defaulted to 3 s).
+  - `compute()` has no `autoSync`: call `sync()` first.
+  - `setOffset()` is gone: pass `sync_offset=` to the constructor, or call
+    `sync()`. `compute()` rebuilds every filter chain and applies the offset.
+  - `FFprobe`, `FFmpegQos` and `inputFFmpeg` are no longer exported. The
+    submodules (`easyvmaf.vmaf`, `easyvmaf.ffmpeg`, ...) are internal. The class
+    no longer shadows the `easyvmaf.vmaf` module.
+  - New exports: `SyncResult`, `ModelRun`, `FFmpegExecutionError` and
+    `check_ffmpeg`.
+- **docker-compose requires `VIDEO_DIR`.** It defaulted to `./video_samples`,
+  which is removed from the repository; with a default, Docker would silently
+  create an empty root-owned directory and easyvmaf would fail on missing inputs.
+
+### New
+
+- Published on PyPI, with complete package metadata (SPDX license, project URLs,
+  classifiers). The version has a single source, `easyvmaf.__version__`.
+- `--sync-offset S`: signed manual offset. Positive trims the reference,
+  negative the distorted video, with the same sign as the reported offset, so
+  the offset printed by `--sync-only` can be passed as is. It cannot be combined
+  with `--sync-window`.
+- Frame ranges: `--start-frame N` and `--frame-count N` (`start_frame=`,
+  `frame_count=` in the API) measure exactly frames `N..N+count-1` of the full
+  calculation, with the same frame numbers and scores, without cutting or
+  re-encoding the inputs. Consecutive ranges join into the full calculation, so a
+  long video can be split and its ranges computed in parallel, on one machine or
+  on several. Each range writes `<distorted>_vmaf_f<first>-<last>.<ext>`, and
+  the summary adds `vmaf.range` (`start_frame`, `frame_count`, `frames_scored`).
+  With `--cambi-heatmap`, a range writes its heatmaps to
+  `<distorted>_cambi_heatmap_f<first>-<last>/`; concatenating the files of
+  consecutive ranges gives the full calculation's heatmaps byte for byte. MP4,
+  MOV, Matroska and WebM inputs only; not yet with `--subsample` or `--gpu`. See
+  [Frame ranges](README.md#frame-ranges).
+- Summary file: every successful input writes its schema 2 result next to the
+  libvmaf log (`<distorted>_vmaf_summary.json`,
+  `<distorted>_vmaf_f<first>-<last>_summary.json` for a range,
+  `<distorted>_sync_summary.json` with `--sync-only`). The schema 2 field names
+  are those of the 4.0 `--json` record.
+- `easyvmaf` exports `validate_range_config` and `UnsupportedRangeError`.
+
+### Fixed
+
+- The sync search no longer writes `stats_file_psnr.log` to the working
+  directory. Every sync worker wrote it to the same file, so each run left it
+  behind, parallel workers overwrote each other, and a run from a directory that
+  is not writable failed. Nothing read it.
+- The CUDA image installs easyvmaf. Ubuntu 22.04's pip 22.0.2 installed the
+  package as `UNKNOWN-0.0.0`, and the image only worked because it imported
+  easyvmaf from its working directory; pip is now upgraded first, so the
+  `easyvmaf` command exists in the image.
+
 ## 4.0.0
 
 easyVmaf 4.0 computes VMAF v1 by default. The VMAF v0.6 models of 3.x remain
