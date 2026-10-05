@@ -523,6 +523,24 @@ writes `<distorted>_sync_summary.json`:
 Each test must protect against a real user-visible failure or a forbidden
 change; no tests of implementation details, duplicated cases or unrealistic inputs.
 
+## Releasing
+
+`.github/workflows/release.yml` builds and publishes with PyPI Trusted Publishing
+(no tokens). It runs no tests: the integration tests need FFmpeg with libvmaf.
+
+1. Bump `__version__` in `easyvmaf/__init__.py` (the only place the version
+   lives; `pyproject.toml` reads it) and rename the CHANGELOG `(unreleased)`
+   heading to the release date.
+2. Run the full test suite locally, with FFmpeg and libvmaf v1 available.
+3. Push a tag `v<version>` equal to `__version__` → PyPI (environment `pypi`).
+   A tag that differs from `__version__` fails the build before anything is
+   published.
+- `workflow_dispatch` publishes to TestPyPI (environment `testpypi`) as
+  `<version>.dev<run number>`, so every run uploads a new version.
+- A version on PyPI is immutable: it can never be uploaded again, even after
+  deleting it. Never move or reuse a published tag; fix forward with a new
+  version.
+
 ---
 
 ## Known Tech Debt
