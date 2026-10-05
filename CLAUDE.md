@@ -650,5 +650,6 @@ distorted reported at 2x (`_deinterlaceFrame(0.5, main)`), pinned by
 | FFmpeg     | 8.1     |
 | libvmaf    | 3.2.1   |
 | dav1d      | 1.4.3   |
+| nv-codec-headers (CUDA) | 13.0.19.1 |
 | Python     | 3.12    |
 | CUDA base  | 12.3.2  |

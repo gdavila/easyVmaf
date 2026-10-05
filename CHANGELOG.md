@@ -94,6 +94,11 @@ each change.
   package as `UNKNOWN-0.0.0`, and the image only worked because it imported
   easyvmaf from its working directory; pip is now upgraded first, so the
   `easyvmaf` command exists in the image.
+- The CUDA image builds again. It cloned the NVIDIA codec headers from their
+  master branch, which no longer builds FFmpeg 8.1, and downloaded dav1d from
+  a URL that now answers `wget` with an HTML page. The headers are pinned to
+  13.0.19.1, the first release with the CUDA functions libvmaf 3.2.1 uses, and
+  dav1d comes from its release tarball.
 - When FFmpeg cannot run, is older than 8.1 or its libvmaf cannot compute VMAF
   v1, the error says how to install a suitable FFmpeg on the platform (Homebrew
   on macOS, the BtbN static build on Linux) and links the README instead of
