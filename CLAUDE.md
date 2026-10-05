@@ -520,6 +520,10 @@ writes `<distorted>_sync_summary.json`:
   `requires_libvmaf_v1` marker, which skips a test unless FFmpeg's libvmaf
   computes a v1 frame (`probe_libvmaf_model()`)
 
+`EASYVMAF_REQUIRE_FFMPEG=1` turns those skips (FFmpeg/FFprobe unavailable, no
+libvmaf, failed v1 probe) into failures; CI sets it so that an integration job
+cannot pass by skipping. Other skips (Windows-only UNC, ...) are unchanged.
+
 Each test must protect against a real user-visible failure or a forbidden
 change; no tests of implementation details, duplicated cases or unrealistic inputs.
 

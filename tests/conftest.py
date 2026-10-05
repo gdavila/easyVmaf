@@ -54,6 +54,13 @@ def probe_libvmaf_model(model):
     return re.sub(r"^\[[^]]* @ 0x[0-9a-f]+\] ", "", detail[-1])
 
 
+def skip_unusable_ffmpeg(reason):
+    """Skip, or fail with EASYVMAF_REQUIRE_FFMPEG=1: a CI job must not pass by skipping."""
+    if os.environ.get("EASYVMAF_REQUIRE_FFMPEG") == "1":
+        pytest.fail(reason, pytrace=False)
+    pytest.skip(reason)
+
+
 @functools.lru_cache(maxsize=None)
 def libvmaf_v1_skip_reason():
     reason = probe_libvmaf_model(LIBVMAF_V1_PROBE_MODEL)
@@ -64,7 +71,7 @@ def pytest_runtest_setup(item):
     if item.get_closest_marker("requires_libvmaf_v1"):
         reason = libvmaf_v1_skip_reason()
         if reason:
-            pytest.skip(reason)
+            skip_unusable_ffmpeg(reason)
 
 
 def write_scores(path, scores=SCORES):
@@ -94,13 +101,13 @@ def ffmpeg_ok(monkeypatch):
 
 @pytest.fixture(scope="session")
 def ffmpeg_bin():
-    """Real FFmpeg/FFprobe with CPU libvmaf, or skip."""
+    """Real FFmpeg/FFprobe with CPU libvmaf, or skip (see skip_unusable_ffmpeg)."""
     binary, probe = ffmpeg.FFmpegQos._executable, ffmpeg.FFprobe._executable
     if not binary or not probe or not shutil.which(binary) or not shutil.which(probe):
-        pytest.skip("FFmpeg/FFprobe unavailable")
+        skip_unusable_ffmpeg("FFmpeg/FFprobe unavailable")
     filters = subprocess.run([binary, "-hide_banner", "-filters"], capture_output=True, text=True)
     if not any(line.split()[1:2] == ["libvmaf"] for line in filters.stdout.splitlines()):
-        pytest.skip("FFmpeg lacks libvmaf")
+        skip_unusable_ffmpeg("FFmpeg lacks libvmaf")
     return binary
 
 
