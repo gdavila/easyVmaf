@@ -17,7 +17,7 @@ Details about **How it Works** can be found [here](https://ottverse.com/vmaf-eas
 ## Requirements
 
 - Linux / macOS
-- Python >= 3.8
+- Python >= 3.10
 - FFmpeg >= 8.1 built with `--enable-libvmaf`
 - libvmaf >= 3.2.1 built with `-Dbuilt_in_models=true`
 - Python package: [`ffmpeg-progress-yield`](https://github.com/slhck/ffmpeg-progress-yield)
@@ -695,7 +695,7 @@ Both Dockerfiles accept these build-time arguments:
 |-----|---------|-------------|
 | `FFMPEG_version` | `8.1` | FFmpeg release tag (>= 8.1) |
 | `VMAF_version` | `3.2.1` | libvmaf release tag (>= 3.2.1) |
-| `EASYVMAF_VERSION` | `4.0.0` | easyVmaf version label |
+| `EASYVMAF_VERSION` | `5.0.0` | easyVmaf version label |
 | `DAV1D_version` | `1.4.3` | dav1d release (CUDA image only — built from source) |
 
 ```bash

@@ -1,14 +1,32 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "easyvmaf"
-version = "4.0.0"
+dynamic = ["version"]
 description = "FFmpeg-based VMAF computation with automatic deinterlacing, scaling and sync"
 readme = "README.md"
-license = { text = "MIT" }
-requires-python = ">=3.8"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Gabriel Davila" }]
+keywords = ["vmaf", "ffmpeg", "video quality", "libvmaf", "psnr", "cambi"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Multimedia :: Video",
+]
+requires-python = ">=3.10"
 dependencies = [
     "ffmpeg-progress-yield>=0.7.0",
 ]
@@ -21,12 +39,18 @@ dev = [
 [project.scripts]
 easyvmaf = "easyvmaf.cli:main"
 
+[project.urls]
+Homepage = "https://github.com/gdavila/easyVmaf"
+Source = "https://github.com/gdavila/easyVmaf"
+Issues = "https://github.com/gdavila/easyVmaf/issues"
+Changelog = "https://github.com/gdavila/easyVmaf/blob/master/CHANGELOG.md"
+
+[tool.setuptools.dynamic]
+version = { attr = "easyvmaf.__version__" }
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["easyvmaf*"]
-
-[tool.setuptools.package-data]
-easyvmaf = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

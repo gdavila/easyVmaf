@@ -484,8 +484,9 @@ writes `<distorted>_sync_summary.json`:
 - **No print() in Layer 1 or 2**: use `logging` module with `%s`-style format args.
   `print()` belongs in Layer 3 (CLI) only.
 - **Logging destination**: `basicConfig(stream=sys.stderr)` — keeps the results on stdout separate from logs.
-- **Python >= 3.8**. Use `typing.List`/`Tuple`/`Optional`, no `match`, no `list[str]`
-  at runtime. Use `functools.cached_property` or lazy `@property` where appropriate.
+- **Python >= 3.10**. Built-in generics (`list[str]`), `X | None` and `match` are
+  allowed; existing `typing.List`/`Tuple`/`Optional` code is not rewritten. Use
+  `functools.cached_property` or lazy `@property` where appropriate.
 - **Public API**: the names exported by `easyvmaf/__init__.py` and their
   signatures are the public API (SemVer after the first PyPI release). Do not
   rename or change them without explicit instruction. The submodules are internal:
@@ -576,7 +577,7 @@ distorted reported at 2x (`_deinterlaceFrame(0.5, main)`), pinned by
 ## Environment
 
 - Linux / macOS only (current)
-- Python >= 3.8
+- Python >= 3.10
 - FFmpeg >= 8.1 built with `--enable-libvmaf`
 - libvmaf >= 3.2.1 built with `-Dbuilt_in_models=true` (3.2.0 is not enough: its
   default build cannot compute the v1 `speed_chroma` feature). 3.2.1 reports its
@@ -587,7 +588,7 @@ distorted reported at 2x (`_deinterlaceFrame(0.5, main)`), pinned by
 ### Docker image versions (pinned)
 | Component  | Version |
 |------------|---------|
-| easyVmaf   | 4.0.0   |
+| easyVmaf   | 5.0.0   |
 | FFmpeg     | 8.1     |
 | libvmaf    | 3.2.1   |
 | dav1d      | 1.4.3   |

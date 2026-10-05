@@ -4,7 +4,7 @@
 ARG FFMPEG_version=8.1
 ARG VMAF_version=3.2.1
 ARG DAV1D_version=1.4.3
-ARG EASYVMAF_VERSION=4.0.0
+ARG EASYVMAF_VERSION=5.0.0
 ARG PYTHON_VERSION=3.12
 
 FROM nvidia/cuda:12.3.2-devel-ubuntu22.04 AS base-cuda
@@ -119,12 +119,13 @@ RUN apt-get update -yqq && \
         python3 python3-pip && \
     apt-get autoremove -y && \
     apt-get clean -y && \
-    pip3 install ffmpeg-progress-yield
+    python3 -m pip install --upgrade pip && \
+    python3 -m pip install ffmpeg-progress-yield
 
 COPY --from=build-cuda /usr/local /usr/local/
 COPY --from=build-cuda /app/easyvmaf /app/easyvmaf/
 
 WORKDIR /app/easyvmaf
-RUN pip3 install --no-deps .
+RUN python3 -m pip install --no-deps .
 
 ENTRYPOINT ["python3", "-u", "-m", "easyvmaf"]
