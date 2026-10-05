@@ -1,4 +1,4 @@
-"""Layer 3: argument validation, batch processing and stdout/stderr contracts."""
+"""Layer 3: argument validation, batch processing, summary files and stdout/stderr contracts."""
 
 import math
 import sys
@@ -23,6 +23,11 @@ def exit_code(monkeypatch, *arguments):
     with pytest.raises(SystemExit) as exc:
         run(monkeypatch, *arguments)
     return exc.value.code
+
+
+def summary(path):
+    """The summary file of a distorted input or libvmaf log, e.g. dist_vmaf_summary.json."""
+    return strict_loads(Path(path).read_text())
 
 
 def result_for(models, scores, log_path):
@@ -68,7 +73,7 @@ def batch(tmp_path, monkeypatch, ffmpeg_ok):
 
 @pytest.mark.parametrize("arguments, code, message", [
     ([], 1, "usage:"),
-    (["-d", "dist.mkv", "--json"], 2, "-r"),
+    (["-d", "dist.mkv"], 2, "-r"),
     (["-unknown"], 2, "-unknown"),
     (["--sync-window=-1"], 2, "--sync-window"),
     (["--sync-start=nan"], 2, "--sync-start"),
@@ -88,6 +93,7 @@ def batch(tmp_path, monkeypatch, ffmpeg_ok):
     (["-model", "4k"], 2, "--display"),  # 4.0 betas accepted it as an alias
     (["-reverse"], 2, "--sync-reverse"),  # argparse alone would read it as '-r everse'
     (["--reverse"], 2, "--sync-reverse"),
+    (["--json"], 2, "_summary.json"),
     (["--sync-offset=nan"], 2, "--sync-offset"),
     (["--sync-offset", "1", "--sync-window", "1"], 2, "mutually exclusive"),
     # Before --sync-offset, --sync-start without a window was a manual offset, signed by -reverse.
@@ -100,7 +106,7 @@ def batch(tmp_path, monkeypatch, ffmpeg_ok):
 def test_invalid_arguments_fail_on_stderr_before_ffmpeg_check(monkeypatch, capsys,
                                                               arguments, code, message):
     if arguments and arguments[0] != "-d":
-        arguments = ["-d", "dist.mkv", "-r", "ref.mkv", *arguments, "--json"]
+        arguments = ["-d", "dist.mkv", "-r", "ref.mkv", *arguments]
     check = Mock()
     monkeypatch.setattr(cli, "check_ffmpeg", check)
 
@@ -125,7 +131,7 @@ def test_unusable_ffmpeg_fails_on_stderr(monkeypatch, capsys, capability, messag
     monkeypatch.setattr(cli, "vmaf", constructor)
 
     assert exit_code(monkeypatch, "-d", "dist.mkv", "-r", "ref.mkv", "--gpu",
-                     "--vmaf-version", "0.6", "--json") == 1
+                     "--vmaf-version", "0.6") == 1
 
     out, err = capsys.readouterr()
     assert out == ""
@@ -141,7 +147,7 @@ def test_missing_input_fails_on_stderr(batch, monkeypatch, capsys, missing, mess
     distorted = batch.files[0]
     Path(distorted if missing == "distorted" else batch.reference).unlink()
 
-    assert exit_code(monkeypatch, "-d", distorted, "-r", batch.reference, "--json") == 1
+    assert exit_code(monkeypatch, "-d", distorted, "-r", batch.reference) == 1
 
     out, err = capsys.readouterr()
     assert out == ""
@@ -174,7 +180,7 @@ def test_options_are_forwarded(batch, monkeypatch, options, forwarded):
     distorted = batch.files[0]
     calculation = batch.calc[distorted]
 
-    run(monkeypatch, "-d", distorted, "-r", batch.reference, "--json", *options)
+    run(monkeypatch, "-d", distorted, "-r", batch.reference, *options)
 
     assert batch.constructor.call_args.args == (distorted, batch.reference)
     assert batch.constructor.call_args.kwargs.items() >= forwarded.items()
@@ -186,15 +192,17 @@ def test_options_are_forwarded(batch, monkeypatch, options, forwarded):
         assert calculation.offset == 0
 
 
-def test_json_reports_v1_by_default(tmp_path, monkeypatch, capsys, ffmpeg_ok, scored):
+def test_summary_reports_v1_by_default(tmp_path, monkeypatch, capsys, ffmpeg_ok, scored):
     """JSON schema 2 contract, with VMAF v1 as the default model set."""
     reference, distorted = tmp_path / "ref.mkv", tmp_path / "dist.mkv"
     reference.touch()
     distorted.touch()
 
-    run(monkeypatch, "-d", str(distorted), "-r", str(reference), "--fps", "10", "--json")
+    run(monkeypatch, "-d", str(distorted), "-r", str(reference), "--fps", "10")
 
-    assert strict_loads(capsys.readouterr().out) == {
+    path = tmp_path / "dist_vmaf_summary.json"
+    assert "Summary file path:  %s" % path in capsys.readouterr().out
+    assert summary(path) == {
         "schema_version": 2,
         "distorted": str(distorted),
         "reference": str(reference),
@@ -215,49 +223,54 @@ def test_json_reports_v1_by_default(tmp_path, monkeypatch, capsys, ffmpeg_ok, sc
     }
 
 
-def test_vmaf_v06_keeps_its_metrics(tmp_path, monkeypatch, capsys, ffmpeg_ok, scored):
+def test_vmaf_v06_keeps_its_metrics(tmp_path, monkeypatch, ffmpeg_ok, scored):
     """3.x users migrating with --vmaf-version 0.6 keep vmaf_hd, vmaf_hd_neg and vmaf_hd_phone."""
     reference, distorted = tmp_path / "ref.mkv", tmp_path / "dist.mkv"
     reference.touch()
     distorted.touch()
 
     run(monkeypatch, "-d", str(distorted), "-r", str(reference), "--fps", "10",
-        "--vmaf-version", "0.6", "--json")
+        "--vmaf-version", "0.6")
 
-    record = strict_loads(capsys.readouterr().out)
+    record = summary(tmp_path / "dist_vmaf_summary.json")
     assert list(record["vmaf"]["scores"]) == ["vmaf_hd", "vmaf_hd_neg", "vmaf_hd_phone"]
     assert record["vmaf"]["pix_fmt"] == "yuv420p"
 
 
-def test_json_reports_the_frame_range(batch, monkeypatch, capsys):
+def test_summary_reports_the_frame_range(batch, monkeypatch):
     """An orchestrator weights each range by frames_scored; the last range can be short."""
     distorted = batch.files[0]
     result = batch.calc[distorted].getVmaf.return_value
     result.start_frame, result.frame_count, result.frames_scored = 9000, 9000, 1234
+    result.log_path = str(Path(distorted).with_name("z_vmaf_f9000-10233.json"))
 
     run(monkeypatch, "-d", distorted, "-r", batch.reference, "--start-frame", "9000",
-        "--frame-count", "9000", "--json")
+        "--frame-count", "9000")
 
-    assert strict_loads(capsys.readouterr().out)["vmaf"]["range"] == {
+    # Named after the range log: ranges computed in parallel never overwrite each other.
+    record = summary(Path(distorted).with_name("z_vmaf_f9000-10233_summary.json"))
+    assert record["vmaf"]["range"] == {
         "start_frame": 9000, "frame_count": 9000, "frames_scored": 1234}
 
 
-@pytest.mark.parametrize("options", [["--sync-only"], ["--sync-only", "--json"], ["--json"]],
-                         ids=" ".join)
-def test_batch_processes_each_input_once_in_glob_order(batch, monkeypatch, capsys, options):
-    run(monkeypatch, "-d", "*.mkv", "-r", batch.reference, "--sync-window", "0.4", *options)
+@pytest.mark.parametrize("full", [False, True], ids=["sync-only", "vmaf"])
+def test_batch_processes_each_input_once_in_glob_order(batch, monkeypatch, capsys, full):
+    run(monkeypatch, "-d", "*.mkv", "-r", batch.reference, "--sync-window", "0.4",
+        *([] if full else ["--sync-only"]))
 
-    full = "--sync-only" not in options
     assert [call.args[0] for call in batch.constructor.call_args_list] == batch.files
     for distorted in batch.files:
         batch.calc[distorted].syncOffset.assert_called_once_with(0.4, 0, False)
         assert batch.calc[distorted].getVmaf.call_count == full
-    lines = capsys.readouterr().out.splitlines()
-    if "--json" not in options:
-        assert lines == ["offset: {} | psnr: {}".format(index * 0.1, 30.1234567 + index)
-                         for index in range(3)]
-        return
-    records = [strict_loads(line) for line in lines]
+    suffix = "_vmaf_summary.json" if full else "_sync_summary.json"
+    paths = [Path(distorted).with_name(Path(distorted).stem + suffix)
+             for distorted in batch.files]
+    if not full:
+        assert capsys.readouterr().out.splitlines() == [
+            line for index, path in enumerate(paths)
+            for line in ("offset: {} | psnr: {}".format(index * 0.1, 30.1234567 + index),
+                         "Summary file path: {}".format(path))]
+    records = [summary(path) for path in paths]
     assert [record["distorted"] for record in records] == batch.files
     for index, record in enumerate(records):
         assert record["schema_version"] == 2
@@ -267,11 +280,10 @@ def test_batch_processes_each_input_once_in_glob_order(batch, monkeypatch, capsy
         assert ("vmaf" in record) == full
 
 
-@pytest.mark.parametrize("seconds, use_json", [
-    ("0.2", False), ("-0.2", True), ("-0", True),
-], ids=["reference-text", "distorted-json", "negative-zero-json"])
+@pytest.mark.parametrize("seconds", ["0.2", "-0.2", "-0"],
+                         ids=["reference", "distorted", "negative-zero"])
 def test_manual_offset_is_applied_and_reported_for_every_input(
-        tmp_path, monkeypatch, capsys, ffmpeg_ok, scored, seconds, use_json):
+        tmp_path, monkeypatch, capsys, ffmpeg_ok, scored, seconds):
     # Real preprocessing and trim construction; only probing and scoring are stubbed.
     reference = tmp_path / "reference.mkv"
     files = [tmp_path / "first.mkv", tmp_path / "second.mkv"]
@@ -288,19 +300,17 @@ def test_manual_offset_is_applied_and_reported_for_every_input(
     monkeypatch.setattr(cli, "vmaf", construct)
 
     run(monkeypatch, "-d", "*.mkv", "-r", str(reference), "--fps", "10",
-        "--sync-offset", seconds, *(["--json"] if use_json else []))
+        "--sync-offset", seconds)
 
     expected = float(seconds) or 0.0
-    out = capsys.readouterr().out
-    if use_json:
-        records = [strict_loads(line) for line in out.splitlines()]
-        assert all(record["sync"]["psnr"] is None for record in records)
-        offsets = [record["sync"]["offset"] for record in records]
-    else:
-        offsets = [float(line.split("|")[0].split(":", 1)[1])
-                   for line in out.splitlines() if line.startswith("offset:")]
+    records = [summary(path.with_name(path.stem + "_vmaf_summary.json")) for path in files]
+    assert all(record["sync"]["psnr"] is None for record in records)
+    printed = [float(line.split("|")[0].split(":", 1)[1])
+               for line in capsys.readouterr().out.splitlines() if line.startswith("offset:")]
     # Compare signs too: --sync-offset -0 must not report -0.0.
-    assert [(o, math.copysign(1, o)) for o in offsets] == [(expected, math.copysign(1, expected))] * 2
+    for offsets in ([record["sync"]["offset"] for record in records], printed):
+        assert ([(o, math.copysign(1, o)) for o in offsets]
+                == [(expected, math.copysign(1, expected))] * 2)
     assert len(instances) == 2
     for instance in instances:
         main = ";".join(instance.ffmpegQos.main.filtersList)
@@ -353,12 +363,12 @@ def test_ffmpeg_failure_stops_batch_without_reading_stale_results(
     monkeypatch.setattr(ffmpeg.subprocess, "Popen", process_for_command)
     monkeypatch.setattr(ffmpeg, "FfmpegProgress", process_for_command)
 
-    assert exit_code(monkeypatch, "-d", "*.mkv", "-r", str(reference), "--json",
+    assert exit_code(monkeypatch, "-d", "*.mkv", "-r", str(reference),
                      *(["--progress"] if progress else [])) == 1
 
-    out, err = capsys.readouterr()
-    records = [strict_loads(line) for line in out.splitlines()]
-    assert [record["distorted"] for record in records] == files[:1]
+    err = capsys.readouterr().err
+    summaries = sorted(tmp_path.glob("*_summary.json"))
+    assert [summary(path)["distorted"] for path in summaries] == files[:1]
     assert constructed == files[:2]
     assert "FFmpeg execution failed" in err
 
@@ -367,9 +377,9 @@ def test_unserializable_result_stops_batch_without_partial_json(batch, monkeypat
     batch.calc[batch.files[1]].syncOffset.return_value = (float("inf"), 42.0)
 
     assert exit_code(monkeypatch, "-d", "*.mkv", "-r", batch.reference,
-                     "--sync-window", "0.4", "--json") == 1
+                     "--sync-window", "0.4") == 1
 
-    out, err = capsys.readouterr()
-    assert [strict_loads(line)["distorted"] for line in out.splitlines()] == batch.files[:1]
-    assert "strict JSON" in err
+    summaries = sorted(Path(batch.reference).parent.glob("*_summary.json"))
+    assert [summary(path)["distorted"] for path in summaries] == batch.files[:1]
+    assert "strict JSON" in capsys.readouterr().err
     assert batch.constructor.call_count == 2

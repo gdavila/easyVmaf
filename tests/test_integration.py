@@ -360,7 +360,7 @@ def test_sync_worker_stops_decoding_after_trim(encode, tmp_path, monkeypatch):
 
 @pytest.mark.requires_libvmaf_v1  # the real CLI startup check requires VMAF v1
 @pytest.mark.parametrize("sync_only", [True, False], ids=["sync_only-batch", "full"])
-def test_cli_json_stdout_stays_ndjson_with_verbose_progress(encode, tmp_path, sync_only):
+def test_cli_writes_a_strict_json_summary_per_input(encode, tmp_path, sync_only):
     reference = tmp_path / "reference.mkv"
     # VMAF v1 (the default) rejects CAMBI encoding sizes below 180x150.
     encode("-f", "lavfi", "-i", "testsrc2=s=320x180:r=10:d=1", "-c:v", "ffv1", reference)
@@ -371,28 +371,31 @@ def test_cli_json_stdout_stays_ndjson_with_verbose_progress(encode, tmp_path, sy
     pattern = "dist-*.mkv" if sync_only else "dist-same.mkv"
 
     result = run_cli("-d", str(tmp_path / pattern), "-r", str(reference),
-                     "--sync-window", "0.2", "--fps", "10", "--threads", "1", "--json",
+                     "--sync-window", "0.2", "--fps", "10", "--threads", "1",
                      "--verbose", "--progress",
                      *(["--sync-only"] if sync_only else []), cwd=tmp_path)
 
     assert result.returncode == 0, result.stderr
     assert "FFmpeg" in result.stderr  # logging still happens, on stderr
-    lines = result.stdout.splitlines()
-    records = {Path(record["distorted"]).name: record for record in map(strict_loads, lines)}
-    assert len(records) == len(lines) == (2 if sync_only else 1)
+    summaries = sorted(tmp_path.glob("*_summary.json"))
+    assert [path.name for path in summaries] == (
+        ["dist-bright_sync_summary.json", "dist-same_sync_summary.json"] if sync_only
+        else ["dist-same_vmaf_summary.json"])
+    records = {Path(record["distorted"]).name: record
+               for record in (strict_loads(path.read_text()) for path in summaries)}
     # Identical frames: FFmpeg reports PSNR inf, which strict JSON cannot carry.
     assert records["dist-same.mkv"]["sync"] == {"offset": 0.0, "psnr": None,
                                                 "psnr_status": "positive_infinity"}
     if sync_only:
         assert math.isfinite(records["dist-bright.mkv"]["sync"]["psnr"])
         assert all("vmaf" not in record for record in records.values())
-        assert not list(tmp_path.glob("*_vmaf.*"))
+        assert not list(tmp_path.glob("*_vmaf*"))
     else:
         assert Path(records["dist-same.mkv"]["vmaf"]["output_file"]).is_file()
 
 
 def test_cli_without_ffmpeg_fails_on_stderr(tmp_path):
-    result = run_cli("-d", "dist", "-r", "ref", "--json", cwd=tmp_path,
+    result = run_cli("-d", "dist", "-r", "ref", cwd=tmp_path,
                      FFMPEG=str(tmp_path / "missing-ffmpeg"))
     assert result.returncode == 1
     assert result.stdout == ""
@@ -433,7 +436,7 @@ class Calculation:
         self.ffmpegQos = ffmpeg.FFmpegQos(main, reference)
 
     def getVmaf(self):
-        output = str(root / "result.json")
+        output = str(root / (Path(self.main).stem + "_vmaf.json"))
         self.ffmpegQos.vmafpath = output
         if self.main == files[0]:
             return VmafResult(scores={"vmaf_hd": 90, "vmaf_hd_neg": 89, "vmaf_hd_phone": 95},
@@ -449,7 +452,7 @@ class Calculation:
                                       print_progress=progress)
 
 cli.vmaf = Calculation
-sys.argv = ["easyvmaf", "-d", "*.mp4", "-r", str(root / "ref.mp4"), "--json"]
+sys.argv = ["easyvmaf", "-d", "*.mp4", "-r", str(root / "ref.mp4")]
 try:
     cli.main()
 finally:
@@ -483,8 +486,9 @@ def test_sigint_keeps_completed_records_and_reaps_ffmpeg(ffmpeg_bin, tmp_path, p
         stdout, stderr = process.communicate(timeout=10)
         assert process.returncode == 130
         assert json.loads((tmp_path / "reaped.json").read_text()) == ["already-reaped"]
-        records = [strict_loads(line) for line in stdout.splitlines()]
-        assert [record["distorted"] for record in records] == [str(tmp_path / "first.mp4")]
+        summaries = sorted(tmp_path.glob("*_summary.json"))
+        assert [strict_loads(path.read_text())["distorted"] for path in summaries] == [
+            str(tmp_path / "first.mp4")]
         assert "SIGINT" in stderr
         assert "Traceback" not in stderr
         assert "FFmpeg execution failed" not in stderr

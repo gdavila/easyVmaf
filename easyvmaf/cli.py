@@ -57,24 +57,27 @@ _FLAG_LABELS = {
     'cambi_heatmap': '--cambi-heatmap',
 }
 
-# Removed flags, without aliases: rejected with the name of their replacement
+_JSON_REMOVED = 'the result is always written to a <log>_summary.json file'
+
+# Removed flags, without aliases: rejected with how to replace them
 _REMOVED_FLAGS = {
-    '-sw': '--sync-window',
-    '-ss': '--sync-start',
-    '-sync_only': '--sync-only',
-    '-reverse': '--sync-reverse',
-    '--reverse': '--sync-reverse',
-    '-fps': '--fps',
-    '-subsample': '--subsample',
-    '-threads': '--threads',
-    '-endsync': '--shortest',
-    '-output_fmt': '--output-format',
-    '-cambi_heatmap': '--cambi-heatmap',
-    '-progress': '--progress',
-    '-verbose': '--verbose',
-    '-json': '--json',
-    '-gpu': '--gpu',
-    '-model': '--display',
+    '-sw': 'use --sync-window',
+    '-ss': 'use --sync-start',
+    '-sync_only': 'use --sync-only',
+    '-reverse': 'use --sync-reverse',
+    '--reverse': 'use --sync-reverse',
+    '-fps': 'use --fps',
+    '-subsample': 'use --subsample',
+    '-threads': 'use --threads',
+    '-endsync': 'use --shortest',
+    '-output_fmt': 'use --output-format',
+    '-cambi_heatmap': 'use --cambi-heatmap',
+    '-progress': 'use --progress',
+    '-verbose': 'use --verbose',
+    '-json': _JSON_REMOVED,
+    '--json': _JSON_REMOVED,
+    '-gpu': 'use --gpu',
+    '-model': 'use --display',
 }
 
 
@@ -143,7 +146,30 @@ def _build_result(distorted, reference, offset, psnr, vmaf_result=None):
     return result
 
 
-def _print_text_result(distorted, offset, psnr, vmaf_result):
+def _summary_path(distorted, vmaf_result=None):
+    """
+    Path of the summary file, next to the libvmaf log: <log>_summary.json
+    (distorted_vmaf_summary.json, distorted_vmaf_f0-99_summary.json).
+    --sync-only runs have no log: <distorted>_sync_summary.json.
+    """
+    if vmaf_result is None:
+        return os.path.splitext(distorted)[0] + '_sync_summary.json'
+    return os.path.splitext(vmaf_result.log_path)[0] + '_summary.json'
+
+
+def _write_summary(result, path):
+    """Serialize the entire record before writing any of it to the file."""
+    try:
+        serialized = json.dumps(result, allow_nan=False, indent=2)
+    except ValueError as e:
+        print(f"[easyVmaf] ERROR: Cannot serialize result as strict JSON: {e}",
+              file=sys.stderr)
+        sys.exit(1)
+    with open(path, 'w') as summary:
+        summary.write(serialized + '\n')
+
+
+def _print_text_result(distorted, offset, psnr, vmaf_result, summary_path):
     print("\n \n \n \n \n ")
     print("=======================================", flush=True)
     print("Results:", distorted, flush=True)
@@ -162,20 +188,10 @@ def _print_text_result(distorted, offset, psnr, vmaf_result):
         print(f"{run.spec.name:<{width}}  {vmaf_result.scores[run.spec.name]:.6f}  "
               f"[{run.libvmaf_model}, {low}-{high}]", flush=True)
     print("VMAF output file path: ", vmaf_result.log_path)
+    print("Summary file path: ", summary_path)
     if vmaf_result.cambi_heatmap_path:
         print("CAMBI Heatmap output path: ", vmaf_result.cambi_heatmap_path)
     print("\n \n \n \n \n ")
-
-
-def _print_json_result(result):
-    """Serialize the entire record before writing any of it to stdout."""
-    try:
-        serialized = json.dumps(result, allow_nan=False)
-    except ValueError as e:
-        print(f"[easyVmaf] ERROR: Cannot serialize result as strict JSON: {e}",
-              file=sys.stderr)
-        sys.exit(1)
-    print(serialized)
 
 
 def _enc_size(value):
@@ -200,7 +216,7 @@ def get_args():
                         \n\n \t Autosync: The first frames of the distorted video are used as reference to a sync look up with the Reference video. \
                         \n \t \t The sync is doing by a frame-by-frame look up of the best PSNR\
                         \n \t \t See [--sync-reverse] for more options of syncing\
-                        \n\n As output, a json file with VMAF score is created",
+                        \n\n As output, the per-frame libvmaf log (<distorted>_vmaf.json) and a summary of the results (<distorted>_vmaf_summary.json) are created",
                       formatter_class=argparse.RawTextHelpFormatter)
 
     inputs = parser.add_argument_group('input')
@@ -268,10 +284,6 @@ def get_args():
     output.add_argument('--output-format', dest='output_format', type=str.lower,
                         choices=('json', 'xml', 'csv'), default='json',
                         help='Output vmaf file format. Options: json, xml or csv (Default: json)')
-    output.add_argument('--json', dest='json', action='store_true',
-                        help='Output final results as JSON to stdout. '
-                             'Compatible with --sync-only and full VMAF runs. '
-                             '(Default: false).')
     output.add_argument('--cambi-heatmap', dest='cambi_heatmap', action='store_true',
                         help='Activate cambi heatmap. (Default: false).')
     output.add_argument('--verbose', dest='verbose', action='store_true',
@@ -342,8 +354,7 @@ class MyParser(argparse.ArgumentParser):
                 break
             flag = arg.split('=', 1)[0]
             if flag in _REMOVED_FLAGS:
-                self.error('%s was removed, use %s'
-                           % (flag, _REMOVED_FLAGS[flag]))
+                self.error('%s was removed, %s' % (flag, _REMOVED_FLAGS[flag]))
         return super().parse_known_args(args, namespace)
 
     def error(self, message):
@@ -376,7 +387,6 @@ def main():
     shortest = cmdParser.shortest
     cambi_heatmap = cmdParser.cambi_heatmap
     sync_only = cmdParser.sync_only
-    use_json = cmdParser.json
     gpu_mode = cmdParser.gpu
 
     # Setting verbosity
@@ -389,7 +399,7 @@ def main():
         level=logging.DEBUG if verbose else logging.INFO,
         format='%(asctime)s [%(name)s] %(message)s',
         datefmt='%H:%M:%S',
-        stream=sys.stderr,    # explicit — stdout is reserved for JSON output
+        stream=sys.stderr,    # explicit — stdout is reserved for the results
     )
 
     # --- FFmpeg compatibility check ---
@@ -466,16 +476,15 @@ def main():
             if syncWin > 0:
                 offset, psnr = myVmaf.syncOffset(syncWin, ss, reverse)
                 if sync_only:
-                    if use_json:
-                        result = _build_result(
-                            distorted=main,
-                            reference=reference,
-                            offset=offset,
-                            psnr=psnr,
-                        )
-                        _print_json_result(result)
-                    else:
-                        print(f"offset: {offset} | psnr: {psnr}", flush=True)
+                    summary_path = _summary_path(main)
+                    _write_summary(_build_result(
+                        distorted=main,
+                        reference=reference,
+                        offset=offset,
+                        psnr=psnr,
+                    ), summary_path)
+                    print(f"offset: {offset} | psnr: {psnr}", flush=True)
+                    print(f"Summary file path: {summary_path}", flush=True)
                     continue
             else:
                 # `or 0.0` also turns --sync-offset -0 into 0.0, never reported as -0.0.
@@ -488,16 +497,15 @@ def main():
             print(f"[easyVmaf] ERROR: {e}", file=sys.stderr)
             sys.exit(1)
 
-        if use_json:
-            _print_json_result(_build_result(
-                distorted=main,
-                reference=reference,
-                offset=offset,
-                psnr=psnr,
-                vmaf_result=vmaf_result,
-            ))
-        else:
-            _print_text_result(main, offset, psnr, vmaf_result)
+        summary_path = _summary_path(main, vmaf_result)
+        _write_summary(_build_result(
+            distorted=main,
+            reference=reference,
+            offset=offset,
+            psnr=psnr,
+            vmaf_result=vmaf_result,
+        ), summary_path)
+        _print_text_result(main, offset, psnr, vmaf_result, summary_path)
 
 
 if __name__ == '__main__':

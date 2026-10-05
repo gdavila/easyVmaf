@@ -182,11 +182,14 @@ These flags apply only to VMAF v1 models. Using them without `1` in
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--output-format {json,xml,csv}` | `json` | Format of the per-frame libvmaf log. |
-| `--json` | off | Print the final results as JSON to stdout. Compatible with `--sync-only` and full VMAF runs. In batch mode, one JSON object per line (NDJSON). |
+| `--output-format {json,xml,csv}` | `json` | Format of the per-frame libvmaf log. The [summary file](#summary-file) is always JSON. |
 | `--cambi-heatmap` | off | Compute and save CAMBI banding heatmaps. |
 | `--verbose` | off | Enable verbose log level. |
 | `--progress` | off | Show FFmpeg progress during the VMAF computation. |
+
+Every run writes two files next to the distorted video: the per-frame libvmaf
+log (`<distorted>_vmaf.json`) and a [summary file](#summary-file) with the
+final results (`<distorted>_vmaf_summary.json`).
 
 ### Execution
 
@@ -383,11 +386,11 @@ ranges and compute them in parallel, on one machine or on several:
 
 ```bash
 # 1. Sync once
-easyvmaf -d distorted.mp4 -r reference.mp4 --sync-window 3 --sync-only --json   # sync.offset: 1.5
+easyvmaf -d distorted.mp4 -r reference.mp4 --sync-window 3 --sync-only   # sync.offset: 1.5
 
 # 2. One range per process or instance, with the same offset and options
-easyvmaf -d distorted.mp4 -r reference.mp4 --sync-offset 1.5 --start-frame 0    --frame-count 9000 --json
-easyvmaf -d distorted.mp4 -r reference.mp4 --sync-offset 1.5 --start-frame 9000 --frame-count 9000 --json
+easyvmaf -d distorted.mp4 -r reference.mp4 --sync-offset 1.5 --start-frame 0    --frame-count 9000
+easyvmaf -d distorted.mp4 -r reference.mp4 --sync-offset 1.5 --start-frame 9000 --frame-count 9000
 ```
 
 A range can also search the sync itself with `--sync-window`: the search always
@@ -406,7 +409,9 @@ How a range keeps the frames of the full calculation:
 Each range writes its own log, named after the requested frames:
 `<distorted>_vmaf_f<first>-<last>.{json,xml,csv}` (`-end` without
 `--frame-count`). Its frames keep their frame numbers in the full calculation,
-and its pooled metrics cover only the range.
+and its pooled metrics cover only the range. Its summary file is named after
+the log (`<distorted>_vmaf_f<first>-<last>_summary.json`), so ranges computed in
+parallel never overwrite each other's results.
 
 Limits:
 
@@ -444,7 +449,7 @@ easyvmaf -d distorted.mp4 -r reference.mp4 --view phone
 easyvmaf -d distorted.mp4 -r reference.mp4 --vmaf-version 0.6
 
 # v1 and v0.6 in one pass, to compare both generations
-easyvmaf -d distorted.mp4 -r reference.mp4 --vmaf-version 1 0.6 --json
+easyvmaf -d distorted.mp4 -r reference.mp4 --vmaf-version 1 0.6
 ```
 
 ### CAMBI encoding parameters
@@ -485,11 +490,12 @@ pix_fmt: yuv420p10le | HFR: off
 vmaf_v1_hd     93.256258  [vmaf_v1.0.16_3d0h, 0-100]
 vmaf_v1_phone  95.393178  [vmaf_v1.0.16_5d0h, 0-100]
 VMAF output file path:  distorted_vmaf.json
+Summary file path:  distorted_vmaf_summary.json
 ```
 
 Without a sync search, `--sync-offset X` applies a manual offset: positive to trim
 the reference, negative to trim the distorted video. Automatic offsets use the
-same sign convention in JSON and human output, so the offset reported by
+same sign convention in the summary file and the human output, so the offset reported by
 `--sync-only` can be passed to `--sync-offset` as is. A zero manual offset is reported
 as `0.0`, including `--sync-offset -0`.
 
@@ -498,26 +504,22 @@ as `0.0`, including `--sync-offset -0`.
 `--sync-only` requires an explicit, finite `--sync-window` greater than zero.
 Missing, zero, negative, NaN, or infinite windows are usage errors (exit code 2),
 reported before checking FFmpeg or probing videos. Every matched input is
-synchronized, with one result per file. JSON results contain only
-`schema_version`, `distorted`, `reference`, and `sync`; no VMAF calculation or
-output file is produced.
+synchronized, with one result per file. No VMAF calculation or libvmaf log is
+produced: the summary file of each input is `<distorted>_sync_summary.json` and
+contains only `schema_version`, `distorted`, `reference`, and `sync`.
 
 ```bash
-# Human-readable output
 easyvmaf -d distorted.mp4 -r reference.mp4 --sync-window 2 --sync-only
 
-# Structured JSON output
-easyvmaf -d distorted.mp4 -r reference.mp4 --sync-window 2 --sync-only --json
-
-# Batch: one JSON object per matched file (NDJSON)
-easyvmaf -d "folder/*.mp4" -r reference.mp4 --sync-window 2 --sync-only --json
+# Batch: one summary file per matched file
+easyvmaf -d "folder/*.mp4" -r reference.mp4 --sync-window 2 --sync-only
 ```
 
 ### Batch processing
 
 ```bash
-# Glob pattern — one result per file
-easyvmaf -d "folder/*.mp4" -r reference.mp4 --json
+# Glob pattern — one log and one summary file per file
+easyvmaf -d "folder/*.mp4" -r reference.mp4
 ```
 
 ### GPU
@@ -537,14 +539,20 @@ error: --gpu only supports --vmaf-version 0.6: libvmaf_cuda cannot compute VMAF 
 In GPU mode both inputs are measured in `yuv420p`. Sync always runs on CPU; the
 GPU is used only for the final VMAF scoring step.
 
-## JSON output
+## Summary file
 
-`--json` prints one JSON object per file to stdout (NDJSON in batch mode), with
-`schema_version: 2`:
+Every run writes the final results of each input to a JSON summary file, next
+to the libvmaf log and named after it, with `schema_version: 2`:
 
-```bash
-easyvmaf -d distorted.mp4 -r reference.mp4 --sync-window 2 --json
-```
+| Run | Summary file |
+|---|---|
+| VMAF | `<distorted>_vmaf_summary.json` |
+| Frame range | `<distorted>_vmaf_f<first>-<last>_summary.json` |
+| `--sync-only` | `<distorted>_sync_summary.json` |
+
+The path is printed at the end of each result (`Summary file path:`). For
+`easyvmaf -d distorted.mp4 -r reference.mp4 --sync-window 2`,
+`distorted_vmaf_summary.json` contains:
 
 ```json
 {
@@ -585,14 +593,14 @@ easyvmaf -d distorted.mp4 -r reference.mp4 --sync-window 2 --json
 `vmaf.scores` is the flat view for quick reads; `vmaf.models` carries the context
 needed to avoid comparing scores of different generations.
 
-Each result is strict JSON. Logs, progress, diagnostics, and help associated with
-usage errors go to stderr. Explicit `-h` help goes to stdout. If a file fails,
-the command stops with a nonzero exit code and emits no result for that file;
-successful records from earlier files in a batch remain on stdout.
+Each summary is strict JSON. Logs, progress, diagnostics, and help associated with
+usage errors go to stderr; the human-readable results go to stdout. If a file fails,
+the command stops with a nonzero exit code and writes no summary for that file;
+the summaries of earlier files in a batch remain. A summary left by a previous
+run is not removed.
 
 SIGINT (Ctrl-C) exits with code 130 and reports the interruption on stderr.
-The interrupted calculation emits no result; completed batch records remain on
-stdout. An active VMAF scoring process is stopped and reaped, with a bounded wait.
+The interrupted calculation writes no summary; completed batch summaries remain. An active VMAF scoring process is stopped and reaped, with a bounded wait.
 During automatic synchronization, shutdown can still wait for running PSNR search
 workers to finish.
 
@@ -601,8 +609,8 @@ When sync PSNR was not calculated, `sync.psnr` is `null` with no status field.
 For nonfinite PSNR, `sync.psnr` is also `null`, and `sync.psnr_status` identifies
 the value as `"positive_infinity"`, `"negative_infinity"`, or `"nan"`. Identical
 frames legitimately produce positive infinity. This representation affects only
-JSON output; the Python API and sync calculation retain the numeric value.
-Nonfinite offsets or VMAF scores cause an error before the result is emitted.
+the summary file; the Python API and sync calculation retain the numeric value.
+Nonfinite offsets or VMAF scores cause an error before the summary is written.
 
 ## Python API
 
@@ -680,10 +688,6 @@ docker run --rm -v /path/to/videos:/videos \
 docker run --rm -v /path/to/videos:/videos \
   easyvmaf -d /videos/distorted.mp4 -r /videos/reference.mp4 --sync-window 2
 
-# JSON output
-docker run --rm -v /path/to/videos:/videos \
-  easyvmaf -d /videos/distorted.mp4 -r /videos/reference.mp4 --json
-
 # GPU (requires NVIDIA Container Toolkit; VMAF v0.6 only)
 docker run --rm --gpus all -v /path/to/videos:/videos \
   easyvmaf:cuda -d /videos/distorted.mp4 -r /videos/reference.mp4 --vmaf-version 0.6 --gpu
@@ -747,8 +751,8 @@ JSON output. Every change has a one-line migration. See also
 | Requirements | FFmpeg >= 5.0, libvmaf with built-in v0.6 models | FFmpeg >= 8.1, libvmaf >= 3.2.1 with built-in models (verified by computing a v1 frame) | 4.0 Docker image, `brew upgrade libvmaf ffmpeg`, or rebuild libvmaf |
 | CLI flags | `-model HD`, `-sw`, `-output_fmt`, ... | `--display hd`, `--sync-window`, `--output-format`, ... | 3.x flags are rejected; see the table below |
 | `--gpu` | Any model | Only `--vmaf-version 0.6` | Add `--vmaf-version 0.6` |
-| JSON (`--json`) | `vmaf.model` and flat scores in `vmaf` | `schema_version: 2`, `vmaf.display`, `vmaf.scores`, `vmaf.models` | Read scores from `vmaf.scores` |
-| Text output | `VMAF HD:`, `VMAF Neg:`, `VMAF Phone:`, `VMAF 4K:` labels | One line per score: name, value, libvmaf model and range | Parse score names, or use `--json` |
+| JSON (`-json`) | Printed to stdout: `vmaf.model` and flat scores in `vmaf` | Always written to the [summary file](#summary-file): `schema_version: 2`, `vmaf.display`, `vmaf.scores`, `vmaf.models` | Read scores from `vmaf.scores` of `<distorted>_vmaf_summary.json` |
+| Text output | `VMAF HD:`, `VMAF Neg:`, `VMAF Phone:`, `VMAF 4K:` labels | One line per score: name, value, libvmaf model and range | Parse score names, or read the summary file |
 | `vmaf(main, ref, output_fmt, model='HD', phone=False, ...)` | `output_fmt` positional, `model`, `phone` | Keyword-only after the paths: `display='hd'`, `vmaf_versions=('1',)`, `views=None`, ...; `output_fmt` defaults to `'json'` | Rename the arguments; `phone` is gone (select with `views`) |
 | `vmaf.getVmaf()` | Returns the FFmpeg process | Returns `VmafResult` with scores, models and paths | Read `result.scores` instead of parsing the log |
 | `FFmpegQos.getVmaf(model='HD', cambi_heatmap=...)` | Model key | `models`: resolved `ModelRun` list; complete `features` string | Only affects direct use of `easyvmaf.ffmpeg` |
@@ -775,8 +779,9 @@ the [CHANGELOG](CHANGELOG.md) for the full verification.
 ### Flag equivalences
 
 Only `-d` and `-r` keep their short form. Every other 3.x flag exits with code 2
-and names its replacement. After 4.0, `--reverse` became `--sync-reverse`, and
-the manual offset moved from `--sync-start` without a sync window to `--sync-offset`.
+and names its replacement. After 4.0, `--reverse` became `--sync-reverse`, the
+manual offset moved from `--sync-start` without a sync window to `--sync-offset`,
+and `--json` was removed: the summary file is always written.
 
 | 3.x flag (removed) | Current flag |
 |---|---|
@@ -794,7 +799,7 @@ the manual offset moved from `--sync-start` without a sync window to `--sync-off
 | `-cambi_heatmap` | `--cambi-heatmap` |
 | `-progress` | `--progress` |
 | `-verbose` | `--verbose` |
-| `-json` | `--json` |
+| `-json` | None: the [summary file](#summary-file) is always written |
 | `-gpu` | `--gpu` |
 | `-model HD` / `-model 4K` | `--display hd` / `--display 4k` |
 

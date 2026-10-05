@@ -39,15 +39,17 @@ easyvmaf -d distorted.mp4 -r reference.mp4 --display 4k         # VMAF v1 4K
 easyvmaf -d distorted.mp4 -r reference.mp4 --vmaf-version 0.6   # v0.6 models, as in 3.x
 easyvmaf -d distorted.mp4 -r reference.mp4 --vmaf-version 1 0.6 # both generations in one pass
 easyvmaf -d distorted.mp4 -r reference.mp4 --vmaf-version 0.6 --gpu  # GPU (CUDA), v0.6 only
-easyvmaf -d distorted.mp4 -r reference.mp4 --json               # structured JSON output
 easyvmaf -d "folder/*.mp4" -r reference.mp4                     # batch
 
 # Module invocation (no install)
 python3 -m easyvmaf -d distorted.mp4 -r reference.mp4
 ```
 
-Removed flags (3.x `-sw`, `-model`, `-json`, ...; `--reverse`) are rejected with
-exit code 2 and the name of their replacement (`_REMOVED_FLAGS` in `cli.py`).
+Every run writes a JSON summary of its results next to the libvmaf log
+(`<distorted>_vmaf_summary.json`); see Output formats.
+
+Removed flags (3.x `-sw`, `-model`, `-json`, ...; `--reverse`, `--json`) are
+rejected with exit code 2 and how to replace them (`_REMOVED_FLAGS` in `cli.py`).
 
 Sync flags: `--sync-window` enables the search; `--sync-start` (window start) and
 `--sync-reverse` (search direction) only configure it and require it;
@@ -202,22 +204,25 @@ Must NOT contain CLI argument parsing or result formatting.
 
 ### Layer 3 — easyvmaf/cli.py
 CLI entry point only. Argparse, glob pattern expansion for batch processing,
-printing or emitting structured JSON results.
+printing results and writing the JSON summary file.
 - Flags are `--kebab-case`, grouped in `--help` as input, synchronization, frame
   range, models, VMAF v1 parameters, output and execution. Only `-d`/`-r` have short forms.
   `allow_abbrev=False`.
-- `_REMOVED_FLAGS`: removed flag → replacement. `MyParser.parse_known_args()` checks
-  it **before** parsing (argparse would read `-reverse` as `-r everse`) and exits
-  with code 2: `error: -sw was removed, use --sync-window`.
+- `_REMOVED_FLAGS`: removed flag → how to replace it. `MyParser.parse_known_args()`
+  checks it **before** parsing (argparse would read `-reverse` as `-r everse`) and
+  exits with code 2: `error: -sw was removed, use --sync-window`.
 - `get_args()` calls `validate_model_config(..., labels=_FLAG_LABELS)` and
   `validate_range_config(..., labels=_FLAG_LABELS)` and turns their `ValueError`
   into `parser.error()` (exit code 2), before `check_ffmpeg()`. It also rejects
   `--sync-start`/`--sync-reverse` without `--sync-window` (naming the `--sync-offset`
   equivalent), `--sync-offset` with `--sync-window`, and a range with `--sync-only`.
-- `--json` flag: emits NDJSON to stdout (one object per file in batch); logging goes to stderr
 - `_build_result()`: constructs the JSON schema 2 dict from a `VmafResult`
   (`JSON_SCHEMA_VERSION = 2`)
-- `_print_text_result()`: one line per score with value, libvmaf model and range
+- `_summary_path()` / `_write_summary()`: every successful input writes its
+  `_build_result()` dict to the summary file (see Output formats), serialized
+  strictly (`allow_nan=False`) before the file is opened; logging goes to stderr
+- `_print_text_result()`: one line per score with value, libvmaf model and range,
+  plus the log and summary paths
 - `check_ffmpeg()` called at startup: exits 1 if `meets_minimum` or `libvmaf_v1` is
   false, or if `--gpu` is set and `cuda_vmaf` is false
 
@@ -425,14 +430,17 @@ VMAF results written to file: json (default), xml, csv.
 File path: same directory as distorted input, same base name + `_vmaf.{ext}`
 (`_vmaf_f<start>-<last>.{ext}` for a frame range)
 
-JSON to stdout (`--json` flag): NDJSON, one object per file, schema 2:
+Summary file (always written, one per input, schema 2), named after the log:
+`<log>_summary.json` (`<distorted>_vmaf_summary.json`,
+`<distorted>_vmaf_f<start>-<last>_summary.json`); `--sync-only` has no log and
+writes `<distorted>_sync_summary.json`:
 ```
 { schema_version: 2, distorted, reference, sync: { offset, psnr[, psnr_status] },
   vmaf: { display, pix_fmt, hfr, scores: { name: mean }, models: [ { name,
   libvmaf_model, vmaf_version, view, range } ], output_file[, cambi_heatmap_path]
   [, range: { start_frame, frame_count, frames_scored }] } }
 ```
-`--sync-only` records have `schema_version` and no `vmaf` block.
+`--sync-only` summaries have `schema_version` and no `vmaf` block.
 
 ---
 
@@ -449,7 +457,7 @@ JSON to stdout (`--json` flag): NDJSON, one object per file, schema 2:
   calculation, raise `UnsupportedRangeError`. Do not print and continue.
 - **No print() in Layer 1 or 2**: use `logging` module with `%s`-style format args.
   `print()` belongs in Layer 3 (CLI) only.
-- **Logging destination**: `basicConfig(stream=sys.stderr)` — keeps stdout clean for `--json` output.
+- **Logging destination**: `basicConfig(stream=sys.stderr)` — keeps the results on stdout separate from logs.
 - **Python >= 3.8**. Use `typing.List`/`Tuple`/`Optional`, no `match`, no `list[str]`
   at runtime. Use `functools.cached_property` or lazy `@property` where appropriate.
 - **Public method signatures in ffmpeg.py**: do not change without explicit instruction.
