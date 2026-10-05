@@ -41,6 +41,7 @@ easyvmaf = "easyvmaf.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/gdavila/easyVmaf"
+Documentation = "https://github.com/gdavila/easyVmaf#readme"
 Source = "https://github.com/gdavila/easyVmaf"
 Issues = "https://github.com/gdavila/easyVmaf/issues"
 Changelog = "https://github.com/gdavila/easyVmaf/blob/master/CHANGELOG.md"

@@ -13,6 +13,12 @@ by default. The VMAF v0.6 models of easyVmaf 3.x are still available with
 `--vmaf-version 0.6`. Upgrading? See [Migrating from 4.x](#migrating-from-4x) or
 [Migrating from 3.x](#migrating-from-3x).
 
+On GitHub, this README follows the `master` branch, which can document changes
+not released yet (see the `unreleased` entry of the
+[CHANGELOG](https://github.com/gdavila/easyVmaf/blob/master/CHANGELOG.md)). For
+the version you installed (`pip show easyvmaf`), read its page on
+[PyPI](https://pypi.org/project/easyvmaf/) or the README of its `v<version>` tag.
+
 Details about **How it Works** can be found [here](https://ottverse.com/vmaf-easyvmaf/).
 
 ## Requirements
