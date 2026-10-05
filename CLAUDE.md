@@ -548,12 +548,14 @@ change; no tests of implementation details, duplicated cases or unrealistic inpu
 ## Releasing
 
 `.github/workflows/release.yml` builds and publishes with PyPI Trusted Publishing
-(no tokens). It runs no tests: the integration tests need FFmpeg with libvmaf.
+(no tokens). Its first job calls `test.yml` (`workflow_call`): nothing is built
+or published unless every test job, integration included, passes on that commit.
 
 1. Bump `__version__` in `easyvmaf/__init__.py` (the only place the version
    lives; `pyproject.toml` reads it) and rename the CHANGELOG `(unreleased)`
    heading to the release date.
-2. Run the full test suite locally, with FFmpeg and libvmaf v1 available.
+2. Recommended: run the full test suite locally, with FFmpeg and libvmaf v1
+   available. CI runs it again before publishing.
 3. Push a tag `v<version>` equal to `__version__` → PyPI (environment `pypi`).
    A tag that differs from `__version__` fails the build before anything is
    published.

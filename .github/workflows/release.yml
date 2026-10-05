@@ -3,8 +3,8 @@
 #   easyvmaf.__version__
 # - workflow_dispatch -> TestPyPI (environment testpypi) as <version>.dev<run number>
 #
-# Tests do not run here: the integration tests need FFmpeg built with libvmaf.
-# Run the full test suite locally before pushing the tag.
+# Nothing is built or published unless the whole test workflow (test.yml,
+# including the FFmpeg/libvmaf integration jobs) passes on the same commit.
 
 name: release
 
@@ -22,8 +22,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  tests:
+    name: Tests
+    # GitHub resolves a reusable workflow at the running commit, never from the
+    # workspace; actionlint 1.7 does not accept the $/ form yet.
+    uses: ./.github/workflows/test.yml # zizmor: ignore[self-repository]
+    permissions:
+      contents: read
+
   build:
     name: Build distributions
+    needs: tests
     runs-on: ubuntu-latest
     permissions:
       contents: read
