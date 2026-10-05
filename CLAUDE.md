@@ -61,12 +61,12 @@ negative the distorted), mutually exclusive with `--sync-window`.
 ```bash
 # CPU build
 docker build -t easyvmaf .
-docker run --rm -v $(pwd)/video_samples:/videos easyvmaf \
+docker run --rm -v /path/to/videos:/videos easyvmaf \
   -d /videos/distorted.mp4 -r /videos/reference.mp4
 
 # GPU build (requires CUDA 12.3, nvidia-container-toolkit on host)
 docker build -f Dockerfile.cuda -t easyvmaf:cuda .
-docker run --rm --gpus all -v $(pwd)/video_samples:/videos easyvmaf:cuda \
+docker run --rm --gpus all -v /path/to/videos:/videos easyvmaf:cuda \
   -d /videos/distorted.mp4 -r /videos/reference.mp4 --vmaf-version 0.6 --gpu
 
 # docker-compose

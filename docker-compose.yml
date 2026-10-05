@@ -2,10 +2,6 @@
 # Usage:
 #   VIDEO_DIR=/path/to/videos docker compose run easyvmaf \
 #     -d /videos/distorted.mp4 -r /videos/reference.mp4
-#
-# Or use the default video_samples directory:
-#   docker compose run easyvmaf \
-#     -d /videos/BBB_sampleA_distorted.mp4 -r /videos/BBB_reference_10s.mp4
 
 services:
   easyvmaf:
@@ -17,7 +13,7 @@ services:
         VMAF_version: "3.2.1"
     image: easyvmaf:latest
     volumes:
-      - ${VIDEO_DIR:-./video_samples}:/videos
+      - ${VIDEO_DIR:?set VIDEO_DIR to the directory with your videos}:/videos
     # Default command — override at runtime
     # Example: docker compose run easyvmaf -d /videos/dist.mp4 -r /videos/ref.mp4
 
@@ -30,7 +26,7 @@ services:
         VMAF_version: "3.2.1"
     image: easyvmaf:cuda
     volumes:
-      - ${VIDEO_DIR:-./video_samples}:/videos
+      - ${VIDEO_DIR:?set VIDEO_DIR to the directory with your videos}:/videos
     deploy:
       resources:
         reservations:

@@ -722,7 +722,7 @@ VIDEO_DIR=/path/to/videos docker compose run easyvmaf-cuda \
   -d /videos/distorted.mp4 -r /videos/reference.mp4 --vmaf-version 0.6 --gpu
 ```
 
-`VIDEO_DIR` defaults to `./video_samples` if not set.
+`VIDEO_DIR` is required: the directory with your videos, mounted at `/videos`.
 
 ---
 
