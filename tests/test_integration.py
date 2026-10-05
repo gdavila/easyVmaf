@@ -262,6 +262,19 @@ def gop_clips(encode, tmp_path_factory):
     return clips
 
 
+# libvmaf_cuda (v0.6 only): run on a GPU host, CI has none.
+GPU_RANGE_CASES = (
+    ("reference-trimmed", "late.mp4", "lead.mp4", 0.3, {}),
+    ("distorted-trimmed", "lead.mp4", "late.mp4", -0.3, {}),
+    ("frame-rate-conversion", "late.mp4", "lead.mp4", 0.3, dict(fps=7)),
+    ("no-offset", "aligned.mp4", "lead.mp4", 0, {}),
+    ("interlaced-distorted", "interlaced.mkv", "master.mp4", 0, {}),
+    # The v0.6-only CAMBI feature runs on the CPU next to libvmaf_cuda.
+    ("cambi-heatmaps-1-thread", "aligned.mp4", "late.mp4", -0.3,
+     dict(cambi_heatmap=True, threads=1)),
+)
+
+
 @pytest.mark.requires_libvmaf_v1  # one case scores the default v1 models
 @pytest.mark.parametrize("distorted, reference, offset, options, output_fmt", [
     ("late.mp4", "lead.mp4", 0.3, dict(vmaf_versions=("0.6",)), "json"),
@@ -280,8 +293,12 @@ def gop_clips(encode, tmp_path_factory):
      dict(views=("3h",), enc_size=(1920, 1080), cambi_heatmap=True), "json"),
     ("aligned.mp4", "late.mp4", -0.3,
      dict(views=("3h",), enc_size=(1920, 1080), cambi_heatmap=True, threads=1), "json"),
+    *(pytest.param(distorted, reference, offset, dict(vmaf_versions=("0.6",), gpu=True, **extra),
+                   "json", marks=pytest.mark.requires_cuda)
+      for _, distorted, reference, offset, extra in GPU_RANGE_CASES),
 ], ids=["reference-trimmed", "distorted-trimmed-v1", "frame-rate-conversion", "no-offset",
-        "interlaced-distorted", "cambi-heatmaps-v1", "cambi-heatmaps-v1-1-thread"])
+        "interlaced-distorted", "cambi-heatmaps-v1", "cambi-heatmaps-v1-1-thread",
+        *(f"gpu-{case[0]}" for case in GPU_RANGE_CASES)])
 def test_frame_ranges_join_into_the_full_calculation(gop_clips, distorted, reference, offset,
                                                      options, output_fmt):
     """The contract an orchestrator relies on: consecutive ranges, cut between

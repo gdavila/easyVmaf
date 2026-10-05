@@ -25,6 +25,9 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "requires_libvmaf_v1: skip unless FFmpeg's libvmaf computes a VMAF v1 frame "
                    "(libvmaf >= 3.2.1 with built-in models)")
+    config.addinivalue_line(
+        "markers", "requires_cuda: skip unless libvmaf_cuda computes a frame on a GPU; "
+                   "never a failure: CI has no GPU runner")
 
 
 def probe_libvmaf_model(model):
@@ -67,11 +70,30 @@ def libvmaf_v1_skip_reason():
     return reason and "libvmaf v1 probe (%s) failed: %s" % (LIBVMAF_V1_PROBE_MODEL, reason)
 
 
+@functools.lru_cache(maxsize=None)
+def cuda_skip_reason():
+    """Why libvmaf_cuda cannot score one frame pair here, or None."""
+    binary = ffmpeg.FFmpegQos._executable
+    if not binary or not shutil.which(binary):
+        return "FFmpeg unavailable"
+    source = "color=black:s=320x240:r=1:d=1"
+    result = subprocess.run([binary, "-hide_banner", "-nostdin", "-v", "error",
+                             "-f", "lavfi", "-i", source, "-f", "lavfi", "-i", source,
+                             "-lavfi", "[0:v]hwupload_cuda[main];[1:v]hwupload_cuda[ref];"
+                                       "[main][ref]libvmaf_cuda",
+                             "-f", "null", "-"], capture_output=True, text=True, timeout=60)
+    lines = result.stderr.strip().splitlines()
+    return None if result.returncode == 0 else "libvmaf_cuda unusable: %s" % (
+        lines[-1] if lines else "exit code %d" % result.returncode)
+
+
 def pytest_runtest_setup(item):
     if item.get_closest_marker("requires_libvmaf_v1"):
         reason = libvmaf_v1_skip_reason()
         if reason:
             skip_unusable_ffmpeg(reason)
+    if item.get_closest_marker("requires_cuda") and cuda_skip_reason():
+        pytest.skip(cuda_skip_reason())
 
 
 def write_scores(path, scores=SCORES):

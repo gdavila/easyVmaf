@@ -291,7 +291,7 @@ replaced with defaults.
   `--sync-reverse`) is an error (exit code 1), reported before running FFmpeg.
 - `--start-frame` accepts integers of at least 0 and `--frame-count` integers of
   at least 1. A frame range cannot be combined with `--sync-only`, and, for now,
-  not with `--subsample` or `--gpu`.
+  not with `--subsample`.
 - Removed flags are rejected with the name of their replacement, e.g.
   `error: -sw was removed, use --sync-window` or
   `error: --reverse was removed, use --sync-reverse`.
@@ -488,7 +488,11 @@ Limits:
   frames before the end of the videos, e.g. after an inexact seek, is an error
   too, never a partial result.
 - Without a sync offset, both videos must start at the same timestamp.
-- Not yet with `--subsample` or `--gpu`.
+- Not yet with `--subsample`.
+
+With `--gpu`, ranges join into the full GPU calculation in the same way:
+`libvmaf_cuda` gives identical values run after run, and the seek, the sync
+trims and the range trim all run on the CPU before the upload to the GPU.
 
 ## Examples
 

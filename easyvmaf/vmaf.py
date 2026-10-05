@@ -223,7 +223,7 @@ def validate_range_config(start_frame=None, frame_count=None, subsample=1,
     any input. Vmaf() runs it in its constructor; the CLI runs it once.
 
     Args:
-        start_frame ... gpu: as in Vmaf()
+        start_frame ... gpu: as in Vmaf(); gpu is allowed with a range
         labels: names shown in error messages for each argument
 
     Raises:
@@ -242,11 +242,9 @@ def validate_range_config(start_frame=None, frame_count=None, subsample=1,
                                   or value < minimum):
             raise UnsupportedRangeError(
                 f"{label(argument)} must be an integer of at least {minimum}, not {value!r}")
-    unsupported = [name for name, used in (
-        (label('subsample'), subsample != 1), (label('gpu'), gpu)) if used]
-    if unsupported:
+    if subsample != 1:
         raise UnsupportedRangeError(
-            f"{', '.join(unsupported)}: not supported with a frame range "
+            f"{label('subsample')}: not supported with a frame range "
             f"({label('start_frame')}, {label('frame_count')})")
 
 

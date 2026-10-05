@@ -75,7 +75,7 @@ each change.
   `<distorted>_cambi_heatmap_f<first>-<last>/`; concatenating the files of
   consecutive ranges gives the full calculation's heatmaps byte for byte (with
   more than one thread, see the README Known bugs). MP4,
-  MOV, Matroska and WebM inputs only; not yet with `--subsample` or `--gpu`. See
+  MOV, Matroska and WebM inputs only; also with `--gpu`, not yet with `--subsample`. See
   [Frame ranges](README.md#frame-ranges).
 - Summary file: every successful input writes its schema 2 result next to the
   libvmaf log (`<distorted>_vmaf_summary.json`,

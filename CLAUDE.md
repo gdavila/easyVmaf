@@ -79,6 +79,9 @@ Running pytest inside the image (pytest is not installed in it):
 ```bash
 docker run --rm -v $(pwd):/src -w /src --entrypoint sh easyvmaf \
   -c 'pip install -q --root-user-action=ignore pytest && python3 -m pytest -q -rs -p no:cacheprovider'
+# GPU host: the same with the CUDA image, which also runs the requires_cuda tests
+docker run --rm --gpus all -v $(pwd):/src -w /src --entrypoint sh easyvmaf:cuda \
+  -c 'pip install -q --root-user-action=ignore pytest && python3 -m pytest -q -rs -p no:cacheprovider'
 ```
 
 ---
@@ -174,8 +177,8 @@ VMAF computation orchestration.
 - `validate_range_config(start_frame, frame_count, subsample, gpu,
   labels=None)`: run by the constructor and once by the CLI. Raises
   `UnsupportedRangeError(ValueError)` for a non-integer or negative start, a count
-  below 1, or a range with `subsample > 1` or `gpu`. With a range, the
-  constructor also rejects containers outside `_RANGE_FORMATS` (mp4/mov,
+  below 1, or a range with `subsample > 1` (`gpu` is accepted). With a range,
+  the constructor also rejects containers outside `_RANGE_FORMATS` (mp4/mov,
   matroska/webm) via `formatInfo['format_name']`.
 - `validate_model_config(display, vmaf_versions, views, hfr, bitdepth, enc_size,
   enc_bitdepth, model_options, gpu, labels=None)`: the single source of model
@@ -525,11 +528,16 @@ writes `<distorted>_sync_summary.json`:
 - `tests/test_integration.py` — real FFmpeg runs
 - `tests/conftest.py` — shared stubs (`STREAM`, `CAPABILITIES`), fixtures, and the
   `requires_libvmaf_v1` marker, which skips a test unless FFmpeg's libvmaf
-  computes a v1 frame (`probe_libvmaf_model()`)
+  computes a v1 frame (`probe_libvmaf_model()`), and the `requires_cuda` marker,
+  which skips a test unless `libvmaf_cuda` scores a frame (`cuda_skip_reason()`)
 
 `EASYVMAF_REQUIRE_FFMPEG=1` turns those skips (FFmpeg/FFprobe unavailable, no
 libvmaf, failed v1 probe) into failures; CI sets it so that an integration job
-cannot pass by skipping. Other skips (Windows-only UNC, ...) are unchanged.
+cannot pass by skipping. Other skips (Windows-only UNC, ...) are unchanged, and
+so are the `requires_cuda` skips: CI has no GPU runner. The `gpu-*` cases of
+`test_frame_ranges_join_into_the_full_calculation` run only on a GPU host
+(`Dockerfile.cuda` image, Docker section); run them before changing the range
+or the GPU pipeline.
 
 CI (`.github/workflows/test.yml`: pushes to master, pull requests, manual runs,
 and `workflow_call`) runs the full suite in four jobs:
