@@ -24,7 +24,7 @@ SOFTWARE.
 from .ffmpeg import FFprobe
 from .ffmpeg import FFmpegQos
 from .models import DISPLAY_RESOLUTION, model_names, select_models
-from .results import VmafResult, heatmap_files, read_frames, read_scores, trim_heatmaps, trim_log
+from .results import SyncResult, VmafResult, heatmap_files, read_frames, read_scores, trim_heatmaps, trim_log
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 import copy
@@ -120,16 +120,16 @@ def _parseSize(size) -> Tuple[int, int]:
 
 def validate_model_config(display='hd', vmaf_versions=('1',), views=None, hfr='auto',
                           bitdepth='auto', enc_size=None, enc_bitdepth=None,
-                          model_options=(), gpu_mode=False, labels=None):
+                          model_options=(), gpu=False, labels=None):
     """
     Check that the requested models can be computed with these options,
-    without probing any input. vmaf() runs it in its constructor; a caller that
+    without probing any input. Vmaf() runs it in its constructor; a caller that
     processes a batch can run it once before the first input.
 
     Args:
-        display ... gpu_mode: as in vmaf()
+        display ... gpu: as in Vmaf()
         labels: names shown in error messages for each argument, e.g.
-            {'gpu_mode': '--gpu'}; default: the argument names
+            {'gpu': '--gpu'}; default: the argument names
 
     Returns:
         The selected ModelRun list, without overrides
@@ -154,14 +154,14 @@ def validate_model_config(display='hd', vmaf_versions=('1',), views=None, hfr='a
     if bitdepth not in ('auto', '8', '10'):
         raise UnsupportedModelConfigError(
             f"{label('bitdepth')} must be 'auto', 8 or 10, not '{bitdepth}'")
-    if gpu_mode and has_v1:
+    if gpu and has_v1:
         # libvmaf_cuda has no CUDA extractors for the v1 features.
         raise UnsupportedModelConfigError(
-            f"{label('gpu_mode')} only supports {label('vmaf_versions')} 0.6: "
+            f"{label('gpu')} only supports {label('vmaf_versions')} 0.6: "
             f"libvmaf_cuda cannot compute VMAF v1 models")
-    if gpu_mode and bitdepth == '10':
+    if gpu and bitdepth == '10':
         raise UnsupportedModelConfigError(
-            f"{label('gpu_mode')} measures in yuv420p; {label('bitdepth')} 10 is not supported")
+            f"{label('gpu')} measures in yuv420p; {label('bitdepth')} 10 is not supported")
     if not has_v1:
         v1_only = [name for name, used in (
             (label('views'), views is not None), (label('hfr') + ' on', hfr == 'on'),
@@ -217,13 +217,13 @@ class UnsupportedRangeError(ValueError):
 
 
 def validate_range_config(start_frame=None, frame_count=None, subsample=1,
-                          gpu_mode=False, labels=None):
+                          gpu=False, labels=None):
     """
     Check a frame range and the options it is combined with, without probing
-    any input. vmaf() runs it in its constructor; the CLI runs it once.
+    any input. Vmaf() runs it in its constructor; the CLI runs it once.
 
     Args:
-        start_frame ... gpu_mode: as in vmaf()
+        start_frame ... gpu: as in Vmaf()
         labels: names shown in error messages for each argument
 
     Raises:
@@ -243,7 +243,7 @@ def validate_range_config(start_frame=None, frame_count=None, subsample=1,
             raise UnsupportedRangeError(
                 f"{label(argument)} must be an integer of at least {minimum}, not {value!r}")
     unsupported = [name for name, used in (
-        (label('subsample'), subsample != 1), (label('gpu_mode'), gpu_mode)) if used]
+        (label('subsample'), subsample != 1), (label('gpu'), gpu)) if used]
     if unsupported:
         raise UnsupportedRangeError(
             f"{', '.join(unsupported)}: not supported with a frame range "
@@ -277,7 +277,7 @@ class video():
         self.bytesFramesTotal = None
         # Eager: streamInfo is needed immediately by all consumers
         self.getStreamInfo()
-        # duration is computed eagerly since vmaf.__init__ accesses it immediately
+        # duration is computed eagerly since Vmaf.__init__ accesses it immediately
         self.duration = self.getDuration()
         # formatInfo and interlaced are lazy — fetched on first access via properties
 
@@ -364,7 +364,7 @@ class video():
         return self.formatInfo
 
 
-class vmaf():
+class Vmaf():
     """
     Video class to manage VMAF computation of video streams. This class allows:
         - Upscale or downscale the MAIN or REF videos automatically according to the Vmaf model (1080, 4K, etc)
@@ -373,7 +373,7 @@ class vmaf():
         - Frame rate conversion (if needed)
     """
 
-    def __init__(self, mainSrc, refSrc, *, display='hd', vmaf_versions=('1',), views=None, hfr='auto', bitdepth='auto', enc_size=None, enc_bitdepth=None, model_options=(), output_fmt='json', loglevel="info", subsample=1, threads=0, print_progress=False, shortest=False, manual_fps=0, cambi_heatmap=False, gpu_mode=False, start_frame=None, frame_count=None):
+    def __init__(self, distorted, reference, *, display='hd', vmaf_versions=('1',), views=None, hfr='auto', bitdepth='auto', enc_size=None, enc_bitdepth=None, model_options=(), output_format='json', loglevel="info", subsample=1, threads=0, progress=False, shortest=False, fps=0, cambi_heatmap=False, gpu=False, sync_offset=0.0, start_frame=None, frame_count=None):
         """
         Args (model selection and VMAF v1 parameters):
             display:       'hd' or '4k'; target resolution of the scaling
@@ -388,6 +388,11 @@ class vmaf():
             enc_bitdepth:  encoding bit depth for CAMBI; default: from the
                            distorted pix_fmt
             model_options: 'feature.option=value' overrides for the v1 models
+
+        Args (synchronization):
+            sync_offset:   offset in seconds between the inputs: positive trims
+                           the reference, negative the distorted video. sync()
+                           replaces it with the offset it finds.
 
         Args (frame range):
             start_frame:   first frame to measure, numbered as in the log of the
@@ -411,27 +416,27 @@ class vmaf():
         self.enc_size = _parseSize(enc_size) if enc_size is not None else None
         self.enc_bitdepth = int(enc_bitdepth) if enc_bitdepth is not None else None
         self.model_options = tuple(model_options)
-        self.gpu_mode = gpu_mode
+        self.gpu = gpu
         self.cambi_heatmap = cambi_heatmap
-        validate_range_config(start_frame, frame_count, subsample, gpu_mode)
+        validate_range_config(start_frame, frame_count, subsample, gpu)
         self.start_frame = start_frame
         self.frame_count = frame_count
-        self._validateModelConfig(mainSrc)
+        self._validateModelConfig(distorted)
         self.loglevel = loglevel
-        self.main = video(mainSrc, self.loglevel)
-        self.ref = video(refSrc, self.loglevel)
+        self.main = video(distorted, self.loglevel)
+        self.ref = video(reference, self.loglevel)
         if self._hasRange():
             self._checkRangeInputs()
         self.subsample = subsample
         self.ffmpegQos = FFmpegQos(
             self.main.videoSrc, self.ref.videoSrc, self.loglevel,
-            gpu_mode=gpu_mode)
+            gpu_mode=gpu)
         self.target_resolution = list(DISPLAY_RESOLUTION[self.display])
-        self.offset = 0
-        self.manual_fps = manual_fps
-        self.output_fmt = output_fmt
+        self.sync_offset = sync_offset
+        self.fps = fps
+        self.output_format = output_format
         self.threads = threads
-        self.print_progress = print_progress
+        self.progress = progress
         self.shortest = shortest
         self.cambi_heatmap_path = None
         self.pix_fmt = None
@@ -453,12 +458,12 @@ class vmaf():
                     f"A frame range needs inputs that seek to an exact frame (MP4, MOV, "
                     f"Matroska or WebM); the {role} video {stream.videoSrc} is {format_name}")
 
-    def _validateModelConfig(self, mainSrc):
+    def _validateModelConfig(self, distorted):
         self.models = validate_model_config(
             self.display, self.vmaf_versions, self.views, self.hfr, self.bitdepth,
-            self.enc_size, self.enc_bitdepth, self.model_options, self.gpu_mode)
+            self.enc_size, self.enc_bitdepth, self.model_options, self.gpu)
         if self.cambi_heatmap and self._hasV1():
-            path = self._cambiHeatmapPath(mainSrc)
+            path = self._cambiHeatmapPath(distorted)
             if any(c in path for c in _HEATMAP_PATH_FORBIDDEN):
                 raise UnsupportedModelConfigError(
                     f"CAMBI heatmap path '{path}' cannot contain any of "
@@ -474,8 +479,8 @@ class vmaf():
         last = start + self.frame_count - 1 if self.frame_count is not None else 'end'
         return f'_f{start}-{last}'
 
-    def _cambiHeatmapPath(self, mainSrc):
-        return os.path.splitext(mainSrc)[0] + '_cambi_heatmap' + self._rangeSuffix()
+    def _cambiHeatmapPath(self, distorted):
+        return os.path.splitext(distorted)[0] + '_cambi_heatmap' + self._rangeSuffix()
 
     @staticmethod
     def _chains(qos):
@@ -499,12 +504,12 @@ class vmaf():
 
         Returns the effective frame rate of the distorted input.
         """
-        if self.manual_fps == 0:
+        if self.fps == 0:
             output_fps = self._applyDeinterlaceFilters(qos)
         else:
             for chain in self._chains(qos):
-                chain.setFpsFilter(self.manual_fps)
-            output_fps = self.manual_fps
+                chain.setFpsFilter(self.fps)
+            output_fps = self.fps
         self._applyScaleFilters(qos)
         return output_fps
 
@@ -537,7 +542,7 @@ class vmaf():
         10 to 8 bits), or deinterlace at 8 bits before converting.
         The GPU path keeps its own format=yuv420p before hwupload_cuda.
         """
-        if self.gpu_mode:
+        if self.gpu:
             self.pix_fmt = 'yuv420p'
             return
         self.pix_fmt = self._measurementPixFmt()
@@ -656,7 +661,7 @@ class vmaf():
         Returns:
             (offset, psnr_value) tuple
         """
-        # Always use CPU for PSNR sync computation regardless of self.gpu_mode
+        # Always use CPU for PSNR sync computation regardless of self.gpu
         if not reverse:
             qos = FFmpegQos(self.main.videoSrc, self.ref.videoSrc, self.loglevel,
                             gpu_mode=False)
@@ -669,7 +674,7 @@ class vmaf():
         qos._single_thread = True
 
         # The ref slot holds the searched input. Trim it after the same filters
-        # as setOffset() in the final calculation, so the offset selects the
+        # as _applyOffset() in the final calculation, so the offset selects the
         # same frame or field; the pre-trim only skips filtering what comes
         # well before it.
         preroll_start = offset - SYNC_PREROLL
@@ -682,27 +687,30 @@ class vmaf():
         psnr_value = qos.getPsnr()
         return (offset, psnr_value)
 
-    def syncOffset(self, syncWindow=3, start=0, reverse=False):
+    def sync(self, window, start=0, reverse=False):
         """
-        Method to get the offset needed to sync REF and MAIN (if any).
-            syncWindow -->  Window Size in seconds to try to sync REF and MAIN videos. i.e., if the video to sync
-                            last 600 seconds, the sync look up will be done just within a subsample of syncWindow size.
-                            By default, the syncWindow is applied to REF.
-            start -->  start time in seconds from the begining of the video where the syncWindow begin.
-                        By default, the start time applies to REF.
-            reverse --> If this option is set to TRUE. It is considered that MAIN is delayed in comparition to REF: 'syncWindow' and 'start' variables will be
-                        applied to MAIN.
-                        By default, it is supposed that the REF video is delayed in comparition with the MAIN video.
+        Search the offset that syncs the distorted and reference videos: the
+        first frames of the distorted video are compared, by PSNR, with each
+        frame of a window of the reference video.
+            window -->  Window size in seconds of the search, i.e., if the video to sync
+                        lasts 600 seconds, the sync look up is done just within a subsample of window size.
+                        By default, the window is applied to the reference.
+            start -->  start time in seconds from the beginning of the video where the window begins.
+                        By default, the start time applies to the reference.
+            reverse --> If True, the distorted video is considered delayed compared to the reference:
+                        'window' and 'start' are applied to the distorted video, and the offset is negative.
+                        By default, the reference video is considered delayed compared to the distorted video.
 
-        It returns the offset value to get REF and MAIN synced and the PSNR computed.
+        Stores the offset in self.sync_offset, which compute() applies, and
+        returns it with its PSNR as SyncResult(offset, psnr).
         """
 
         # The window slides over the reference, or over the distorted video
         # with reverse; past its end FFmpeg has no frame left to compare.
         searched, role = (self.main, 'distorted') if reverse else (self.ref, 'reference')
-        if start + syncWindow > searched.duration:
+        if start + window > searched.duration:
             raise ValueError(
-                f"The sync window ends at {start + syncWindow:g} s, but the {role} video "
+                f"The sync window ends at {start + window:g} s, but the {role} video "
                 f"lasts {searched.duration:g} s: lower the sync start or the sync window")
 
         logger.info("=" * 39)
@@ -724,7 +732,7 @@ class vmaf():
         fps = getFrameRate(self.ref.streamInfo['r_frame_rate'])
         frameDuration = 1 / fps
         startFrame = int(round(start / frameDuration))
-        framesInSyncWindow = int(round(syncWindow / frameDuration))
+        framesInSyncWindow = int(round(window / frameDuration))
 
         offsets = [
             (startFrame + i) * frameDuration
@@ -735,7 +743,7 @@ class vmaf():
 
         # The lazy interlace probe is not locked: if workers trigger it, each
         # one runs its own frames probe. Probe once per input before the pool.
-        if self.manual_fps == 0:
+        if self.fps == 0:
             self.main.interlaced
             self.ref.interlaced
 
@@ -756,13 +764,14 @@ class vmaf():
         best_offset, best_psnr = max(results, key=lambda x: x[1])
 
         # Only workers swap sources for reverse search. Preserve the shared
-        # distorted/reference roles; a negative offset trims distorted in setOffset().
-        self.offset = -best_offset if reverse else best_offset
-        return [self.offset, best_psnr]
+        # distorted/reference roles; a negative offset trims distorted in _applyOffset().
+        self.sync_offset = -best_offset if reverse else best_offset
+        return SyncResult(self.sync_offset, best_psnr)
 
-    def setOffset(self, value=None):
+    def _applyOffset(self):
         """
-        Apply trim filters to synchronize main and distorted streams.
+        Apply trim filters to synchronize main and distorted streams at
+        self.sync_offset.
 
         Precondition: _normalizeChains() must have been applied to
         self.ffmpegQos before calling this method.
@@ -774,11 +783,6 @@ class vmaf():
         If offset > 0: Ref delayed compared to Main. Trimfilter cuts Ref.
         If offset < 0: Main delayed compared to Ref. Trimfilter cuts Main.
         """
-
-        if value != None:
-            """ overrides the value in self.offset"""
-            self.offset = value
-
         trims = self._syncTrims()
         if trims:
             main_start, ref_start, duration = trims
@@ -788,13 +792,13 @@ class vmaf():
     def _syncTrims(self):
         """
         (main start, ref start, duration) in seconds of the trims that sync
-        the inputs at self.offset, or None when the offset is 0.
+        the inputs at self.sync_offset, or None when the offset is 0.
         """
-        if self.offset > 0:
-            offset = self.offset
+        if self.sync_offset > 0:
+            offset = self.sync_offset
             return 0, offset, min(self.main.duration, self.ref.duration-offset)
-        if self.offset < 0:
-            offset = abs(self.offset)
+        if self.sync_offset < 0:
+            offset = abs(self.sync_offset)
             return offset, 0, min(self.main.duration - offset, self.ref.duration)
         return None
 
@@ -809,9 +813,9 @@ class vmaf():
 
     def _applyRange(self):
         """
-        Apply the sync trims and the frame range, instead of setOffset().
+        Apply the sync trims and the frame range, instead of _applyOffset().
 
-        Precondition: as setOffset(). Each chain is the one of the full
+        Precondition: as _applyOffset(). Each chain is the one of the full
         calculation with three changes:
           1. a seek shortly before the range, keeping the original timestamps;
           2. setpts=PTS-<anchor> instead of setpts=PTS-STARTPTS, the anchor
@@ -856,7 +860,7 @@ class vmaf():
 
     def _rangeLogPath(self):
         """libvmaf log of a range, named after the frames requested."""
-        ext = self.output_fmt if self.output_fmt in ('xml', 'csv') else 'json'
+        ext = self.output_format if self.output_format in ('xml', 'csv') else 'json'
         return f'{os.path.splitext(self.main.videoSrc)[0]}_vmaf{self._rangeSuffix()}.{ext}'
 
     def _trimRangeLog(self, log_path):
@@ -874,7 +878,7 @@ class vmaf():
         first, end = self._rangeBounds()
         start = self.start_frame or 0
         # libvmaf writes no log when no frame reaches it.
-        measured = len(read_frames(log_path, self.output_fmt)) if os.path.exists(log_path) else 0
+        measured = len(read_frames(log_path, self.output_format)) if os.path.exists(log_path) else 0
         if end is not None and first + measured < end:
             trims = self._syncTrims()
             if trims:
@@ -896,7 +900,7 @@ class vmaf():
             last = f" ({first + measured - 1})" if measured else ""
             raise UnsupportedRangeError(
                 f"The range starts at frame {start}, after the last measured frame{last}")
-        trim_log(log_path, self.output_fmt, start - first, kept, first)
+        trim_log(log_path, self.output_format, start - first, kept, first)
         if self.cambi_heatmap:
             try:
                 trim_heatmaps(self.cambi_heatmap_path, start - first, kept, measured)
@@ -995,7 +999,7 @@ class vmaf():
 
         return '|'.join(f.to_string() for f in features)
 
-    def getVmaf(self, autoSync=False):
+    def compute(self):
         """
         Run VMAF computation between main (distorted) and ref (reference) streams.
 
@@ -1006,16 +1010,16 @@ class vmaf():
             3. _normalizeChains()   — deinterlace or convert the frame rate
                                       (--fps), then scale to the display
                                       resolution; records output_fps
-            4. setOffset()          — apply trim filters for temporal sync,
+            4. _applyOffset()       — apply trim filters for temporal sync,
                or _applyRange()     — with a frame range: seek, sync trims
                                       anchored to the full calculation, range
             5. _resolveModels()     — HFR choice from output_fps, v1 overrides
             6. ffmpegQos.getVmaf()  — with gpu, inserts hwupload_cuda last
 
-        Note: syncOffset() (when autoSync=True) is called between steps 3 and 4.
-        Its workers build their own FFmpegQos with the same _normalizeChains()
-        and trim after it, like setOffset(), so the offset they choose selects
-        the same frame here; self.ffmpegQos filter chains are left intact.
+        Note: sync(), called before compute(), sets the offset of step 4. Its
+        workers build their own FFmpegQos with the same _normalizeChains()
+        and trim after it, like _applyOffset(), so the offset they choose
+        selects the same frame here; self.ffmpegQos filter chains are left intact.
 
         Returns:
             VmafResult with the mean score of every model
@@ -1026,20 +1030,15 @@ class vmaf():
 
         self._applyPixelFormat()
 
-        if self.manual_fps:
+        if self.fps:
             logger.warning("Forcing frame rate conversion manually")
         self.output_fps = self._normalizeChains(self.ffmpegQos)
 
-        """Lookup for sync between Main and reference. Default: dissable
-           It is suggested to run syncOffset manually before getVmaf()
-        """
-        if autoSync:
-            self.syncOffset()
         if self._hasRange():
             self._applyRange()
         else:
             """Apply Offset filters, if offset =0 nothing happens """
-            self.setOffset()
+            self._applyOffset()
 
         if self.cambi_heatmap:
             self.cambi_heatmap_path = self._cambiHeatmapPath(self.main.videoSrc)
@@ -1060,14 +1059,14 @@ class vmaf():
                     round(getFrameRate(self.ref.streamInfo['r_frame_rate']), 5),
                     self.ref.streamInfo['width'],
                     self.ref.streamInfo['height'])
-        logger.info("Offset:     %s", self.offset)
+        logger.info("Offset:     %s", self.sync_offset)
         logger.info("Display:    %s", self.display)
         logger.info("Models:     %s", ', '.join(
             f'{run.spec.name} ({run.libvmaf_model})' for run in self.models))
         logger.info("pix_fmt:    %s", self.pix_fmt)
         logger.debug("loglevel:   %s", self.loglevel)
         logger.info("subsample:  %s", self.subsample)
-        logger.info("output_fmt: %s", self.output_fmt)
+        logger.info("output_format: %s", self.output_format)
         if self._hasRange():
             logger.info("Range:      frames %s, %s", self.start_frame or 0,
                         self.frame_count if self.frame_count is not None else "to the end")
@@ -1085,18 +1084,18 @@ class vmaf():
                 for path in heatmap_files(self.cambi_heatmap_path):
                     os.remove(path)
         self.ffmpegQos.getVmaf(self.models, subsample=self.subsample, log_path=log_path,
-                               output_fmt=self.output_fmt, threads=self.threads, print_progress=self.print_progress, shortest=self.shortest, features=self.features, gpu=self.gpu_mode)
+                               output_fmt=self.output_format, threads=self.threads, print_progress=self.progress, shortest=self.shortest, features=self.features, gpu=self.gpu)
         log_path = self.ffmpegQos.vmafpath
         frames_scored = self._trimRangeLog(log_path) if self._hasRange() else None
         return VmafResult(
-            scores=read_scores(log_path, self.output_fmt, model_names(self.models)),
+            scores=read_scores(log_path, self.output_format, model_names(self.models)),
             models=list(self.models),
             display=self.display,
             pix_fmt=self.pix_fmt,
             hfr=self.hfr_active,
             log_path=log_path,
             cambi_heatmap_path=self.cambi_heatmap_path,
-            offset=self.offset,
+            sync_offset=self.sync_offset,
             start_frame=(self.start_frame or 0) if self._hasRange() else None,
             frame_count=self.frame_count,
             frames_scored=frames_scored,

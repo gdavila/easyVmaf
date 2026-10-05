@@ -12,7 +12,7 @@ from unittest.mock import Mock
 import pytest
 
 from conftest import STREAM
-from easyvmaf import ffmpeg, vmaf
+from easyvmaf import Vmaf, ffmpeg
 from easyvmaf.results import read_scores
 from easyvmaf.vmaf import UnsupportedModelConfigError
 
@@ -50,14 +50,14 @@ def fake_ffmpeg(monkeypatch, unscored):
 
 
 def test_repeated_searches_keep_shared_sources_and_roles(fake_ffmpeg):
-    calculation = vmaf("distorted.mkv", "reference.mkv", vmaf_versions=("0.6",), manual_fps=10,
-                       threads=1, gpu_mode=True)
+    calculation = Vmaf("distorted.mkv", "reference.mkv", vmaf_versions=("0.6",), fps=10,
+                       threads=1, gpu=True)
     qos = calculation.ffmpegQos
     shared = (qos, qos.main, qos.ref, qos.main.videoSrc, qos.ref.videoSrc, qos.invertedSrc)
 
     for reverse in (True, True, False):
         fake_ffmpeg.commands.clear()
-        assert calculation.syncOffset(0.4, reverse=reverse) == [-0.2 if reverse else 0.2, 50.0]
+        assert calculation.sync(0.4, reverse=reverse) == (-0.2 if reverse else 0.2, 50.0)
         qos = calculation.ffmpegQos
         assert (qos, qos.main, qos.ref, qos.main.videoSrc, qos.ref.videoSrc,
                 qos.invertedSrc) == shared
@@ -75,10 +75,10 @@ def test_repeated_searches_keep_shared_sources_and_roles(fake_ffmpeg):
 @pytest.mark.parametrize("reverse", [False, True], ids=["reference", "distorted-reverse"])
 def test_sync_window_past_the_end_is_rejected_before_ffmpeg(fake_ffmpeg, reverse):
     """A window past the end of the searched video crashed with an IndexError."""
-    calculation = vmaf("distorted.mkv", "reference.mkv", vmaf_versions=("0.6",), manual_fps=10)
+    calculation = Vmaf("distorted.mkv", "reference.mkv", vmaf_versions=("0.6",), fps=10)
 
     with pytest.raises(ValueError, match="sync window ends at 1.5 s"):
-        calculation.syncOffset(1.0, start=0.5, reverse=reverse)
+        calculation.sync(1.0, start=0.5, reverse=reverse)
     assert fake_ffmpeg.commands == []
 
 
@@ -88,9 +88,9 @@ def test_reverse_workers_convert_the_reference_frame_rate(fake_ffmpeg, monkeypat
     monkeypatch.setattr(ffmpeg.FFprobe, "getStreamInfo", lambda self: dict(
         STREAM, width=1920, height=1080,
         r_frame_rate="20/1" if "reference" in self.videoSrc else "10/1"))
-    calculation = vmaf("distorted.mkv", "reference.mkv", vmaf_versions=("0.6",), threads=1)
+    calculation = Vmaf("distorted.mkv", "reference.mkv", vmaf_versions=("0.6",), threads=1)
 
-    calculation.syncOffset(0.2, reverse=True)
+    calculation.sync(0.2, reverse=True)
 
     for cmd in fake_ffmpeg.commands:
         graph = cmd[cmd.index("-lavfi") + 1]
@@ -98,23 +98,23 @@ def test_reverse_workers_convert_the_reference_frame_rate(fake_ffmpeg, monkeypat
         assert re.findall(r"\[(?:(\d):v|input(\d)_\d+)\]fps=", graph) == [("0", "")]
 
 
-@pytest.mark.parametrize("manual_fps", [0, 10])
-def test_interlace_is_probed_once_per_input_before_workers(fake_ffmpeg, manual_fps):
-    calculation = vmaf("distorted.mkv", "reference.mkv", threads=4, manual_fps=manual_fps)
+@pytest.mark.parametrize("fps", [0, 10])
+def test_interlace_is_probed_once_per_input_before_workers(fake_ffmpeg, fps):
+    calculation = Vmaf("distorted.mkv", "reference.mkv", threads=4, fps=fps)
 
-    calculation.syncOffset(1.0)
+    calculation.sync(1.0)
 
     assert len(fake_ffmpeg.commands) == 10
     # --fps skips the interlace probe entirely.
-    expected = {"distorted.mkv": 1, "reference.mkv": 1} if manual_fps == 0 else {}
+    expected = {"distorted.mkv": 1, "reference.mkv": 1} if fps == 0 else {}
     assert dict(fake_ffmpeg.probes) == expected
 
 
 def test_only_sync_workers_run_ffmpeg_single_threaded(fake_ffmpeg):
-    calculation = vmaf("distorted.mkv", "reference.mkv", threads=2, manual_fps=10)
+    calculation = Vmaf("distorted.mkv", "reference.mkv", threads=2, fps=10)
 
-    calculation.syncOffset(0.4)
-    calculation.getVmaf()
+    calculation.sync(0.4)
+    calculation.compute()
 
     assert len(fake_ffmpeg.commands) == 4
     for cmd in fake_ffmpeg.commands:
@@ -128,12 +128,12 @@ def test_only_sync_workers_run_ffmpeg_single_threaded(fake_ffmpeg):
 
 
 def test_gpu_vmaf_uploads_after_cpu_filters_and_trims_distorted_on_reverse(fake_ffmpeg):
-    calculation = vmaf("distorted.mkv", "reference.mkv", vmaf_versions=("0.6",), manual_fps=10,
-                       threads=1, gpu_mode=True)
-    calculation.syncOffset(0.4, reverse=True)
+    calculation = Vmaf("distorted.mkv", "reference.mkv", vmaf_versions=("0.6",), fps=10,
+                       threads=1, gpu=True)
+    calculation.sync(0.4, reverse=True)
     # A repeated run rebuilds the chains: clearFilters() resets the hwupload guard.
-    calculation.getVmaf()
-    calculation.getVmaf()
+    calculation.compute()
+    calculation.compute()
 
     qos = calculation.ffmpegQos
     assert inputs(qos._cmd) == ["distorted.mkv", "reference.mkv"]
@@ -156,7 +156,7 @@ def stream(width=1920, height=1080, fps="25/1", pix_fmt="yuv420p", interlaced=Fa
 
 @pytest.fixture
 def final_vmaf(monkeypatch, unscored):
-    """Run vmaf.getVmaf() on stubbed dist.mp4/ref.mp4 streams; returns (calculation, result)."""
+    """Run Vmaf.compute() on stubbed dist.mp4/ref.mp4 streams; returns (calculation, result)."""
     def run(distorted, reference, **options):
         streams = {"dist.mp4": distorted, "ref.mp4": reference}
         monkeypatch.setattr(ffmpeg.FFprobe, "getStreamInfo",
@@ -165,8 +165,8 @@ def final_vmaf(monkeypatch, unscored):
             {"interlaced_frame": int(streams[self.videoSrc]["interlaced"]), "pkt_size": 1}])
         monkeypatch.setattr(ffmpeg.subprocess, "Popen", Mock(
             return_value=SimpleNamespace(returncode=0, communicate=lambda: (b"", None))))
-        calculation = vmaf("dist.mp4", "ref.mp4", threads=1, **options)
-        return calculation, calculation.getVmaf()
+        calculation = Vmaf("dist.mp4", "ref.mp4", threads=1, **options)
+        return calculation, calculation.compute()
     return run
 
 
@@ -223,10 +223,10 @@ def test_hfr_models_follow_the_effective_frame_rate(final_vmaf, distorted, refer
     assert result.hfr is hfr
 
 
-def test_gpu_mode_rejects_vmaf_v1():
+def test_gpu_rejects_vmaf_v1():
     """libvmaf_cuda has no v1 feature extractors: FFmpeg would fail after probing."""
     with pytest.raises(UnsupportedModelConfigError):
-        vmaf("dist.mp4", "ref.mp4", gpu_mode=True)
+        Vmaf("dist.mp4", "ref.mp4", gpu=True)
 
 
 V1_FRAMES = [

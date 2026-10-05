@@ -629,34 +629,45 @@ Nonfinite offsets or VMAF scores cause an error before the summary is written.
 
 ## Python API
 
+The CLI is a client of this API: each flag is an argument of the same name
+(`--sync-offset` is `sync_offset=`, `--output-format` is `output_format=`).
+
 ```python
-from easyvmaf import vmaf
+from easyvmaf import Vmaf
 
-v = vmaf('distorted.mp4', 'reference.mp4', display='hd', vmaf_versions=('1', '0.6'))
-offset, psnr = v.syncOffset(2)     # optional: sync window of 2 s
-result = v.getVmaf()               # VmafResult
+v = Vmaf('distorted.mp4', 'reference.mp4', display='hd', vmaf_versions=('1', '0.6'))
+offset, psnr = v.sync(2)           # optional: sync window of 2 s (SyncResult)
+result = v.compute()               # VmafResult
 
-result.scores    # {'vmaf_v1_hd': ..., 'vmaf_v1_phone': ..., 'vmaf_hd': ..., ...}
-result.pix_fmt   # 'yuv420p10le'
-result.log_path  # 'distorted_vmaf.json'
+result.scores       # {'vmaf_v1_hd': ..., 'vmaf_v1_phone': ..., 'vmaf_hd': ..., ...}
+result.pix_fmt      # 'yuv420p10le'
+result.log_path     # 'distorted_vmaf.json'
+result.sync_offset  # the offset applied, in seconds
 ```
 
 ```python
 # Frames 9000-17999 of the full calculation, with a manual offset
-v = vmaf('distorted.mp4', 'reference.mp4', start_frame=9000, frame_count=9000)
-v.offset = 1.5
-result = v.getVmaf()
+v = Vmaf('distorted.mp4', 'reference.mp4', sync_offset=1.5,
+         start_frame=9000, frame_count=9000)
+result = v.compute()
 result.frames_scored  # 9000, or fewer for the last range
 ```
 
-The package also exports `VmafResult`, `ModelSpec`, `CATALOG`, `select_models`,
-`validate_model_config`, `UnsupportedModelConfigError`,
-`UnsupportedFramerateError`, `validate_range_config` and
-`UnsupportedRangeError`. All `vmaf()` arguments after the two paths are
-keyword-only: `display`, `vmaf_versions`, `views`, `hfr`, `bitdepth`,
-`enc_size`, `enc_bitdepth`, `model_options`, `output_fmt`, `loglevel`,
-`subsample`, `threads`, `print_progress`, `shortest`, `manual_fps`,
-`cambi_heatmap`, `gpu_mode`, `start_frame` and `frame_count`.
+`sync(window, start=0, reverse=False)` is `--sync-window`, `--sync-start` and
+`--sync-reverse`: it returns `SyncResult(offset, psnr)` and stores the offset in
+`v.sync_offset`, which `compute()` applies. All `Vmaf()` arguments after the two
+paths are keyword-only: `display`, `vmaf_versions`, `views`, `hfr`, `bitdepth`,
+`enc_size`, `enc_bitdepth`, `model_options`, `output_format`, `loglevel`,
+`subsample`, `threads`, `progress`, `shortest`, `fps`, `cambi_heatmap`, `gpu`,
+`sync_offset`, `start_frame` and `frame_count`.
+
+The public API is what the `easyvmaf` package exports: `Vmaf`, `VmafResult`,
+`SyncResult`, `validate_model_config`, `validate_range_config`,
+`UnsupportedModelConfigError`, `UnsupportedRangeError`,
+`UnsupportedFramerateError`, `FFmpegExecutionError`, `ModelSpec`, `ModelRun`,
+`CATALOG`, `select_models`, `check_ffmpeg` and `__version__`. The submodules
+(`easyvmaf.vmaf`, `easyvmaf.ffmpeg`, ...) are internal and can change in any
+release.
 
 ---
 

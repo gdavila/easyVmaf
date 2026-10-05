@@ -97,11 +97,13 @@ easyvmaf/config.py  ← binary path resolution (ffmpeg, ffprobe via shutil.which
 ```
 
 Supporting entry points:
-- `easyvmaf/__init__.py` — public API surface: `vmaf`, `VmafResult`,
-  `validate_model_config`, `UnsupportedFramerateError`,
-  `UnsupportedModelConfigError`, `validate_range_config`, `UnsupportedRangeError`,
-  `ModelSpec`, `CATALOG`, `select_models`,
-  `FFprobe`, `FFmpegQos`, `inputFFmpeg`, `__version__`
+- `easyvmaf/__init__.py` — the public API, exactly its `__all__`: `Vmaf`,
+  `VmafResult`, `SyncResult`, `validate_model_config`, `validate_range_config`,
+  `UnsupportedModelConfigError`, `UnsupportedRangeError`,
+  `UnsupportedFramerateError`, `FFmpegExecutionError`, `ModelSpec`, `ModelRun`,
+  `CATALOG`, `select_models`, `check_ffmpeg`, `__version__`. Its names follow the
+  CLI flags (`--sync-offset` → `sync_offset=`). The submodules (`easyvmaf.vmaf`,
+  `easyvmaf.ffmpeg`, ...) are internal
 - `easyvmaf/__main__.py` — enables `python3 -m easyvmaf`
 
 ### easyvmaf/models.py — model catalog
@@ -160,22 +162,24 @@ Must NOT contain any VMAF business logic or user-facing print statements.
 ### Layer 2 — easyvmaf/vmaf.py and easyvmaf/results.py
 VMAF computation orchestration.
 - `video`: parses stream metadata via FFprobe (lazy loading), detects interlacing
-- `vmaf(mainSrc, refSrc, *, display='hd', vmaf_versions=('1',), views=None,
+- `Vmaf(distorted, reference, *, display='hd', vmaf_versions=('1',), views=None,
   hfr='auto', bitdepth='auto', enc_size=None, enc_bitdepth=None, model_options=(),
-  output_fmt='json', loglevel='info', subsample=1, threads=0, print_progress=False,
-  shortest=False, manual_fps=0, cambi_heatmap=False, gpu_mode=False,
+  output_format='json', loglevel='info', subsample=1, threads=0, progress=False,
+  shortest=False, fps=0, cambi_heatmap=False, gpu=False, sync_offset=0.0,
   start_frame=None, frame_count=None)`: pixel format, auto-scaling,
   auto-deinterlace, parallel sync offset search, model resolution, optional frame
-  range and final VMAF scoring. `getVmaf()` returns a `VmafResult`.
-- `validate_range_config(start_frame, frame_count, subsample, gpu_mode,
+  range and final VMAF scoring. `sync(window, start=0, reverse=False)` searches the
+  offset, stores it in `self.sync_offset` and returns `SyncResult(offset, psnr)`;
+  `compute()` applies `sync_offset` and returns a `VmafResult`.
+- `validate_range_config(start_frame, frame_count, subsample, gpu,
   labels=None)`: run by the constructor and once by the CLI. Raises
   `UnsupportedRangeError(ValueError)` for a non-integer or negative start, a count
-  below 1, or a range with `subsample > 1` or `gpu_mode`. With a range, the
+  below 1, or a range with `subsample > 1` or `gpu`. With a range, the
   constructor also rejects containers outside `_RANGE_FORMATS` (mp4/mov,
   matroska/webm) via `formatInfo['format_name']`.
 - `validate_model_config(display, vmaf_versions, views, hfr, bitdepth, enc_size,
-  enc_bitdepth, model_options, gpu_mode, labels=None)`: the single source of model
-  option validation. Run by the `vmaf` constructor and once by the CLI before the
+  enc_bitdepth, model_options, gpu, labels=None)`: the single source of model
+  option validation. Run by the `Vmaf` constructor and once by the CLI before the
   batch (`labels` maps argument names to flag names in messages). Raises
   `UnsupportedModelConfigError` for: GPU with v1; GPU with bitdepth 10; `views`,
   `hfr='on'`, `enc_size`, `enc_bitdepth` or `model_options` without v1; a
@@ -188,9 +192,10 @@ VMAF computation orchestration.
 - `UnsupportedFramerateError`: raised when no deinterlace filter covers the fps combination
 - `UnsupportedModelConfigError(ValueError)`: options the selected models cannot honour
 - `FeatureConfig`: dataclass for building the libvmaf `feature=` parameter string
-- `results.py`: `VmafResult` dataclass (`scores`, `models`, `display`, `pix_fmt`,
-  `hfr`, `log_path`, `cambi_heatmap_path`, `offset`, and for a range
-  `start_frame`, `frame_count`, `frames_scored`) and
+- `results.py`: `SyncResult` NamedTuple (`offset`, `psnr`), `VmafResult` dataclass
+  (`scores`, `models`, `display`, `pix_fmt`, `hfr`, `log_path`,
+  `cambi_heatmap_path`, `sync_offset`, and for a range `start_frame`,
+  `frame_count`, `frames_scored`) and
   `read_scores(log_path, output_fmt, names)`, which averages the per-frame values of
   each model name in a json, xml or csv libvmaf log. It reads only model names:
   feature columns differ between v0.6 and v1. `read_frames(log_path, output_fmt)`
@@ -246,21 +251,21 @@ Understand this before touching easyvmaf/vmaf.py or easyvmaf/ffmpeg.py.
 |                    |                   |   (pix_fmt of both inputs)                    |       |
 |                    |                   | `_applyDeinterlaceFilters` (r_frame_rate)     |       |
 |                    |                   | `_deinterlaceFrame/Field` (r_frame_rate)      |       |
-|                    |                   | `syncOffset` (r_frame_rate, width, height)    |       |
+|                    |                   | `sync` (r_frame_rate, width, height)          |       |
 |                    |                   | `_resolveModels` (distorted width, height,    |       |
 |                    |                   |   pix_fmt → `cambi.enc_*`)                    |       |
 |                    |                   | `_build_feature_string` (v0.6-only CAMBI:     |       |
 |                    |                   |   width, height of both inputs)               |       |
-|                    |                   | `getVmaf` (r_frame_rate, width, height logs)  |       |
+|                    |                   | `compute` (r_frame_rate, width, height logs)  |       |
 |                    |                   | `getDuration` (primary: duration, start_time) |       |
 | `formatInfo`       | `getFormatInfo()` | `getDuration` fallback (KeyError path)        | low   |
 |                    |                   | `_checkRangeInputs` (format_name), range only |       |
 | `framesInfo` /     | `getFramesInfo()` | `_applyDeinterlaceFilters` (final calculation | HIGH  |
 |                    |                   |   and sync workers), via                      |       |
 | `interlaced`       |                   |   `self.interlaced` only                      |       |
-|                    |                   | `syncOffset` probes once per input before     |       |
+|                    |                   | `sync` probes once per input before           |       |
 |                    |                   |   starting its worker pool                    |       |
-|                    |                   | Skipped entirely when `manual_fps != 0` (--fps)|      |
+|                    |                   | Skipped entirely when `fps != 0` (--fps)      |       |
 
 `getFramesInfo()` uses `-read_intervals %+5` — it decodes 5 seconds of frames
 per input to sample interlacing. This flag must never be changed.
@@ -271,20 +276,20 @@ from `streamInfo`, which is already fetched: v1 adds no FFprobe call.
 **Lazy loading**: `interlaced` and `formatInfo` on the `video` class are lazy
 properties — they trigger FFprobe only on first access and cache the result.
 `streamInfo` is eager (fetched in `__init__`). The properties are not locked, so
-`syncOffset()` reads `interlaced` before creating workers; otherwise each worker
+`sync()` reads `interlaced` before creating workers; otherwise each worker
 would run its own frames probe.
 
 ---
 
 ## Key Behavioral Contracts
 
-### Sync loop (syncOffset)
+### Sync loop (`sync()`)
 - Runs PSNR at each frame offset in the sync window **in parallel** via `ThreadPoolExecutor`
 - Each worker creates its own `FFmpegQos` instance with `gpu_mode=False` — sync is always CPU-only even when `--gpu` is set
 - Each worker sets the private `FFmpegQos._single_thread` switch: FFmpeg runs single-threaded (`-threads 1` before each `-i`, global `-filter_complex_threads 1`), since the pool already runs one process per CPU. The final VMAF command keeps FFmpeg's default threading
 - Workers build their chains with the same `_normalizeChains()` as the final
   calculation (deinterlace or `--fps`, then scale; no pixel format normalization)
-  and trim **after** it, like `setOffset()`: the offset a worker scores selects the
+  and trim **after** it, like `_applyOffset()`: the offset a worker scores selects the
   same frame or field in the final calculation. Trimming before deinterlacing made
   offsets one field apart tie on interlaced inputs
 - Before filtering, the searched input (ref slot) gets `setPreTrimFilter(offset -
@@ -298,7 +303,7 @@ would run its own frames probe.
 - Reverse search returns a negative offset so the final calculation trims distorted and names its output after distorted
 - Each worker starts with fresh filter chains on its own QoS instance
 
-### Filter application order (`vmaf.getVmaf()`, always this sequence)
+### Filter application order (`Vmaf.compute()`, always this sequence)
 1. `clearFilters()` — reset state (also resets `_hwupload_done`)
 2. `_applyPixelFormat()` — resolve the measurement `pix_fmt` and add
    `format=<pix_fmt>` as the **first** filter of each chain whose native format
@@ -308,12 +313,14 @@ would run its own frames probe.
    `DISPLAY_RESOLUTION[display]`; records the effective distorted frame rate in
    `self.output_fps`. Deinterlacing goes before scaling: `scale` treats the picture
    as progressive and would blend the two fields (−22 VMAF on a 720i input)
-4. `setOffset()` — apply trim filters for sync; with a frame range,
+4. `_applyOffset()` — apply trim filters for `sync_offset`; with a frame range,
    `_applyRange()` instead (see Frame range)
 5. `_resolveModels()` — HFR decision from `output_fps`, `select_models()`, v1 overrides
 6. `ffmpegQos.getVmaf(models, ...)` — if `gpu=True`, auto-inserts `hwupload_cuda` on both chains as the last CPU→GPU step before `libvmaf_cuda`
 
-`syncOffset()` (with `autoSync=True`) runs between steps 3 and 4.
+`sync()` runs before `compute()`, on its own worker chains, and only sets the
+offset of step 4: `_applyOffset()` is private because `compute()` rebuilds every
+chain.
 
 The format conversion goes first on purpose: with `scale` in the chain FFmpeg
 negotiates the output format into the scaler, but without scaling and with `yadif`
@@ -326,7 +333,7 @@ with the same `frameNum` and identical metric values, so consecutive ranges join
 into the full calculation; with `cambi_heatmap`, concatenating each heatmap file
 of consecutive ranges, in range order, gives the full calculation's file byte for
 byte. Pinned by `test_frame_ranges_join_into_the_full_calculation`.
-`_applyRange()` replaces `setOffset()` and keeps every other step of the chain
+`_applyRange()` replaces `_applyOffset()` and keeps every other step of the chain
 identical:
 - **Anchor**: the only part of the full chain that depends on seeing its first
   frame is `setpts=PTS-STARTPTS` of the sync trim. A deep copy of `ffmpegQos`
@@ -352,7 +359,7 @@ identical:
   inputs (two frames of duration tolerance), a range past the last frame and a
   heatmap file not holding one picture per measured frame raise
   `UnsupportedRangeError`. libvmaf writes no log when no frame reaches it, so
-  `getVmaf()` deletes an existing log at the range path before running, and the
+  `compute()` deletes an existing log at the range path before running, and the
   `cambi_heatmap_scale_*.gray` files of the range heatmap directory: libvmaf
   truncates only the files named after the current encoding size
 - **Heatmap pictures**: one raw 16-bit file per scale (5), distorted picture n at
@@ -394,7 +401,7 @@ identical:
 ### GPU filter pipeline
 `--gpu` only supports v0.6 models: libvmaf 3.2.x has no CUDA extractors for the
 v1 features (`cambi`, `speed_chroma`, `adm3`, `motion3`).
-When `--gpu` is used, `getVmaf()` calls `_insertHwupload()` on both `main` and `ref`
+When `--gpu` is used, `FFmpegQos.getVmaf()` calls `_insertHwupload()` on both `main` and `ref`
 inputs **after** all CPU filters have been appended:
 ```
 [scale (CPU)] → [fps (CPU)] → [trim (CPU)] → [format=yuv420p] → [setparams=colorspace=unknown:range=unknown] → [hwupload_cuda] → [libvmaf_cuda]
@@ -411,7 +418,7 @@ normalization, which crashes because `auto_scale` cannot accept CUDA frames.
 `getDuration()` tries `streamInfo['duration']` first. On KeyError (common with MKV,
 some TS streams) falls back to `formatInfo['duration']`. Both values subtract
 `start_time` and apply `math.floor` to millisecond precision.
-Duration is passed to `setOffset()` to compute trim length.
+Duration is used by `_applyOffset()` (via `_syncTrims()`) to compute trim length.
 
 ### VMAF models
 `CATALOG` in `easyvmaf/models.py` (all built-in libvmaf models):
@@ -479,7 +486,11 @@ writes `<distorted>_sync_summary.json`:
 - **Logging destination**: `basicConfig(stream=sys.stderr)` — keeps the results on stdout separate from logs.
 - **Python >= 3.8**. Use `typing.List`/`Tuple`/`Optional`, no `match`, no `list[str]`
   at runtime. Use `functools.cached_property` or lazy `@property` where appropriate.
-- **Public method signatures in ffmpeg.py**: do not change without explicit instruction.
+- **Public API**: the names exported by `easyvmaf/__init__.py` and their
+  signatures are the public API (SemVer after the first PyPI release). Do not
+  rename or change them without explicit instruction. The submodules are internal:
+  `ffmpeg.py` names may change, but the never-change items about it below
+  (separators, `_hwupload_done` guard, `-read_intervals`) still hold.
 - **Test clips for VMAF v1**: frames passed straight to a v1 model need at least
   ~320x240 (`3d0h`), ~400x300 (`5d0h`) or ~576x324 (`3d0h_2160`), or SpEED fails.
   Through easyVmaf the inputs are always scaled to 1080p/2160p first.
@@ -534,12 +545,12 @@ distorted reported at 2x (`_deinterlaceFrame(0.5, main)`), pinned by
 
 - The `-read_intervals %+5` flag in FFprobe `getFramesInfo` command
 - The `getDuration()` fallback chain (streamInfo → formatInfo KeyError fallback)
-- The `syncOffset()` PSNR-based sync algorithm logic
+- The `sync()` PSNR-based sync algorithm logic
 - The libvmaf filter parameter names: `n_subsample`, `n_threads`, `log_fmt`,
   `log_path`, `shortest`, `feature`
 - The `\\\\:` separators in `_build_model_string()` and feature strings — FFmpeg filter graph parser syntax
 - The `invertSrcs()` / `invertedSrc` flag logic in sync handling
-- Any public method name in `ffmpeg.py`
+- The names and signatures of the public API (`easyvmaf.__all__`)
 - The `_hwupload_done` guard in `_insertHwupload()` and the reset in `clearFilters()`
 - The v0.6 FFmpeg command: `test_v06_vmaf_command_is_unchanged` in
   `tests/test_ffmpeg.py` (`GOLDEN_CHAINS`, `GOLDEN_CAMBI`) pins the full command for

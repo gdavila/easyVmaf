@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from easyvmaf import ffmpeg, vmaf
+from easyvmaf import Vmaf, ffmpeg
 from easyvmaf.ffmpeg import FFmpegQos
 from easyvmaf.models import select_models
 
@@ -205,11 +205,10 @@ def test_v06_vmaf_command_is_unchanged(monkeypatch, unscored, model, cambi_heatm
                         lambda self: [{"interlaced_frame": 0, "pkt_size": 1}])
     monkeypatch.setattr(ffmpeg.subprocess, "Popen", Mock(
         return_value=SimpleNamespace(returncode=0, communicate=lambda: (b"", None))))
-    calculation = vmaf("dist.mp4", "ref.mp4", display=model.lower(), vmaf_versions=("0.6",),
-                       threads=4, cambi_heatmap=cambi_heatmap)
-    calculation.offset = 1.5
+    calculation = Vmaf("dist.mp4", "ref.mp4", display=model.lower(), vmaf_versions=("0.6",),
+                       threads=4, cambi_heatmap=cambi_heatmap, sync_offset=1.5)
 
-    calculation.getVmaf()
+    calculation.compute()
 
     graph = GOLDEN_CHAINS[model] + (GOLDEN_CAMBI if cambi_heatmap else "")
     assert calculation.ffmpegQos._cmd == [

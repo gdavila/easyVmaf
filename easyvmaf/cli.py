@@ -34,13 +34,13 @@ from signal import signal, SIGINT
 
 from .ffmpeg import FFmpegExecutionError, check_ffmpeg
 from .models import DISPLAY_RESOLUTION, VMAF_VERSIONS
-from .vmaf import vmaf, validate_model_config, validate_range_config, UnsupportedFramerateError
+from .vmaf import Vmaf, validate_model_config, validate_range_config, UnsupportedFramerateError
 
 logger = logging.getLogger(__name__)
 
 JSON_SCHEMA_VERSION = 2
 
-# How validate_model_config() errors name each vmaf() argument
+# How validate_model_config() errors name each Vmaf() argument
 _FLAG_LABELS = {
     'display': '--display',
     'vmaf_versions': '--vmaf-version',
@@ -50,7 +50,7 @@ _FLAG_LABELS = {
     'enc_size': '--enc-size',
     'enc_bitdepth': '--enc-bitdepth',
     'model_options': '--model-option',
-    'gpu_mode': '--gpu',
+    'gpu': '--gpu',
     'start_frame': '--start-frame',
     'frame_count': '--frame-count',
     'subsample': '--subsample',
@@ -380,13 +380,13 @@ def main():
     views = tuple(cmdParser.views) if cmdParser.views else None
     model_options = tuple(cmdParser.model_options)
     verbose = cmdParser.verbose
-    output_fmt = cmdParser.output_format
+    output_format = cmdParser.output_format
     threads = cmdParser.threads
-    print_progress = cmdParser.progress
+    progress = cmdParser.progress
     shortest = cmdParser.shortest
     cambi_heatmap = cmdParser.cambi_heatmap
     sync_only = cmdParser.sync_only
-    gpu_mode = cmdParser.gpu
+    gpu = cmdParser.gpu
 
     # Setting verbosity
     if verbose:
@@ -433,7 +433,7 @@ def main():
         ffmpeg_info['version_str']
     )
 
-    if gpu_mode:
+    if gpu:
         if not ffmpeg_info['cuda_vmaf']:
             print(
                 "[easyVmaf] ERROR: --gpu requested but libvmaf_cuda filter "
@@ -464,16 +464,20 @@ def main():
 
     for main in mainFiles:
         '''check if syncWin was set. If true offset is computed automatically, otherwise manual values are used  '''
+        # `or 0.0` also turns --sync-offset -0 into 0.0, never reported as -0.0.
+        offset = cmdParser.sync_offset or 0.0
+        psnr = None
 
         try:
-            myVmaf = vmaf(main, reference, display=display,
+            myVmaf = Vmaf(main, reference, display=display,
                           vmaf_versions=vmaf_versions, views=views, hfr=cmdParser.hfr,
                           bitdepth=cmdParser.bitdepth, enc_size=cmdParser.enc_size,
                           enc_bitdepth=cmdParser.enc_bitdepth, model_options=model_options,
-                          loglevel=loglevel, subsample=n_subsample, output_fmt=output_fmt, threads=threads, print_progress=print_progress, shortest=shortest, manual_fps=fps, cambi_heatmap=cambi_heatmap, gpu_mode=gpu_mode,
+                          loglevel=loglevel, subsample=n_subsample, output_format=output_format, threads=threads, progress=progress, shortest=shortest, fps=fps, cambi_heatmap=cambi_heatmap, gpu=gpu,
+                          sync_offset=offset,
                           start_frame=cmdParser.start_frame, frame_count=cmdParser.frame_count)
             if syncWin > 0:
-                offset, psnr = myVmaf.syncOffset(syncWin, ss, reverse)
+                offset, psnr = myVmaf.sync(syncWin, ss, reverse)
                 if sync_only:
                     summary_path = _summary_path(main)
                     _write_summary(_build_result(
@@ -485,13 +489,8 @@ def main():
                     print(f"offset: {offset} | psnr: {psnr}", flush=True)
                     print(f"Summary file path: {summary_path}", flush=True)
                     continue
-            else:
-                # `or 0.0` also turns --sync-offset -0 into 0.0, never reported as -0.0.
-                offset = cmdParser.sync_offset or 0.0
-                psnr = None
-                myVmaf.offset = offset
 
-            vmaf_result = myVmaf.getVmaf()
+            vmaf_result = myVmaf.compute()
         except (FFmpegExecutionError, UnsupportedFramerateError, ValueError) as e:
             print(f"[easyVmaf] ERROR: {e}", file=sys.stderr)
             sys.exit(1)

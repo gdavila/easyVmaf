@@ -9,7 +9,7 @@ from unittest.mock import Mock
 import pytest
 
 from conftest import CAPABILITIES, SCORES, STREAM, strict_loads, write_scores
-from easyvmaf import cli, ffmpeg, vmaf
+from easyvmaf import Vmaf, cli, ffmpeg
 from easyvmaf.models import model_names, select_models
 from easyvmaf.results import VmafResult, read_scores
 
@@ -60,13 +60,13 @@ def batch(tmp_path, monkeypatch, ffmpeg_ok):
         output = tmp_path / (name + "_vmaf.json")
         files.append(str(distorted))
         calculations[str(distorted)] = SimpleNamespace(
-            syncOffset=Mock(return_value=(index * 0.1, 30.1234567 + index)),
-            getVmaf=Mock(return_value=result_for(
+            sync=Mock(return_value=(index * 0.1, 30.1234567 + index)),
+            compute=Mock(return_value=result_for(
                 select_models("hd", ("0.6",)), dict(SCORES), str(output))))
     constructor = Mock(side_effect=lambda main, ref, **kwargs: calculations[main])
     real_glob = cli.glob.glob
     monkeypatch.setattr(cli.glob, "glob", lambda p: files if p == "*.mkv" else real_glob(p))
-    monkeypatch.setattr(cli, "vmaf", constructor)
+    monkeypatch.setattr(cli, "Vmaf", constructor)
     return SimpleNamespace(files=files, reference=str(reference), calc=calculations,
                            constructor=constructor)
 
@@ -128,7 +128,7 @@ def test_unusable_ffmpeg_fails_on_stderr(monkeypatch, capsys, capability, messag
     capabilities[capability] = False
     monkeypatch.setattr(cli, "check_ffmpeg", lambda: capabilities)
     constructor = Mock()
-    monkeypatch.setattr(cli, "vmaf", constructor)
+    monkeypatch.setattr(cli, "Vmaf", constructor)
 
     assert exit_code(monkeypatch, "-d", "dist.mkv", "-r", "ref.mkv", "--gpu",
                      "--vmaf-version", "0.6") == 1
@@ -155,9 +155,10 @@ def test_missing_input_fails_on_stderr(batch, monkeypatch, capsys, missing, mess
     batch.constructor.assert_not_called()
 
 
-DEFAULTS = dict(subsample=1, threads=0, manual_fps=0, display="hd", vmaf_versions=("1",),
+DEFAULTS = dict(subsample=1, threads=0, fps=0, display="hd", vmaf_versions=("1",),
                 views=None, hfr="auto", bitdepth="auto", enc_size=None, enc_bitdepth=None,
-                model_options=(), output_fmt="json", start_frame=None, frame_count=None)
+                model_options=(), output_format="json", sync_offset=0.0, start_frame=None,
+                frame_count=None)
 
 
 @pytest.mark.parametrize("options, forwarded", [
@@ -167,12 +168,12 @@ DEFAULTS = dict(subsample=1, threads=0, manual_fps=0, display="hd", vmaf_version
       "--display", "4K", "--view", "1.5h", "3H", "--hfr", "on", "--bitdepth", "10",
       "--enc-size", "1280x720", "--enc-bitdepth", "8", "--model-option", "cambi.topk=0.5",
       "--model-option", "motion3.motion_fps_weight=1.0"],
-     dict(DEFAULTS, subsample=3, threads=2, manual_fps=23.976, display="4k",
+     dict(DEFAULTS, subsample=3, threads=2, fps=23.976, display="4k",
           views=("1.5h", "3h"), hfr="on", bitdepth="10", enc_size=(1280, 720), enc_bitdepth=8,
           model_options=("cambi.topk=0.5", "motion3.motion_fps_weight=1.0"))),
     # Option values are case-insensitive, as users type them (XML, 4K, HFR=ON).
     (["--vmaf-version", "1", "0.6", "--output-format", "XML"],
-     dict(DEFAULTS, vmaf_versions=("1", "0.6"), output_fmt="xml")),
+     dict(DEFAULTS, vmaf_versions=("1", "0.6"), output_format="xml")),
     (["--start-frame", "9000", "--frame-count", "9000"],
      dict(DEFAULTS, start_frame=9000, frame_count=9000)),
 ], ids=["defaults", "all-options-4k", "both-versions-xml", "frame-range"])
@@ -184,12 +185,11 @@ def test_options_are_forwarded(batch, monkeypatch, options, forwarded):
 
     assert batch.constructor.call_args.args == (distorted, batch.reference)
     assert batch.constructor.call_args.kwargs.items() >= forwarded.items()
-    calculation.getVmaf.assert_called_once_with()
+    calculation.compute.assert_called_once_with()
     if "--sync-window" in options:
-        calculation.syncOffset.assert_called_once_with(0.4, 1.25, False)
+        calculation.sync.assert_called_once_with(0.4, 1.25, False)
     else:
-        calculation.syncOffset.assert_not_called()
-        assert calculation.offset == 0
+        calculation.sync.assert_not_called()
 
 
 def test_summary_reports_v1_by_default(tmp_path, monkeypatch, capsys, ffmpeg_ok, scored):
@@ -240,7 +240,7 @@ def test_vmaf_v06_keeps_its_metrics(tmp_path, monkeypatch, ffmpeg_ok, scored):
 def test_summary_reports_the_frame_range(batch, monkeypatch):
     """An orchestrator weights each range by frames_scored; the last range can be short."""
     distorted = batch.files[0]
-    result = batch.calc[distorted].getVmaf.return_value
+    result = batch.calc[distorted].compute.return_value
     result.start_frame, result.frame_count, result.frames_scored = 9000, 9000, 1234
     result.log_path = str(Path(distorted).with_name("z_vmaf_f9000-10233.json"))
 
@@ -260,8 +260,8 @@ def test_batch_processes_each_input_once_in_glob_order(batch, monkeypatch, capsy
 
     assert [call.args[0] for call in batch.constructor.call_args_list] == batch.files
     for distorted in batch.files:
-        batch.calc[distorted].syncOffset.assert_called_once_with(0.4, 0, False)
-        assert batch.calc[distorted].getVmaf.call_count == full
+        batch.calc[distorted].sync.assert_called_once_with(0.4, 0, False)
+        assert batch.calc[distorted].compute.call_count == full
     suffix = "_vmaf_summary.json" if full else "_sync_summary.json"
     paths = [Path(distorted).with_name(Path(distorted).stem + suffix)
              for distorted in batch.files]
@@ -293,11 +293,11 @@ def test_manual_offset_is_applied_and_reported_for_every_input(
     instances = []
 
     def construct(*args, **kwargs):
-        instances.append(vmaf(*args, **kwargs))
-        instances[-1].syncOffset = Mock(side_effect=AssertionError("unexpected sync search"))
+        instances.append(Vmaf(*args, **kwargs))
+        instances[-1].sync = Mock(side_effect=AssertionError("unexpected sync search"))
         return instances[-1]
 
-    monkeypatch.setattr(cli, "vmaf", construct)
+    monkeypatch.setattr(cli, "Vmaf", construct)
 
     run(monkeypatch, "-d", "*.mkv", "-r", str(reference), "--fps", "10",
         "--sync-offset", seconds)
@@ -345,7 +345,7 @@ def test_ffmpeg_failure_stops_batch_without_reading_stale_results(
             qos.getVmaf(models, print_progress=progress)
             return result_for(models, read_scores(qos.vmafpath, "json", model_names(models)),
                               qos.vmafpath)
-        return SimpleNamespace(ffmpegQos=qos, getVmaf=get_vmaf)
+        return SimpleNamespace(ffmpegQos=qos, compute=get_vmaf)
 
     def process_for_command(cmd, **kwargs):
         failed = files[1] in cmd
@@ -359,7 +359,7 @@ def test_ffmpeg_failure_stops_batch_without_reading_stale_results(
         return SimpleNamespace(returncode=7 if failed else 0, communicate=lambda: (b"", None),
                                stderr="", run_command_with_progress=progress_events)
 
-    monkeypatch.setattr(cli, "vmaf", calculation)
+    monkeypatch.setattr(cli, "Vmaf", calculation)
     monkeypatch.setattr(ffmpeg.subprocess, "Popen", process_for_command)
     monkeypatch.setattr(ffmpeg, "FfmpegProgress", process_for_command)
 
@@ -374,7 +374,7 @@ def test_ffmpeg_failure_stops_batch_without_reading_stale_results(
 
 
 def test_unserializable_result_stops_batch_without_partial_json(batch, monkeypatch, capsys):
-    batch.calc[batch.files[1]].syncOffset.return_value = (float("inf"), 42.0)
+    batch.calc[batch.files[1]].sync.return_value = (float("inf"), 42.0)
 
     assert exit_code(monkeypatch, "-d", "*.mkv", "-r", batch.reference,
                      "--sync-window", "0.4") == 1

@@ -28,14 +28,20 @@ import os
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from statistics import mean
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 from .models import ModelRun
 
 
+class SyncResult(NamedTuple):
+    """Outcome of Vmaf.sync(): the offset found and its PSNR."""
+    offset: float  # seconds: positive trims the reference, negative the distorted
+    psnr: float    # PSNR in dB between the inputs at that offset
+
+
 @dataclass
 class VmafResult:
-    """Outcome of one vmaf.getVmaf() run."""
+    """Outcome of one Vmaf.compute() run."""
     scores: Dict[str, float]           # metric name -> mean score over frames
     models: List[ModelRun]             # runs passed to libvmaf, in score order
     display: str                       # 'hd' | '4k'
@@ -43,8 +49,8 @@ class VmafResult:
     hfr: bool                          # True when the v1 _hfr variants were used
     log_path: str                      # libvmaf log (json, xml or csv)
     cambi_heatmap_path: Optional[str] = None
-    offset: float = 0.0
-    # Frame range (vmaf start_frame/frame_count); None for a full calculation.
+    sync_offset: float = 0.0
+    # Frame range (Vmaf start_frame/frame_count); None for a full calculation.
     start_frame: Optional[int] = None  # first measured frame of the range
     frame_count: Optional[int] = None  # frames requested; None: to the end
     frames_scored: Optional[int] = None  # frames in the log; fewer at the end

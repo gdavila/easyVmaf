@@ -20,7 +20,7 @@ from types import SimpleNamespace
 import pytest
 
 from conftest import ROOT, run_cli, strict_loads
-from easyvmaf import UnsupportedRangeError, ffmpeg, vmaf
+from easyvmaf import UnsupportedRangeError, Vmaf, ffmpeg
 from easyvmaf.ffmpeg import FFmpegQos
 from easyvmaf.models import CATALOG, ModelRun
 from easyvmaf.results import read_frames
@@ -94,9 +94,9 @@ def test_sync_and_score_match_plain_ffmpeg(ffmpeg_bin, clips, monkeypatch, rever
     # Forward: the reference leads. Reverse: the distorted clip leads.
     distorted, reference = (clips.lead, clips.late) if reverse else (clips.late, clips.lead)
     monkeypatch.chdir(clips.directory)  # PSNR writes its stats file to cwd
-    calculation = vmaf(distorted, reference, vmaf_versions=("0.6",), manual_fps=10, threads=1)
+    calculation = Vmaf(distorted, reference, vmaf_versions=("0.6",), fps=10, threads=1)
 
-    offset, psnr = calculation.syncOffset(0.4, reverse=reverse)
+    offset, psnr = calculation.sync(0.4, reverse=reverse)
 
     assert offset == (-0.2 if reverse else 0.2)
     # Both directions compare `late` from 0 with `lead` from 0.2 s.
@@ -106,7 +106,7 @@ def test_sync_and_score_match_plain_ffmpeg(ffmpeg_bin, clips, monkeypatch, rever
                           "[a][b]psnr[o]")
     assert psnr == pytest.approx(float(re.search(r"average:(\S+)", stderr).group(1)), abs=1e-6)
 
-    calculation.getVmaf()
+    calculation.compute()
 
     output = Path(calculation.ffmpegQos.vmafpath)
     assert output == Path(distorted).with_name(Path(distorted).stem + "_vmaf.json")
@@ -160,7 +160,7 @@ def test_vmaf_v1_scores_a_scaled_rendition(encode, tmp_path):
     encode("-i", reference, "-vf", "scale=1280:720,gblur=sigma=1", "-pix_fmt", "yuv420p",
            "-c:v", "ffv1", distorted)
 
-    result = vmaf(str(distorted), str(reference), cambi_heatmap=True, threads=2).getVmaf()
+    result = Vmaf(str(distorted), str(reference), cambi_heatmap=True, threads=2).compute()
 
     assert set(result.scores) == {"vmaf_v1_hd", "vmaf_v1_phone"}
     assert all(0 <= score <= 100 for score in result.scores.values())
@@ -181,7 +181,7 @@ def test_vmaf_v1_scores_a_144p_rendition(encode, tmp_path):
     encode("-i", reference, "-vf", "scale=256:144", "-pix_fmt", "yuv420p", "-c:v", "ffv1",
            distorted)
 
-    result = vmaf(str(distorted), str(reference), threads=2).getVmaf()
+    result = Vmaf(str(distorted), str(reference), threads=2).compute()
 
     assert set(result.scores) == {"vmaf_v1_hd", "vmaf_v1_phone"}
     assert all(0 <= score <= 100 for score in result.scores.values())
@@ -208,11 +208,11 @@ def test_interlaced_distorted_scores_each_reference_frame_once(encode, tmp_path,
     encode("-i", source, "-vf", "fps=%d" % reference_fps, "-c:v", "ffv1", reference)
     encode("-i", source, "-vf", INTERLACE_20P_TO_10I, "-r", "10",
            "-c:v", "mpeg2video", "-q:v", "2", "-flags", "+ilme+ildct", distorted)
-    calculation = vmaf(str(distorted), str(reference), vmaf_versions=("0.6",), threads=2)
+    calculation = Vmaf(str(distorted), str(reference), vmaf_versions=("0.6",), threads=2)
     if reported_distorted_fps:
         calculation.main.streamInfo["r_frame_rate"] = reported_distorted_fps
 
-    result = calculation.getVmaf()
+    result = calculation.compute()
 
     assert len(json.loads(Path(result.log_path).read_text())["frames"]) == reference_fps
     assert calculation.output_fps == reference_fps
@@ -231,8 +231,8 @@ def test_reverse_sync_is_field_accurate_on_interlaced_distorted(encode, tmp_path
     encode("-i", source, "-vf", INTERLACE_20P_TO_10I, "-r", "10",
            "-c:v", "mpeg2video", "-q:v", "2", "-flags", "+ilme+ildct", distorted)
 
-    offset, _ = vmaf(str(distorted), str(reference), vmaf_versions=("0.6",),
-                     threads=2).syncOffset(0.5, start=0.1, reverse=True)
+    offset, _ = Vmaf(str(distorted), str(reference), vmaf_versions=("0.6",),
+                     threads=2).sync(0.5, start=0.1, reverse=True)
 
     assert offset == pytest.approx(-0.4)
 
@@ -267,7 +267,7 @@ def gop_clips(encode, tmp_path_factory):
     ("lead.mp4", "late.mp4", -0.3, {}, "xml"),
     # 0.3 s is 2.1 frames at 7 fps: the first measured reference frame is not
     # at the offset, but at the next frame of the converted rate.
-    ("late.mp4", "lead.mp4", 0.3, dict(vmaf_versions=("0.6",), manual_fps=7), "csv"),
+    ("late.mp4", "lead.mp4", 0.3, dict(vmaf_versions=("0.6",), fps=7), "csv"),
     ("aligned.mp4", "lead.mp4", 0, dict(vmaf_versions=("0.6",)), "json"),
     # Field deinterlacing doubles the distorted frame rate (yadif=1).
     ("interlaced.mkv", "master.mp4", 0, dict(vmaf_versions=("0.6",)), "json"),
@@ -284,10 +284,10 @@ def test_frame_ranges_join_into_the_full_calculation(gop_clips, distorted, refer
     numbers and identical scores; each CAMBI heatmap is the concatenation of
     the ranges' heatmaps."""
     def calculate(**frame_range):
-        calculation = vmaf(getattr(gop_clips, distorted), getattr(gop_clips, reference),
-                           output_fmt=output_fmt, threads=2, **options, **frame_range)
-        calculation.offset = offset
-        result = calculation.getVmaf()
+        calculation = Vmaf(getattr(gop_clips, distorted), getattr(gop_clips, reference),
+                           output_format=output_fmt, threads=2, sync_offset=offset,
+                           **options, **frame_range)
+        result = calculation.compute()
         return result, read_frames(result.log_path, output_fmt)
 
     def heatmaps(result):
@@ -325,12 +325,11 @@ def test_frame_range_past_the_end_fails_instead_of_reading_a_stale_log(gop_clips
     stale.write_text(json.dumps({"frames": [
         {"frameNum": n, "metrics": dict.fromkeys(("vmaf_hd", "vmaf_hd_neg", "vmaf_hd_phone"), 99.0)}
         for n in range(1000, 1010)], "pooled_metrics": {}}))
-    calculation = vmaf(str(distorted), getattr(gop_clips, "lead.mp4"), vmaf_versions=("0.6",),
-                       threads=2, start_frame=1000, frame_count=10)
-    calculation.offset = 0.3
+    calculation = Vmaf(str(distorted), getattr(gop_clips, "lead.mp4"), vmaf_versions=("0.6",),
+                       threads=2, start_frame=1000, frame_count=10, sync_offset=0.3)
 
     with pytest.raises(UnsupportedRangeError, match="after the last measured frame"):
-        calculation.getVmaf()
+        calculation.compute()
 
 
 def test_frame_range_rejects_mpegts(gop_clips, encode, tmp_path):
@@ -339,7 +338,7 @@ def test_frame_range_rejects_mpegts(gop_clips, encode, tmp_path):
     encode("-i", getattr(gop_clips, "lead.mp4"), "-c", "copy", ts)
 
     with pytest.raises(UnsupportedRangeError, match="mpegts"):
-        vmaf(str(ts), getattr(gop_clips, "late.mp4"), start_frame=10, frame_count=10)
+        Vmaf(str(ts), getattr(gop_clips, "late.mp4"), start_frame=10, frame_count=10)
 
 
 def test_sync_worker_stops_decoding_after_trim(encode, tmp_path, monkeypatch):
@@ -453,7 +452,7 @@ class Calculation:
         self.main = main
         self.ffmpegQos = ffmpeg.FFmpegQos(main, reference)
 
-    def getVmaf(self):
+    def compute(self):
         output = str(root / (Path(self.main).stem + "_vmaf.json"))
         self.ffmpegQos.vmafpath = output
         if self.main == files[0]:
@@ -469,7 +468,7 @@ class Calculation:
         return self.ffmpegQos.getVmaf(select_models("hd", ("0.6",)), log_path=output,
                                       print_progress=progress)
 
-cli.vmaf = Calculation
+cli.Vmaf = Calculation
 sys.argv = ["easyvmaf", "-d", "*.mp4", "-r", str(root / "ref.mp4")]
 try:
     cli.main()

@@ -1,42 +1,43 @@
 """
 easyVmaf — FFmpeg-based VMAF computation with automatic preprocessing.
 
-Public API:
-    from easyvmaf import vmaf, VmafResult
-    from easyvmaf import validate_model_config, UnsupportedModelConfigError
-    from easyvmaf import UnsupportedFramerateError
-    from easyvmaf import validate_range_config, UnsupportedRangeError
-    from easyvmaf import ModelSpec, CATALOG, select_models
-    from easyvmaf.ffmpeg import FFprobe, FFmpegQos, inputFFmpeg
+Public API: the names exported here. The submodules (easyvmaf.vmaf,
+easyvmaf.ffmpeg, ...) are internal and may change in any release.
 
-    result = vmaf('dist.mp4', 'ref.mp4', display='hd').getVmaf()
+    from easyvmaf import Vmaf
+
+    calculation = Vmaf('dist.mp4', 'ref.mp4', display='hd')
+    offset, psnr = calculation.sync(2)   # optional: or Vmaf(..., sync_offset=1.5)
+    result = calculation.compute()
     result.scores    # {'vmaf_v1_hd': ..., 'vmaf_v1_phone': ...}
 """
 from .vmaf import (
-    vmaf,
+    Vmaf,
     validate_model_config,
     UnsupportedFramerateError,
     UnsupportedModelConfigError,
     validate_range_config,
     UnsupportedRangeError,
 )
-from .results import VmafResult
-from .models import ModelSpec, CATALOG, select_models
-from .ffmpeg import FFprobe, FFmpegQos, inputFFmpeg
+from .results import SyncResult, VmafResult
+from .models import ModelRun, ModelSpec, CATALOG, select_models
+from .ffmpeg import FFmpegExecutionError, check_ffmpeg
 
 __version__ = "4.0.0"
 __all__ = [
-    "vmaf",
+    "Vmaf",
     "VmafResult",
+    "SyncResult",
     "validate_model_config",
-    "UnsupportedFramerateError",
-    "UnsupportedModelConfigError",
     "validate_range_config",
+    "UnsupportedModelConfigError",
     "UnsupportedRangeError",
+    "UnsupportedFramerateError",
+    "FFmpegExecutionError",
     "ModelSpec",
+    "ModelRun",
     "CATALOG",
     "select_models",
-    "FFprobe",
-    "FFmpegQos",
-    "inputFFmpeg",
+    "check_ffmpeg",
+    "__version__",
 ]
