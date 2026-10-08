@@ -30,11 +30,35 @@ import subprocess
 import json
 import logging
 import os
+from dataclasses import dataclass
 from fractions import Fraction
-from typing import Sequence, Tuple
+from typing import Mapping, Sequence, Tuple
 from ffmpeg_progress_yield import FfmpegProgress
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class HwAccel:
+    """How FFmpeg decodes and filters with one hardware acceleration method.
+    Pure data: when a step may run on the device is decided by layer 2."""
+    name: str                        # -hwaccel
+    output_format: str               # -hwaccel_output_format: frames stay on the device
+    convert: str                     # pixel format conversion on device frames, {pix_fmt};
+                                     # exact only without resizing
+    frame_formats: Mapping[str, str]  # software pix_fmt -> format of its decoded frames
+    download: str                    # device frames to memory, {frame_format}
+
+
+HW_ACCELS = {
+    'cuda': HwAccel(
+        name='cuda',
+        output_format='cuda',
+        convert='scale_cuda=format={pix_fmt}',
+        frame_formats={'yuv420p': 'nv12', 'yuv420p10le': 'p010'},
+        download='hwdownload,format={frame_format}',
+    ),
+}
 
 
 def _cleanup_interrupted_process(process):
@@ -220,7 +244,7 @@ class FFmpegQos:
         # A seek keeps the timestamps the inputs have without it, so that the
         # filters see the same timeline as a calculation from the beginning.
         timestamps = (['-copyts', '-start_at_zero']
-                      if self.main.extraOptions or self.ref.extraOptions else [])
+                      if self.main.seekOptions or self.ref.seekOptions else [])
         return (timestamps +
                 decoder + self.main.extraOptions + ['-i', self.main.videoSrc] +
                 decoder + self.ref.extraOptions + ['-i', self.ref.videoSrc] +
@@ -293,7 +317,8 @@ class FFmpegQos:
         filters = list(self.main.filtersList + self.ref.filtersList)
         outputs = []
         for name, stream in (('main', self.main), ('ref', self.ref)):
-            filters.append(f'[{stream.lastOutputID}]showinfo@{name}[first_{name}]')
+            # Without its checksum, showinfo also accepts hardware frames.
+            filters.append(f'[{stream.lastOutputID}]showinfo@{name}=checksum=0[first_{name}]')
             outputs += ['-map', f'[first_{name}]', '-frames:v', '1', '-f', 'null', '-']
         # showinfo reports at the info level.
         loglevel = self.loglevel if self.loglevel == 'verbose' else 'info'
@@ -435,7 +460,8 @@ class inputFFmpeg:
     - setPtsShiftFilter()
     - setFpsFilter()
     - setFormatFilter()
-    - setSeek() (input option)
+    - setHwDownloadFilter()
+    - setSeek(), setHwDecode() (input options)
     - clearFilters()
     '''
 
@@ -444,10 +470,18 @@ class inputFFmpeg:
         self.id = input_id
         self.videoSrc = videoSrc
         self.filtersList = []
-        self.extraOptions = []
+        self.seekOptions = []
+        self.hwDecodeOptions = []
+        self.hwaccel = None
+        self.hwFrames = False         # the chain ends on device frames
         self.lastOutputID = f'{str(self.id)}:v'
         self.gpu_mode = gpu_mode
         self._hwupload_done = False   # tracks whether hwupload has been inserted
+
+    @property
+    def extraOptions(self):
+        """Input options, placed before -i."""
+        return self.hwDecodeOptions + self.seekOptions
 
     def _setFilter(self, filter):
         self.filtersList.append(filter)
@@ -467,7 +501,9 @@ class inputFFmpeg:
 
     def _insertHwupload(self):
         """
-        Insert format=yuv420p + hwupload_cuda before libvmaf_cuda.
+        Insert format=yuv420p + hwupload_cuda before libvmaf_cuda; on device
+        frames (setHwDecode() without setHwDownloadFilter()), the hwaccel's
+        conversion to yuv420p instead, without an upload.
         Called from FFmpegQos.getVmaf() after all CPU filters (trim, fps, yadif,
         scale) have been appended, immediately before libvmaf_cuda is connected.
         Only inserts once — subsequent calls are no-ops.
@@ -484,15 +520,17 @@ class inputFFmpeg:
         # properties to libvmaf_cuda — without this, inputs tagged bt709/tv cause
         # libvmaf_cuda to auto-insert a CPU auto_scale for color normalization,
         # which then crashes because auto_scale cannot accept CUDA frames.
-        inputID, outputID = self._newInOutForFilter()
-        self._setFilter(f'[{inputID}]format=yuv420p[{outputID}]')
-        self._updateOutputId(outputID)
-        inputID, outputID = self._newInOutForFilter()
-        self._setFilter(f'[{inputID}]setparams=colorspace=unknown:range=unknown[{outputID}]')
-        self._updateOutputId(outputID)
-        inputID, outputID = self._newInOutForFilter()
-        self._setFilter(f'[{inputID}]hwupload_cuda[{outputID}]')
-        self._updateOutputId(outputID)
+        setparams = 'setparams=colorspace=unknown:range=unknown'
+        if self.hwFrames:
+            # Hardware decoded and never downloaded: the frames are already on
+            # the GPU, and libvmaf_cuda accepts only yuv420p there.
+            steps = [self.hwaccel.convert.format(pix_fmt='yuv420p'), setparams]
+        else:
+            steps = ['format=yuv420p', setparams, 'hwupload_cuda']
+        for step in steps:
+            inputID, outputID = self._newInOutForFilter()
+            self._setFilter(f'[{inputID}]{step}[{outputID}]')
+            self._updateOutputId(outputID)
         self._hwupload_done = True
 
     def setScaleFilter(self, width, height, algo='bicubic'):
@@ -568,7 +606,25 @@ class inputFFmpeg:
         """Start reading the input at seconds (-ss before -i): FFmpeg decodes
         from the keyframe before it and drops the frames up to it. FFmpegQos
         then keeps the original timestamps (-copyts -start_at_zero)."""
-        self.extraOptions = ['-ss', f'{seconds:.6f}']
+        self.seekOptions = ['-ss', f'{seconds:.6f}']
+
+    def setHwDecode(self, hwaccel: HwAccel):
+        """Decode the input with hwaccel, keeping its frames on the device:
+        the chain starts on device frames until setHwDownloadFilter()."""
+        self.hwDecodeOptions = ['-hwaccel', hwaccel.name,
+                                '-hwaccel_output_format', hwaccel.output_format]
+        self.hwaccel = hwaccel
+        self.hwFrames = True
+
+    def setHwDownloadFilter(self, pix_fmt):
+        """Move the hardware decoded frames to memory as pix_fmt, the input's
+        native software format: the same frames as the software decoder."""
+        frame_format = self.hwaccel.frame_formats[pix_fmt]
+        download = self.hwaccel.download.format(frame_format=frame_format)
+        inputID, outputID = self._newInOutForFilter()
+        self._setFilter(f'[{inputID}]{download},format={pix_fmt}[{outputID}]')
+        self._updateOutputId(outputID)
+        self.hwFrames = False
 
     def setFpsFilter(self, fps):
         inputID, outputID = self._newInOutForFilter()
@@ -586,7 +642,11 @@ class inputFFmpeg:
         self.filtersList = []
         self.lastOutputID = f'{str(self.id)}:v'
         self._hwupload_done = False   # reset so hwupload can be re-inserted
-        self.extraOptions = []        # the seek belongs to the chain it was set for
+        # The input options belong to the chain they were set for.
+        self.seekOptions = []
+        self.hwDecodeOptions = []
+        self.hwaccel = None
+        self.hwFrames = False
 
 
 def check_ffmpeg() -> dict:
@@ -600,6 +660,7 @@ def check_ffmpeg() -> dict:
             'meets_minimum': bool,              # >= 8.1
             'libvmaf_v1': bool,                 # vmaf_v1.0.16_3d0h scored a frame
             'cuda_vmaf': bool,                  # compiled filter, not GPU runtime
+            'hwaccels': ['cuda', ...],          # ffmpeg -hwaccels: compiled, not usable
         }
 
     Raises:
@@ -611,6 +672,7 @@ def check_ffmpeg() -> dict:
         'meets_minimum': False,
         'libvmaf_v1': False,
         'cuda_vmaf': False,      # libvmaf_cuda filter available
+        'hwaccels': [],          # hardware decoding methods compiled in
     }
 
     # --- Version detection ---
@@ -697,4 +759,54 @@ def check_ffmpeg() -> dict:
     except OSError:
         result['cuda_vmaf'] = False
 
+    # --- Hardware decoding methods ---
+    # A header line, then one method per line. Like -filters, a listed method
+    # may still have no device or driver: probe_hw_decode() tells.
+    try:
+        probe_hwaccels = subprocess.run(
+            [FFmpegQos._executable, '-hide_banner', '-hwaccels'],
+            capture_output=True,
+            text=True,
+            shell=False
+        )
+        if probe_hwaccels.returncode == 0:
+            result['hwaccels'] = [line.strip() for line in probe_hwaccels.stdout.splitlines()
+                                  if line.strip() and not line.rstrip().endswith(':')]
+    except OSError:
+        result['hwaccels'] = []
+
     return result
+
+
+def probe_hw_decode(path, hwaccel: HwAccel, timeout=60) -> bool:
+    """
+    Decode the first frame of path with hwaccel and convert it on the device.
+
+    The conversion only accepts device frames, so the probe fails whenever
+    FFmpeg would decode in software instead (unsupported codec, profile or
+    pixel format, or no device or driver), even where FFmpeg does that
+    silently with -hwaccel alone.
+
+    Returns:
+        True if the frame reached the device
+    """
+    cmd = [
+        FFmpegQos._executable, '-hide_banner', '-nostdin', '-loglevel', 'error',
+        '-hwaccel', hwaccel.name, '-hwaccel_output_format', hwaccel.output_format,
+        '-i', path, '-an', '-sn', '-dn', '-frames:v', '1',
+        '-vf', hwaccel.convert.format(pix_fmt='yuv420p'),
+        '-f', 'null', '-'
+    ]
+    logger.debug("FFmpeg hardware decode probe cmd: %s", cmd)
+    try:
+        probe = subprocess.run(cmd, capture_output=True, text=True,
+                               timeout=timeout, shell=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        logger.debug("Hardware decode probe of %s failed: %s", path, error)
+        return False
+    if probe.returncode != 0:
+        lines = probe.stderr.strip().splitlines()
+        logger.debug("Hardware decode probe of %s failed (exit code %d): %s", path,
+                     probe.returncode, lines[-1] if lines else 'no diagnostic output')
+        return False
+    return True

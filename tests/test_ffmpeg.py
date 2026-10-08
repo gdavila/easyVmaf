@@ -17,13 +17,14 @@ def response(returncode=0, stdout="", stderr=""):
 
 @pytest.fixture
 def probes(monkeypatch):
-    """Stub the three check_ffmpeg commands: -version, model probe, -filters."""
+    """Stub the four check_ffmpeg commands: -version, model probe, -filters, -hwaccels."""
     monkeypatch.setattr(FFmpegQos, "_executable", "/test/ffmpeg")
 
-    def install(version="ffmpeg version 8.1 Copyright", model=response(), filters=response()):
+    def install(version="ffmpeg version 8.1 Copyright", model=response(), filters=response(),
+                hwaccels=response(stdout="Hardware acceleration methods:\ncuda\n\n")):
         if isinstance(version, str):
             version = response(stdout=version)
-        run = Mock(side_effect=[version, model, filters])
+        run = Mock(side_effect=[version, model, filters, hwaccels])
         monkeypatch.setattr(ffmpeg.subprocess, "run", run)
         return run
     return install
@@ -40,7 +41,7 @@ def test_check_ffmpeg_parses_release_and_dev_builds(probes, output, version, ver
     run = probes(version=output)
     assert ffmpeg.check_ffmpeg() == {
         "version": version, "version_str": version_str, "meets_minimum": minimum,
-        "libvmaf_v1": True, "cuda_vmaf": False,
+        "libvmaf_v1": True, "cuda_vmaf": False, "hwaccels": ["cuda"],
     }
     assert all(isinstance(call.args[0], list) and not call.kwargs.get("shell")
                for call in run.call_args_list)

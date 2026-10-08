@@ -131,6 +131,13 @@ Add a model by adding a catalog entry, not by branching on display names.
 
 ### Layer 1 — easyvmaf/ffmpeg.py
 Thin subprocess wrappers around ffmpeg and ffprobe binaries.
+- `HwAccel` (frozen) and `HW_ACCELS` (only `cuda`): pure data for hardware
+  decoding: `name` and `output_format` (`-hwaccel cuda
+  -hwaccel_output_format cuda`), `convert` (`scale_cuda=format={pix_fmt}`, exact
+  only without resizing), `frame_formats` (native software pix_fmt → decoded
+  frame format: `yuv420p` → `nv12`, `yuv420p10le` → `p010`) and `download`
+  (`hwdownload,format={frame_format}`). When a step may run on the device is
+  decided by layer 2
 - `FFprobe`: runs ffprobe, returns stream/frame/packet/format info as dicts
 - `FFmpegQos`: builds and runs the ffmpeg filter graph for PSNR and VMAF
   - `getVmaf(models, log_path=None, subsample=1, output_fmt='json', threads=0,
@@ -142,18 +149,38 @@ Thin subprocess wrappers around ffmpeg and ffprobe binaries.
     `options` in order, joined by `\\\\:`; models joined by `|`
   - `getFirstFrameTimestamps()`: runs the current chains until each outputs a
     frame (`showinfo@main`/`showinfo@ref`, one null output each) and returns
-    `((pts, time_base), (pts, time_base))`; used for the frame range anchors
-  - `_commitInputs()` emits each input's `extraOptions` (the seek) before its
-    `-i`, and `-copyts -start_at_zero` when an input has one; without a seek
-    the command is unchanged
+    `((pts, time_base), (pts, time_base))`; used for the frame range anchors.
+    `showinfo` runs with `checksum=0`: its checksum fails (EINVAL) on CUDA
+    frames, and the pts is the same
+  - `_commitInputs()` emits each input's `extraOptions` (hardware decode, then
+    the seek) before its `-i`, and `-copyts -start_at_zero` when an input has a
+    seek (hardware decode alone does not add it); without a seek the command is
+    unchanged
 - `inputFFmpeg`: per-input filter chains (scale, trim, fps, deinterlace,
   `setFormatFilter(pix_fmt)`, hwupload_cuda). Frame range helpers:
   `setSeek(seconds)` (input `-ss`, stored in `extraOptions`, cleared by
   `clearFilters()`), `setPreTrimFilter(start)` / `setEndTrimFilter(end)` (trims
   that keep timestamps), `setPtsShiftFilter(pts)` (integer ticks) and
-  `setRangeTrimFilter(start, end)` (trim + `setpts=PTS-STARTPTS`)
+  `setRangeTrimFilter(start, end)` (trim + `setpts=PTS-STARTPTS`).
+  `extraOptions` is read-only: `hwDecodeOptions` + `seekOptions`, so a seek and
+  hardware decode coexist in either call order
+- Hardware decode helpers on `inputFFmpeg`: `setHwDecode(hwaccel)` (input
+  options in `hwDecodeOptions`, cleared by `clearFilters()`; sets `hwFrames`:
+  the chain ends on device frames) and `setHwDownloadFilter(pix_fmt)`
+  (`hwdownload,format=<nv12|p010>,format=<pix_fmt>`, `pix_fmt` the native
+  software format: the software decoder's frames; clears `hwFrames`).
+  `_insertHwupload()` on an input with `hwFrames` appends the hwaccel's
+  `scale_cuda=format=yuv420p` and the same `setparams`, without `format=` or
+  `hwupload_cuda`; every other input is unchanged
+- `probe_hw_decode(path, hwaccel)`: decodes one frame with the hwaccel's
+  `-hwaccel`/`-hwaccel_output_format` through its `convert` filter, which only
+  accepts device frames; `True` if the frame reached the GPU. Fails where FFmpeg
+  would fall back to software (silently with `-hwaccel` alone): AV1 on Turing,
+  H.264 High 10 / 4:2:2, ProRes, FFV1
 - `check_ffmpeg()`: returns `version`, `version_str`, `meets_minimum` (FFmpeg >= 8.1;
-  `n8.1…` tags and `N-…`/`git-…` dev builds accepted), `libvmaf_v1` and `cuda_vmaf`.
+  `n8.1…` tags and `N-…`/`git-…` dev builds accepted), `libvmaf_v1`, `cuda_vmaf`
+  and `hwaccels` (the methods listed by `ffmpeg -hwaccels`: compiled in, not
+  necessarily usable).
   `libvmaf_v1` comes from a probe that **computes one frame** with
   `vmaf_v1.0.16_3d0h` on two `color=black:s=320x240` inputs. It never reads the
   libvmaf version: 3.2.1 reports itself as 3.2.0, and a default 3.2.0 build loads
