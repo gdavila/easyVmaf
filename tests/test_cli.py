@@ -84,8 +84,6 @@ def batch(tmp_path, monkeypatch, ffmpeg_ok):
     (["--output-format=yaml"], 2, "--output-format"),
     (["--sync-only"], 2, "--sync-only"),
     (["--sync-only", "--sync-window=0"], 2, "--sync-only"),
-    # GPU scripts of 3.x now get VMAF v1 by default, which libvmaf_cuda cannot compute.
-    (["--gpu"], 2, "--vmaf-version 0.6"),
     # ':' or '|' would inject options or models into the libvmaf filtergraph.
     (["--model-option", "cambi.topk=0.5:eotf=pq"], 2, "--model-option"),
     # 3.x scripts fail with the 4.0 name of the removed flag, not a bare unknown-flag error.
@@ -103,6 +101,9 @@ def batch(tmp_path, monkeypatch, ffmpeg_ok):
     # Not supported with a range yet: each would score other frames than the full calculation.
     (["--frame-count", "100", "--subsample", "2"], 2, "--subsample"),
     (["--start-frame", "100", "--sync-only", "--sync-window", "1"], 2, "--sync-only"),
+    # The opt-outs of --gpu do nothing without it.
+    (["--disable-hw-decode"], 2, "requires --gpu"),
+    (["--disable-vmaf-cuda"], 2, "requires --gpu"),
 ], ids=lambda value: " ".join(value) if isinstance(value, list) else None)
 def test_invalid_arguments_fail_on_stderr_before_ffmpeg_check(monkeypatch, capsys,
                                                               arguments, code, message):
@@ -193,11 +194,11 @@ def test_options_are_forwarded(batch, monkeypatch, options, forwarded):
         calculation.sync.assert_not_called()
 
 
-@pytest.mark.parametrize("hwaccel", [False, True], ids=["default", "enable-hwaccel"])
+@pytest.mark.parametrize("gpu", [False, True], ids=["default", "gpu"])
 def test_summary_reports_v1_by_default(tmp_path, monkeypatch, capsys, ffmpeg_ok, scored,
-                                       hwaccel):
-    """JSON schema 2 contract, with VMAF v1 as the default model set; vmaf.hwaccel
-    only with --enable-hwaccel."""
+                                       gpu):
+    """JSON schema 2 contract, with VMAF v1 as the default model set; vmaf.hw_decode
+    only with --gpu, whose VMAF v1 runs on the CPU (vmaf.cuda false)."""
     reference, distorted = tmp_path / "ref.mkv", tmp_path / "dist.mkv"
     reference.touch()
     distorted.touch()
@@ -205,7 +206,7 @@ def test_summary_reports_v1_by_default(tmp_path, monkeypatch, capsys, ffmpeg_ok,
     monkeypatch.setattr(vmaf, "probe_hw_decode", lambda path, hwaccel: path == str(reference))
 
     run(monkeypatch, "-d", str(distorted), "-r", str(reference), "--fps", "10",
-        *(["--enable-hwaccel"] if hwaccel else []))
+        *(["--gpu"] if gpu else []))
 
     path = tmp_path / "dist_vmaf_summary.json"
     assert "Summary file path:  %s" % path in capsys.readouterr().out
@@ -218,7 +219,7 @@ def test_summary_reports_v1_by_default(tmp_path, monkeypatch, capsys, ffmpeg_ok,
             "display": "hd",
             "pix_fmt": "yuv420p10le",
             "hfr": False,
-            "gpu": False,
+            "cuda": False,
             "scores": {"vmaf_v1_hd": 90.0, "vmaf_v1_phone": 90.0},
             "models": [
                 {"name": "vmaf_v1_hd", "libvmaf_model": "vmaf_v1.0.16_3d0h",
@@ -229,9 +230,8 @@ def test_summary_reports_v1_by_default(tmp_path, monkeypatch, capsys, ffmpeg_ok,
             "output_file": str(tmp_path / "dist_vmaf.json"),
         },
     }
-    if hwaccel:
-        expected["vmaf"]["hwaccel"] = {
-            "api": "cuda", "decode": {"distorted": "sw", "reference": "hw"}}
+    if gpu:
+        expected["vmaf"]["hw_decode"] = {"api": "cuda", "distorted": "sw", "reference": "hw"}
     assert summary(path) == expected
 
 

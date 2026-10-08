@@ -344,7 +344,7 @@ def test_frame_ranges_join_into_the_full_calculation(gop_clips, distorted, refer
 @pytest.mark.requires_cuda
 @pytest.mark.parametrize("distorted_size", ["1920x1080", "1280x720"],
                          ids=["gpu-resident", "downloaded"])
-def test_enable_hwaccel_never_changes_a_score(encode, tmp_path, distorted_size):
+def test_hw_decode_never_changes_a_score(encode, tmp_path, distorted_size):
     """Hardware decoding may only make the calculation faster. 1080p inputs stay
     on the GPU up to libvmaf_cuda; a 720p distorted is downloaded and scaled on
     the CPU, since scale_cuda changes the scores."""
@@ -360,10 +360,10 @@ def test_enable_hwaccel_never_changes_a_score(encode, tmp_path, distorted_size):
                       **options).compute()
         return result, read_frames(result.log_path, "json")
 
-    _, software = calculate()
-    result, hardware = calculate(enable_hwaccel="auto")
+    _, software = calculate(disable_hw_decode=True)
+    result, hardware = calculate()
 
-    assert result.hwaccel == {"api": "cuda", "decode": {"distorted": "hw", "reference": "hw"}}
+    assert result.hw_decode == {"api": "cuda", "distorted": "hw", "reference": "hw"}
     assert hardware == software
 
 

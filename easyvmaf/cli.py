@@ -34,7 +34,7 @@ from signal import signal, SIGINT
 
 from .ffmpeg import FFmpegExecutionError, check_ffmpeg
 from .models import DISPLAY_RESOLUTION, VMAF_VERSIONS
-from .vmaf import (Vmaf, resolve_hwaccel, validate_model_config, validate_range_config,
+from .vmaf import (Vmaf, cpu_vmaf_reason, validate_model_config, validate_range_config,
                    UnsupportedFramerateError)
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,6 @@ _FLAG_LABELS = {
     'enc_size': '--enc-size',
     'enc_bitdepth': '--enc-bitdepth',
     'model_options': '--model-option',
-    'gpu': '--gpu',
     'start_frame': '--start-frame',
     'frame_count': '--frame-count',
     'subsample': '--subsample',
@@ -142,7 +141,7 @@ def _build_result(distorted, reference, offset, psnr, vmaf_result=None):
             'display': vmaf_result.display,
             'pix_fmt': vmaf_result.pix_fmt,
             'hfr': vmaf_result.hfr,
-            'gpu': vmaf_result.gpu,
+            'cuda': vmaf_result.cuda,
             'scores': {k: round(v, 6) for k, v in vmaf_result.scores.items()},
             'models': [
                 {'name': run.spec.name,
@@ -157,8 +156,8 @@ def _build_result(distorted, reference, offset, psnr, vmaf_result=None):
             vmaf_block['output_file'] = vmaf_result.log_path
         if vmaf_result.cambi_heatmap_path:
             vmaf_block['cambi_heatmap_path'] = vmaf_result.cambi_heatmap_path
-        if vmaf_result.hwaccel is not None:
-            vmaf_block['hwaccel'] = vmaf_result.hwaccel
+        if vmaf_result.hw_decode is not None:
+            vmaf_block['hw_decode'] = vmaf_result.hw_decode
         if vmaf_result.start_frame is not None:
             vmaf_block['range'] = {
                 'start_frame': vmaf_result.start_frame,
@@ -320,21 +319,17 @@ def get_args():
     execution.add_argument('--subsample', dest='subsample', type=int, default=1,
                            help="Specifies the subsampling of frames to speed up calculation. (default=1, None).")
     execution.add_argument('--gpu', dest='gpu', action='store_true',
-                           help='Use GPU-accelerated VMAF computation via libvmaf_cuda. '
-                                'Only supports --vmaf-version 0.6. '
-                                'Requires FFmpeg built with --enable-nonfree --enable-ffnvcodec '
-                                '--enable-libvmaf and libvmaf built with -Denable_cuda=true. '
+                           help='Use the NVIDIA GPU (CUDA) where it can: decode each input with '
+                                'NVDEC when the GPU decodes it exactly (otherwise on the CPU, '
+                                'with a warning), never changing a score, and compute VMAF with '
+                                'libvmaf_cuda when the models allow it (--vmaf-version 0.6 at '
+                                '8 bits), otherwise with libvmaf on the CPU. '
                                 'Use the provided Dockerfile.cuda to build a compatible image. '
                                 '(Default: false).')
-    execution.add_argument('--enable-hwaccel', dest='enable_hwaccel', nargs='?',
-                           const='auto', type=str.lower, choices=('auto', 'cuda'),
-                           metavar='API',
-                           help='Decode the inputs on the GPU (auto: cuda, NVDEC), without '
-                                'changing any score: an input stays on the GPU only while '
-                                'every step of its chain is exact there; otherwise its frames '
-                                'are downloaded right after decoding. An input the GPU cannot '
-                                'decode is decoded on the CPU, with a warning. (Default: CPU '
-                                'decoding).')
+    execution.add_argument('--disable-hw-decode', dest='disable_hw_decode', action='store_true',
+                           help='With --gpu, decode every input on the CPU. (Default: false).')
+    execution.add_argument('--disable-vmaf-cuda', dest='disable_vmaf_cuda', action='store_true',
+                           help='With --gpu, compute VMAF on the CPU (libvmaf). (Default: false).')
 
     if len(sys.argv) == 1:
         parser.print_help(sys.stderr)
@@ -359,6 +354,10 @@ def get_args():
             manual = -args.sync_start if args.sync_reverse else args.sync_start
             message += '; for a manual offset use --sync-offset %g' % (manual or 0.0)
         parser.error(message)
+    if not args.gpu and (args.disable_hw_decode or args.disable_vmaf_cuda):
+        used = ' and '.join(flag for flag, value in (('--disable-hw-decode', args.disable_hw_decode),
+                                                     ('--disable-vmaf-cuda', args.disable_vmaf_cuda)) if value)
+        parser.error('%s require%s --gpu' % (used, '' if ' and ' in used else 's'))
     if args.subsample < 1:
         parser.error('--subsample must be an integer of at least 1')
     if args.threads < 0:
@@ -368,8 +367,7 @@ def get_args():
     try:
         validate_model_config(
             args.display, args.vmaf_versions, args.views, args.hfr, args.bitdepth,
-            args.enc_size, args.enc_bitdepth, args.model_options, args.gpu,
-            labels=_FLAG_LABELS)
+            args.enc_size, args.enc_bitdepth, args.model_options, labels=_FLAG_LABELS)
         validate_range_config(args.start_frame, args.frame_count, args.subsample,
                               args.gpu, labels=_FLAG_LABELS)
     except ValueError as e:
@@ -457,7 +455,8 @@ def main():
         ffmpeg_info['version_str']
     )
 
-    if gpu:
+    if gpu and cpu_vmaf_reason(vmaf_versions, cmdParser.bitdepth,
+                               cmdParser.disable_vmaf_cuda) is None:
         if not ffmpeg_info['cuda_vmaf']:
             print(
                 "[easyVmaf] ERROR: --gpu requested but libvmaf_cuda filter "
@@ -469,17 +468,6 @@ def main():
             )
             sys.exit(1)
         logger.info("GPU mode enabled — using libvmaf_cuda filter.")
-
-    hwaccel = resolve_hwaccel(cmdParser.enable_hwaccel)
-    if hwaccel and hwaccel not in ffmpeg_info['hwaccels']:
-        print(
-            f"[easyVmaf] ERROR: --enable-hwaccel {hwaccel} requested but the detected "
-            f"FFmpeg build has no {hwaccel} hardware decoding (ffmpeg -hwaccels: "
-            f"{', '.join(ffmpeg_info['hwaccels']) or 'none'}). "
-            f"Build FFmpeg using Dockerfile.cuda.",
-            file=sys.stderr, flush=True
-        )
-        sys.exit(1)
 
     '''
     Distorted video path could be loaded as patterns i.e., "myFolder/video-sample-*.mp4"
@@ -511,7 +499,8 @@ def main():
                           loglevel=loglevel, subsample=n_subsample, output_format=output_format, threads=threads, progress=progress, shortest=shortest, fps=fps, cambi_heatmap=cambi_heatmap, gpu=gpu,
                           sync_offset=offset,
                           start_frame=cmdParser.start_frame, frame_count=cmdParser.frame_count,
-                          enable_hwaccel=hwaccel)
+                          disable_hw_decode=cmdParser.disable_hw_decode,
+                          disable_vmaf_cuda=cmdParser.disable_vmaf_cuda)
             if syncWin > 0:
                 offset, psnr = myVmaf.sync(syncWin, ss, reverse)
                 if sync_only:

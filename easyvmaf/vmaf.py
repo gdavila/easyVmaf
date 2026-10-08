@@ -62,8 +62,8 @@ _RANGE_BOUND_MARGIN = 0.25
 # next keyframe instead, and raw elementary streams have no timestamps.
 _RANGE_FORMATS = ('mov', 'mp4', 'matroska', 'webm')
 
-# What enable_hwaccel='auto' uses: the only hardware decoding implemented.
-_HWACCEL_AUTO = 'cuda'
+# What gpu decodes with: the only hardware decoding implemented.
+_HWACCEL = 'cuda'
 # Inputs whose hardware decoding gives the software decoder's frames, as
 # validated bit-exact per hwaccel: codec_name -> native pix_fmts. NVDEC decodes
 # MPEG-2 differently; AV1 and VP9 10-bit are not validated.
@@ -130,16 +130,16 @@ def _parseSize(size) -> Tuple[int, int]:
 
 def validate_model_config(display='hd', vmaf_versions=('1',), views=None, hfr='auto',
                           bitdepth='auto', enc_size=None, enc_bitdepth=None,
-                          model_options=(), gpu=False, labels=None):
+                          model_options=(), labels=None):
     """
     Check that the requested models can be computed with these options,
     without probing any input. Vmaf() runs it in its constructor; a caller that
     processes a batch can run it once before the first input.
 
     Args:
-        display ... gpu: as in Vmaf()
+        display ... model_options: as in Vmaf()
         labels: names shown in error messages for each argument, e.g.
-            {'gpu': '--gpu'}; default: the argument names
+            {'views': '--view'}; default: the argument names
 
     Returns:
         The selected ModelRun list, without overrides
@@ -164,14 +164,6 @@ def validate_model_config(display='hd', vmaf_versions=('1',), views=None, hfr='a
     if bitdepth not in ('auto', '8', '10'):
         raise UnsupportedModelConfigError(
             f"{label('bitdepth')} must be 'auto', 8 or 10, not '{bitdepth}'")
-    if gpu and has_v1:
-        # libvmaf_cuda has no CUDA extractors for the v1 features.
-        raise UnsupportedModelConfigError(
-            f"{label('gpu')} only supports {label('vmaf_versions')} 0.6: "
-            f"libvmaf_cuda cannot compute VMAF v1 models")
-    if gpu and bitdepth == '10':
-        raise UnsupportedModelConfigError(
-            f"{label('gpu')} measures in yuv420p; {label('bitdepth')} 10 is not supported")
     if not has_v1:
         v1_only = [name for name, used in (
             (label('views'), views is not None), (label('hfr') + ' on', hfr == 'on'),
@@ -258,29 +250,26 @@ def validate_range_config(start_frame=None, frame_count=None, subsample=1,
             f"({label('start_frame')}, {label('frame_count')})")
 
 
-def resolve_hwaccel(enable_hwaccel):
+def cpu_vmaf_reason(vmaf_versions=('1',), bitdepth='auto', disable_vmaf_cuda=False):
     """
-    The hardware decoding that enable_hwaccel selects: None, or a name of
-    HW_ACCELS ('auto' is 'cuda', the only one).
-
-    Raises:
-        ValueError: an unknown value
+    Why gpu computes VMAF with libvmaf on the CPU instead of libvmaf_cuda,
+    which only computes the VMAF v0.6 models at 8 bits; None when
+    libvmaf_cuda computes it. Vmaf() and the CLI decide with it.
     """
-    if enable_hwaccel is None:
-        return None
-    name = str(enable_hwaccel).lower()
-    if name == 'auto':
-        return _HWACCEL_AUTO
-    if name not in HW_ACCELS:
-        raise ValueError(f"enable_hwaccel must be None, 'auto' or one of "
-                         f"{', '.join(HW_ACCELS)}, not {enable_hwaccel!r}")
-    return name
+    if disable_vmaf_cuda:
+        return "disable_vmaf_cuda is set"
+    if '1' in tuple(str(v) for v in vmaf_versions):
+        # libvmaf_cuda has no CUDA extractors for the v1 features.
+        return "libvmaf_cuda cannot compute VMAF v1 models"
+    if str(bitdepth).lower() == '10':
+        return "libvmaf_cuda measures in yuv420p, not at bit depth 10"
+    return None
 
 
 class UnsupportedModelConfigError(ValueError):
     """
     Raised when the requested models cannot be computed with the given
-    options, e.g. VMAF v1 in GPU mode (libvmaf_cuda has no v1 features).
+    options, e.g. views without a VMAF v1 model.
     """
     pass
 
@@ -400,7 +389,7 @@ class Vmaf():
         - Frame rate conversion (if needed)
     """
 
-    def __init__(self, distorted, reference, *, display='hd', vmaf_versions=('1',), views=None, hfr='auto', bitdepth='auto', enc_size=None, enc_bitdepth=None, model_options=(), output_format='json', loglevel="info", subsample=1, threads=0, progress=False, shortest=False, fps=0, cambi_heatmap=False, gpu=False, sync_offset=0.0, start_frame=None, frame_count=None, enable_hwaccel=None):
+    def __init__(self, distorted, reference, *, display='hd', vmaf_versions=('1',), views=None, hfr='auto', bitdepth='auto', enc_size=None, enc_bitdepth=None, model_options=(), output_format='json', loglevel="info", subsample=1, threads=0, progress=False, shortest=False, fps=0, cambi_heatmap=False, gpu=False, sync_offset=0.0, start_frame=None, frame_count=None, disable_hw_decode=False, disable_vmaf_cuda=False):
         """
         Args (model selection and VMAF v1 parameters):
             display:       'hd' or '4k'; target resolution of the scaling
@@ -430,19 +419,22 @@ class Vmaf():
                            frame numbers and scores.
 
         Args (execution):
-            enable_hwaccel: None, 'auto' or 'cuda': decode each input on the
-                           GPU when it can be decoded there exactly, keeping
-                           every score unchanged (see _applyHwDecode); 'auto'
-                           is 'cuda'
+            gpu:           use the GPU (CUDA) where it gives the same frames:
+                           decode each input with NVDEC when it can be decoded
+                           there exactly, keeping every score unchanged (see
+                           _applyHwDecode), and compute VMAF with libvmaf_cuda
+                           when the models allow it (v0.6, 8 bits; see
+                           cpu_vmaf_reason), else with libvmaf on the CPU
+            disable_hw_decode: with gpu, decode every input on the CPU
+            disable_vmaf_cuda: with gpu, compute VMAF on the CPU
 
         Raises:
             UnsupportedModelConfigError: options that the selected models
                 cannot honour (see validate_model_config)
             UnsupportedRangeError: a range with unsupported options or inputs
-            ValueError: unknown display, version or view, or enable_hwaccel
+            ValueError: unknown display, version or view
         """
-        hwaccel = resolve_hwaccel(enable_hwaccel)
-        self.hwaccel = HW_ACCELS[hwaccel] if hwaccel else None
+        self.hwaccel = HW_ACCELS[_HWACCEL] if gpu and not disable_hw_decode else None
         self._hwDecodable = {}    # role -> bool: the probe result does not change
         self.display = str(display).lower()
         self.vmaf_versions = tuple(str(v) for v in vmaf_versions)
@@ -453,6 +445,11 @@ class Vmaf():
         self.enc_bitdepth = int(enc_bitdepth) if enc_bitdepth is not None else None
         self.model_options = tuple(model_options)
         self.gpu = gpu
+        cpu_reason = cpu_vmaf_reason(vmaf_versions, bitdepth, disable_vmaf_cuda)
+        # True when libvmaf_cuda computes VMAF
+        self.cuda = gpu and cpu_reason is None
+        if gpu and cpu_reason:
+            logger.info("VMAF runs on the CPU (libvmaf): %s", cpu_reason)
         self.cambi_heatmap = cambi_heatmap
         validate_range_config(start_frame, frame_count, subsample, gpu)
         self.start_frame = start_frame
@@ -466,7 +463,7 @@ class Vmaf():
         self.subsample = subsample
         self.ffmpegQos = FFmpegQos(
             self.main.videoSrc, self.ref.videoSrc, self.loglevel,
-            gpu_mode=gpu)
+            gpu_mode=self.cuda)
         self.target_resolution = list(DISPLAY_RESOLUTION[self.display])
         self.sync_offset = sync_offset
         self.fps = fps
@@ -497,7 +494,7 @@ class Vmaf():
     def _validateModelConfig(self, distorted):
         self.models = validate_model_config(
             self.display, self.vmaf_versions, self.views, self.hfr, self.bitdepth,
-            self.enc_size, self.enc_bitdepth, self.model_options, self.gpu)
+            self.enc_size, self.enc_bitdepth, self.model_options)
         if self.cambi_heatmap and self._hasV1():
             path = self._cambiHeatmapPath(distorted)
             if any(c in path for c in _HEATMAP_PATH_FORBIDDEN):
@@ -576,9 +573,9 @@ class Vmaf():
         measurement format, as the first filter of its chain: otherwise FFmpeg
         picks the format and may degrade the reference (e.g. 4:2:2 to 4:2:0, or
         10 to 8 bits), or deinterlace at 8 bits before converting.
-        The GPU path keeps its own format=yuv420p before hwupload_cuda.
+        The libvmaf_cuda path keeps its own format=yuv420p before hwupload_cuda.
         """
-        if self.gpu:
+        if self.cuda:
             self.pix_fmt = 'yuv420p'
             return
         self.pix_fmt = self._measurementPixFmt()
@@ -614,27 +611,27 @@ class Vmaf():
     def _staysOnDevice(self, stream):
         """
         Whether a hardware decoded input can stay on the GPU up to libvmaf:
-        only with gpu, and only if no step of its chain differs on the GPU:
-        no scaling, no deinterlacing and no bit depth reduction (gpu measures
-        in yuv420p). fps, trims and setpts select the same frames there.
+        only when libvmaf_cuda computes VMAF, and only if no step of its chain
+        differs on the GPU: no scaling, no deinterlacing and no bit depth
+        reduction (libvmaf_cuda measures in yuv420p). fps, trims and setpts select the same frames there.
         """
         size = [stream.streamInfo['width'], stream.streamInfo['height']]
         # Deinterlacing is decided against the other input; any interlaced
         # input is downloaded, so that the decision depends on this one only.
         deinterlaced = self.fps == 0 and stream.interlaced
-        return (self.gpu and stream.streamInfo.get('pix_fmt') == 'yuv420p'
+        return (self.cuda and stream.streamInfo.get('pix_fmt') == 'yuv420p'
                 and size == self.target_resolution and not deinterlaced)
 
     def _applyHwDecode(self):
         """
-        With enable_hwaccel, decode each input on the GPU when it can be, and
+        With gpu, decode each input on the GPU when it can be, and
         keep its frames there only while every step of its chain is exact on
         the GPU. Any other hardware decoded input is downloaded first, as its
         native pixel format: the software decoder's frames, through the CPU
         chain unchanged, so the scores never change.
 
         Returns {'distorted': 'hw' | 'sw', 'reference': 'hw' | 'sw'}, or None
-        without enable_hwaccel.
+        without hardware decoding (no gpu, or disable_hw_decode).
         """
         if self.hwaccel is None:
             return None
@@ -760,7 +757,7 @@ class Vmaf():
         Returns:
             (offset, psnr_value) tuple
         """
-        # Always use CPU for PSNR sync computation regardless of self.gpu
+        # Always use CPU for PSNR sync computation regardless of self.cuda
         if not reverse:
             qos = FFmpegQos(self.main.videoSrc, self.ref.videoSrc, self.loglevel,
                             gpu_mode=False)
@@ -1106,7 +1103,7 @@ class Vmaf():
 
         Filter application contract — always in this order:
             1. clearFilters()       — reset all filter chains on ffmpegQos
-            2. _applyHwDecode()     — with enable_hwaccel: hardware decode, and
+            2. _applyHwDecode()     — with gpu: hardware decode, and
                                       the download as the first filter of each
                                       input that cannot stay on the GPU
             3. _applyPixelFormat()  — format=<measurement pix_fmt> as the first
@@ -1118,7 +1115,7 @@ class Vmaf():
                or _applyRange()     — with a frame range: seek, sync trims
                                       anchored to the full calculation, range
             6. _resolveModels()     — HFR choice from output_fps, v1 overrides
-            7. ffmpegQos.getVmaf()  — with gpu, inserts hwupload_cuda last (on
+            7. ffmpegQos.getVmaf()  — with cuda, inserts hwupload_cuda last (on
                                       frames still on the GPU, the yuv420p
                                       conversion there)
 
@@ -1195,7 +1192,7 @@ class Vmaf():
             for path in heatmap_files(self.cambi_heatmap_path):
                 os.remove(path)
         self.ffmpegQos.getVmaf(self.models, subsample=self.subsample, log_path=log_path,
-                               output_fmt=self.output_format, threads=self.threads, print_progress=self.progress, shortest=self.shortest, features=self.features, gpu=self.gpu)
+                               output_fmt=self.output_format, threads=self.threads, print_progress=self.progress, shortest=self.shortest, features=self.features, gpu=self.cuda)
         log_path = self.ffmpegQos.vmafpath
         frames_scored = self._trimRangeLog(log_path) if self._hasRange() else None
         return VmafResult(
@@ -1210,8 +1207,8 @@ class Vmaf():
             start_frame=(self.start_frame or 0) if self._hasRange() else None,
             frame_count=self.frame_count,
             frames_scored=frames_scored,
-            gpu=self.gpu,
-            hwaccel={'api': self.hwaccel.name, 'decode': hw_decode} if hw_decode else None,
+            cuda=self.cuda,
+            hw_decode={'api': self.hwaccel.name, **hw_decode} if hw_decode else None,
         )
 
 

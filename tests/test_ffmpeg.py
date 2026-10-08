@@ -218,8 +218,9 @@ def test_v06_vmaf_command_is_unchanged(monkeypatch, unscored, model, cambi_heatm
         "-lavfi", graph, "-f", "null", "-"]
 
 
-# Captured at e02f2b4, before --enable-hwaccel: --gpu alone must keep this
-# exact command (CPU decoding and filters, then hwupload_cuda). It also pins
+# Captured at e02f2b4, before hardware decoding: --gpu --disable-hw-decode must
+# keep this exact command (CPU decoding and filters, then hwupload_cuda), the
+# --gpu of 4.x. It also pins
 # feature=name=psnr next to n_threads: without a CPU feature, libvmaf_cuda
 # 3.2.1 segfaults on the first frame whenever n_threads is set.
 GOLDEN_GPU = (
@@ -240,7 +241,8 @@ GOLDEN_GPU = (
 
 
 def test_gpu_vmaf_command_is_unchanged(monkeypatch, unscored):
-    """The --gpu FFmpeg command changes, and with it --gpu scores, or libvmaf_cuda segfaults."""
+    """The --gpu --disable-hw-decode FFmpeg command changes, and with it its
+    scores, or libvmaf_cuda segfaults."""
     monkeypatch.setattr(FFmpegQos, "_executable", "ffmpeg")
     monkeypatch.setattr(ffmpeg.FFprobe, "getStreamInfo", lambda self: dict(
         width=1280, height=720, r_frame_rate="25/1", duration="10.0", start_time="0",
@@ -252,10 +254,10 @@ def test_gpu_vmaf_command_is_unchanged(monkeypatch, unscored):
     monkeypatch.setattr(ffmpeg.subprocess, "Popen", Mock(
         return_value=SimpleNamespace(returncode=0, communicate=lambda: (b"", None))))
     calculation = Vmaf("dist.mp4", "ref.mp4", vmaf_versions=("0.6",), threads=4, gpu=True,
-                       sync_offset=1.5)
+                       disable_hw_decode=True, sync_offset=1.5)
 
-    # vmaf.gpu in the summary tells these scores came from libvmaf_cuda.
-    assert calculation.compute().gpu is True
+    # vmaf.cuda in the summary tells these scores came from libvmaf_cuda.
+    assert calculation.compute().cuda is True
     assert calculation.ffmpegQos._cmd == [
         "ffmpeg", "-y", "-hide_banner", "-stats", "-loglevel", "info",
         "-i", "dist.mp4", "-i", "ref.mp4", "-an", "-sn", "-dn",

@@ -25,6 +25,14 @@ each change.
 - **`--json` is removed.** Every run writes its schema 2 result to a summary
   file next to the libvmaf log (`<log>_summary.json`; see New). `--json` exits
   with code 2 and says so.
+- **`--gpu` also decodes on the GPU, and accepts every model.** It now uses
+  the GPU for each part it can do without changing a score (see New): NVDEC
+  decoding of the inputs it decodes exactly, and `libvmaf_cuda` when the models
+  allow it. The v0.6 scores of 4.x `--gpu` are unchanged;
+  `--gpu --disable-hw-decode` is the 4.x command, exactly. `--gpu` with a VMAF
+  v1 model (the default) or `--bitdepth 10` exited with code 2 in 4.x; it now
+  computes VMAF on the CPU with `libvmaf`, still decodes on the GPU, and the
+  summary says `"cuda": false`.
 - **Python 3.8 and 3.9 are no longer supported.** Both are end of life upstream.
 - **The Python API is renamed after the CLI flags.** The CLI is a client of the
   API, so the API now uses the flag names (`--sync-offset` is `sync_offset=`):
@@ -37,7 +45,7 @@ each change.
   | `output_fmt=` | `output_format=` |
   | `print_progress=` | `progress=` |
   | `end_sync=` | `shortest=` |
-  | `gpu_mode=` | `gpu=` (also in `validate_model_config()`) |
+  | `gpu_mode=` | `gpu=`; `validate_model_config()` no longer takes it |
   | `syncOffset(syncWindow, start, reverse)` → `[offset, psnr]` | `sync(window, start=0, reverse=False)` → `SyncResult(offset, psnr)` |
   | `getVmaf(autoSync=False)` | `compute()` |
   | `VmafResult.offset` | `VmafResult.sync_offset` |
@@ -83,26 +91,30 @@ each change.
   `<distorted>_sync_summary.json` with `--sync-only`). The schema 2 field names
   are those of the 4.0 `--json` record.
 - `easyvmaf` exports `validate_range_config` and `UnsupportedRangeError`.
-- The summary adds `vmaf.gpu` (`VmafResult.gpu`): `true` when VMAF was
-  computed with `libvmaf_cuda` (`--gpu`). The field is additive:
-  `schema_version` stays 2.
-- `--enable-hwaccel [API]` (`Vmaf(..., enable_hwaccel=None)`, `'auto'` or
-  `'cuda'`) decodes the inputs on an NVIDIA GPU (NVDEC) **without changing any
-  score**. Only steps that give the same frames as the CPU run on the GPU:
-  H.264 8-bit, HEVC 8/10-bit and VP9 8-bit 4:2:0 decoding, and with `--gpu`
-  an input already at the display resolution, progressive and in `yuv420p`
-  stays on the GPU up to `libvmaf_cuda`. Any other hardware decoded input
-  is downloaded right after decoding and scaled, deinterlaced and converted
-  on the CPU as before. An input the GPU cannot decode (MPEG-2, AV1, ProRes,
-  FFV1, H.264 High 10, ...) is decoded on the CPU with a warning. Works with
-  v1 models on the CPU, with `--gpu` and with frame ranges; the sync search
-  stays on the CPU. The summary adds `vmaf.hwaccel` (`VmafResult.hwaccel`):
-  `{api, decode: {distorted, reference}}`, `"hw"` or `"sw"` per input, only
-  with the flag; `schema_version` stays 2. If FFmpeg has no `cuda` hardware
-  decoding (`ffmpeg -hwaccels`), easyvmaf exits with code 1. See
-  [Hardware decoding](README.md#hardware-decoding).
+- `--gpu` decodes the inputs on an NVIDIA GPU (NVDEC) **without changing any
+  score**, and computes VMAF with `libvmaf_cuda` where the models allow it
+  (v0.6 at 8 bits), otherwise with `libvmaf` on the CPU, with a log line that
+  says why. Only steps that give the same frames as the CPU run on the GPU:
+  H.264 8-bit, HEVC 8/10-bit and VP9 8-bit 4:2:0 decoding, and with
+  `libvmaf_cuda` an input already at the display resolution, progressive and
+  in `yuv420p` stays on the GPU up to `libvmaf_cuda`. Any other hardware
+  decoded input is downloaded right after decoding and scaled, deinterlaced
+  and converted on the CPU as before. An input the GPU cannot decode (MPEG-2,
+  AV1, ProRes, FFV1, H.264 High 10, ...), or any input when FFmpeg has no
+  NVDEC, is decoded on the CPU with a warning. Works with frame ranges; the
+  sync search stays on the CPU. Two opt-outs, which exit with code 2 without
+  `--gpu`: `--disable-hw-decode` (CPU decoding) and `--disable-vmaf-cuda`
+  (`libvmaf` on the CPU); `Vmaf(..., gpu=False, disable_hw_decode=False,
+  disable_vmaf_cuda=False)` in the API. easyvmaf exits with code 1 when VMAF
+  would run on `libvmaf_cuda` and FFmpeg lacks it. See
+  [GPU](README.md#gpu).
+- The summary adds `vmaf.cuda` (`VmafResult.cuda`): `true` when VMAF was
+  computed with `libvmaf_cuda`; and, only with hardware decoding,
+  `vmaf.hw_decode` (`VmafResult.hw_decode`): `{api, distorted, reference}`,
+  `"hw"` or `"sw"` per input. The fields are additive: `schema_version`
+  stays 2.
 - The CUDA image sets `NVIDIA_DRIVER_CAPABILITIES=compute,utility,video`, so
-  NVDEC works in the container without `-e` (`--enable-hwaccel`).
+  NVDEC works in the container without `-e`.
 
 ### Fixed
 

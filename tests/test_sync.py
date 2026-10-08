@@ -15,7 +15,6 @@ import pytest
 from conftest import STREAM
 from easyvmaf import Vmaf, ffmpeg, vmaf
 from easyvmaf.results import read_scores
-from easyvmaf.vmaf import UnsupportedModelConfigError
 
 
 def inputs(cmd):
@@ -130,7 +129,7 @@ def test_only_sync_workers_run_ffmpeg_single_threaded(fake_ffmpeg):
 
 def test_gpu_vmaf_uploads_after_cpu_filters_and_trims_distorted_on_reverse(fake_ffmpeg):
     calculation = Vmaf("distorted.mkv", "reference.mkv", vmaf_versions=("0.6",), fps=10,
-                       threads=1, gpu=True)
+                       threads=1, gpu=True, disable_hw_decode=True)
     calculation.sync(0.4, reverse=True)
     # A repeated run rebuilds the chains: clearFilters() resets the hwupload guard.
     calculation.compute()
@@ -225,14 +224,14 @@ def test_hfr_models_follow_the_effective_frame_rate(final_vmaf, distorted, refer
 
 
 def test_input_the_gpu_cannot_decode_is_decoded_on_the_cpu(final_vmaf, monkeypatch, caplog):
-    """--enable-hwaccel never fails on an input the GPU cannot decode: it says so,
-    decodes it in software and records it (AV1 on a Turing GPU, ProRes, FFV1, ...)."""
+    """--gpu never fails on an input the GPU cannot decode: it says so, decodes
+    it in software and records it (AV1 on a Turing GPU, ProRes, FFV1, ...)."""
     monkeypatch.setattr(vmaf, "probe_hw_decode", lambda path, hwaccel: path == "ref.mp4")
     caplog.set_level(logging.WARNING)
 
-    calculation, result = final_vmaf(stream(), stream(), enable_hwaccel="auto")
+    calculation, result = final_vmaf(stream(), stream(), vmaf_versions=("0.6",), gpu=True)
 
-    assert result.hwaccel == {"api": "cuda", "decode": {"distorted": "sw", "reference": "hw"}}
+    assert result.hw_decode == {"api": "cuda", "distorted": "sw", "reference": "hw"}
     assert any("dist.mp4" in r.getMessage() and "software" in r.getMessage()
                for r in caplog.records if r.levelno == logging.WARNING)
     # Only the reference input is hardware decoded.
@@ -241,10 +240,16 @@ def test_input_the_gpu_cannot_decode_is_decoded_on_the_cpu(final_vmaf, monkeypat
     assert cmd.index("dist.mp4") < cmd.index("-hwaccel") < cmd.index("ref.mp4")
 
 
-def test_gpu_rejects_vmaf_v1():
-    """libvmaf_cuda has no v1 feature extractors: FFmpeg would fail after probing."""
-    with pytest.raises(UnsupportedModelConfigError):
-        Vmaf("dist.mp4", "ref.mp4", gpu=True)
+def test_gpu_computes_vmaf_v1_on_the_cpu(final_vmaf, monkeypatch):
+    """libvmaf_cuda has no v1 feature extractors: --gpu with the default models
+    must still run, with libvmaf on the CPU, instead of failing."""
+    monkeypatch.setattr(vmaf, "probe_hw_decode", lambda path, hwaccel: True)
+
+    calculation, result = final_vmaf(stream(), stream(), gpu=True)
+
+    assert result.cuda is False
+    assert "libvmaf=" in calculation.ffmpegQos.vmafFilter[0]
+    assert "cuda" not in calculation.ffmpegQos.vmafFilter[0]
 
 
 V1_FRAMES = [
