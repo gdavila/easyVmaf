@@ -83,6 +83,9 @@ each change.
   `<distorted>_sync_summary.json` with `--sync-only`). The schema 2 field names
   are those of the 4.0 `--json` record.
 - `easyvmaf` exports `validate_range_config` and `UnsupportedRangeError`.
+- The summary adds `vmaf.gpu` (`VmafResult.gpu`): `true` when VMAF was
+  computed with `libvmaf_cuda` (`--gpu`). The field is additive:
+  `schema_version` stays 2.
 
 ### Fixed
 

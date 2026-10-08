@@ -198,7 +198,7 @@ VMAF computation orchestration.
 - `results.py`: `SyncResult` NamedTuple (`offset`, `psnr`), `VmafResult` dataclass
   (`scores`, `models`, `display`, `pix_fmt`, `hfr`, `log_path`,
   `cambi_heatmap_path`, `sync_offset`, and for a range `start_frame`,
-  `frame_count`, `frames_scored`) and
+  `frame_count`, `frames_scored`; `gpu`, true when `libvmaf_cuda` computed it) and
   `read_scores(log_path, output_fmt, names)`, which averages the per-frame values of
   each model name in a json, xml or csv libvmaf log. It reads only model names:
   feature columns differ between v0.6 and v1. `read_frames(log_path, output_fmt)`
@@ -457,7 +457,10 @@ version=vmaf_v1.0.16_3d0h\\:name=vmaf_v1_hd\\:cambi.enc_width=1280\\:cambi.enc_h
 
 ### Feature string
 `_build_feature_string()` in vmaf.py always includes PSNR; adds a separate CAMBI
-feature only when `--cambi-heatmap` is passed and no v1 model is computed. Built via
+feature only when `--cambi-heatmap` is passed and no v1 model is computed.
+That PSNR only goes to the libvmaf log (the sync uses its own `psnr` filter). With
+`--gpu` it is required: without a CPU feature, `libvmaf_cuda` 3.2.1 segfaults
+whenever `n_threads` is set. Never remove it from the GPU command. Built via
 `FeatureConfig` dataclass — add new features there, not by editing the string directly.
 
 ### Output formats
@@ -472,7 +475,7 @@ Summary file (always written, one per input, schema 2), named after the log:
 writes `<distorted>_sync_summary.json`:
 ```
 { schema_version: 2, distorted, reference, sync: { offset, psnr[, psnr_status] },
-  vmaf: { display, pix_fmt, hfr, scores: { name: mean }, models: [ { name,
+  vmaf: { display, pix_fmt, hfr, gpu, scores: { name: mean }, models: [ { name,
   libvmaf_model, vmaf_version, view, range } ], output_file[, cambi_heatmap_path]
   [, range: { start_frame, frame_count, frames_scored }] } }
 ```
@@ -521,7 +524,8 @@ writes `<distorted>_sync_summary.json`:
 `.venv/bin/python -m pytest -q` from the repo root. Tests are consolidated by layer:
 
 - `tests/test_models.py` — catalog selection
-- `tests/test_ffmpeg.py` — layer 1, `check_ffmpeg()`, and the v0.6 golden test
+- `tests/test_ffmpeg.py` — layer 1, `check_ffmpeg()`, and the v0.6 and `--gpu`
+  golden tests
 - `tests/test_sync.py` — layer 2: sync, filter chains, pixel format, HFR, CAMBI
   overrides, `read_scores()`
 - `tests/test_cli.py` — layer 3: arguments, removed flags, JSON schema 2, batch
@@ -621,6 +625,9 @@ distorted reported at 2x (`_deinterlaceFrame(0.5, main)`), pinned by
   make a change pass. Its only authorized change (4.0) put `fps` before `scale`,
   so deinterlacing runs before scaling; `fps` only picks frames, so the frames
   and the v0.6 scores are identical
+- The `--gpu` FFmpeg command: `test_gpu_vmaf_command_is_unchanged` in
+  `tests/test_ffmpeg.py` (`GOLDEN_GPU`) pins it, including `n_threads` and
+  `feature=name=psnr`. Never edit its expected string to make a change pass
 - Sync workers and the final calculation build their chains with the same
   `_normalizeChains()` and trim after it; a different order lets the sync offset
   select a different frame or field than the final calculation

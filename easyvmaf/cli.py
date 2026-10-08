@@ -141,6 +141,7 @@ def _build_result(distorted, reference, offset, psnr, vmaf_result=None):
             'display': vmaf_result.display,
             'pix_fmt': vmaf_result.pix_fmt,
             'hfr': vmaf_result.hfr,
+            'gpu': vmaf_result.gpu,
             'scores': {k: round(v, 6) for k, v in vmaf_result.scores.items()},
             'models': [
                 {'name': run.spec.name,

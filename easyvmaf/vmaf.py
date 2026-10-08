@@ -974,7 +974,9 @@ class Vmaf():
         """
         features: List[FeatureConfig] = []
 
-        # PSNR is always included — used for sync offset reporting
+        # PSNR is always included. Only the libvmaf log reports it (sync runs
+        # its own psnr filter); with libvmaf_cuda it is the CPU feature that
+        # keeps n_threads from segfaulting (libvmaf 3.2.1).
         features.append(FeatureConfig('psnr'))
 
         # Separate CAMBI only when requested and no v1 model computes it:
@@ -1097,6 +1099,7 @@ class Vmaf():
             start_frame=(self.start_frame or 0) if self._hasRange() else None,
             frame_count=self.frame_count,
             frames_scored=frames_scored,
+            gpu=self.gpu,
         )
 
 

@@ -215,3 +215,47 @@ def test_v06_vmaf_command_is_unchanged(monkeypatch, unscored, model, cambi_heatm
         "ffmpeg", "-y", "-hide_banner", "-stats", "-loglevel", "info",
         "-i", "dist.mp4", "-i", "ref.mp4", "-an", "-sn", "-dn",
         "-lavfi", graph, "-f", "null", "-"]
+
+
+# Captured at e02f2b4, before --enable-hwaccel: --gpu alone must keep this
+# exact command (CPU decoding and filters, then hwupload_cuda). It also pins
+# feature=name=psnr next to n_threads: without a CPU feature, libvmaf_cuda
+# 3.2.1 segfaults on the first frame whenever n_threads is set.
+GOLDEN_GPU = (
+    r"[0:v]fps=fps=25.0[input0_0];[input0_0]scale=1920:1080:flags=bicubic[input0_1];"
+    r"[input0_1]trim=start=0:duration=10.0, setpts=PTS-STARTPTS[input0_2];"
+    r"[input0_2]format=yuv420p[input0_3];"
+    r"[input0_3]setparams=colorspace=unknown:range=unknown[input0_4];"
+    r"[input0_4]hwupload_cuda[input0_5];"
+    r"[1:v]fps=fps=25.0[input1_0];"
+    r"[input1_0]trim=start=1.5:duration=10.0, setpts=PTS-STARTPTS[input1_1];"
+    r"[input1_1]format=yuv420p[input1_2];"
+    r"[input1_2]setparams=colorspace=unknown:range=unknown[input1_3];"
+    r"[input1_3]hwupload_cuda[input1_4];"
+    r"[input0_5][input1_4]libvmaf_cuda=log_fmt=json:model="
+    r"version=vmaf_v0.6.1\\:name=vmaf_hd|version=vmaf_v0.6.1neg\\:name=vmaf_hd_neg|"
+    r"version=vmaf_v0.6.1\\:name=vmaf_hd_phone\\:enable_transform=true"
+    r":n_subsample=1:log_path=dist_vmaf.json:n_threads=4:shortest=0:feature=name=psnr")
+
+
+def test_gpu_vmaf_command_is_unchanged(monkeypatch, unscored):
+    """The --gpu FFmpeg command changes, and with it --gpu scores, or libvmaf_cuda segfaults."""
+    monkeypatch.setattr(FFmpegQos, "_executable", "ffmpeg")
+    monkeypatch.setattr(ffmpeg.FFprobe, "getStreamInfo", lambda self: dict(
+        width=1280, height=720, r_frame_rate="25/1", duration="10.0", start_time="0",
+        pix_fmt="yuv420p") if self.videoSrc == "dist.mp4" else dict(
+        width=1920, height=1080, r_frame_rate="25/1", duration="12.0", start_time="0",
+        pix_fmt="yuv420p"))
+    monkeypatch.setattr(ffmpeg.FFprobe, "getFramesInfo",
+                        lambda self: [{"interlaced_frame": 0, "pkt_size": 1}])
+    monkeypatch.setattr(ffmpeg.subprocess, "Popen", Mock(
+        return_value=SimpleNamespace(returncode=0, communicate=lambda: (b"", None))))
+    calculation = Vmaf("dist.mp4", "ref.mp4", vmaf_versions=("0.6",), threads=4, gpu=True,
+                       sync_offset=1.5)
+
+    # vmaf.gpu in the summary tells these scores came from libvmaf_cuda.
+    assert calculation.compute().gpu is True
+    assert calculation.ffmpegQos._cmd == [
+        "ffmpeg", "-y", "-hide_banner", "-stats", "-loglevel", "info",
+        "-i", "dist.mp4", "-i", "ref.mp4", "-an", "-sn", "-dn",
+        "-lavfi", GOLDEN_GPU, "-f", "null", "-"]

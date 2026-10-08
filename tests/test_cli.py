@@ -212,6 +212,7 @@ def test_summary_reports_v1_by_default(tmp_path, monkeypatch, capsys, ffmpeg_ok,
             "display": "hd",
             "pix_fmt": "yuv420p10le",
             "hfr": False,
+            "gpu": False,
             "scores": {"vmaf_v1_hd": 90.0, "vmaf_v1_phone": 90.0},
             "models": [
                 {"name": "vmaf_v1_hd", "libvmaf_model": "vmaf_v1.0.16_3d0h",

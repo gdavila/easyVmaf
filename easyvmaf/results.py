@@ -54,6 +54,7 @@ class VmafResult:
     start_frame: Optional[int] = None  # first measured frame of the range
     frame_count: Optional[int] = None  # frames requested; None: to the end
     frames_scored: Optional[int] = None  # frames in the log; fewer at the end
+    gpu: bool = False                  # True when libvmaf_cuda computed the scores
 
 
 def read_scores(log_path: str, output_fmt: str, names: Sequence[str]) -> Dict[str, float]:

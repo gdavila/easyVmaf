@@ -643,6 +643,7 @@ The path is printed at the end of each result (`Summary file path:`). For
     "display": "hd",
     "pix_fmt": "yuv420p10le",
     "hfr": false,
+    "gpu": false,
     "scores": {"vmaf_v1_hd": 93.256258, "vmaf_v1_phone": 95.393178},
     "models": [
       {"name": "vmaf_v1_hd", "libvmaf_model": "vmaf_v1.0.16_3d0h",
@@ -663,6 +664,7 @@ The path is printed at the end of each result (`Summary file path:`). For
 | `vmaf.display` | `hd` or `4k`. |
 | `vmaf.pix_fmt` | Pixel format both inputs were measured in. |
 | `vmaf.hfr` | `true` when the v1 HFR variants were used. |
+| `vmaf.gpu` | `true` when VMAF was computed on the GPU (`--gpu`, `libvmaf_cuda`). |
 | `vmaf.scores` | Mean score of each model over all frames, keyed by score name. |
 | `vmaf.models` | One entry per score: libvmaf model id (the `_hfr_` variant when HFR is on), VMAF version, view (`default`, `neg` or `phone` for v0.6) and score range. |
 | `vmaf.output_file` | Per-frame libvmaf log: same directory and base name as the distorted video, plus `_vmaf.{json,xml,csv}` (`_vmaf_f<first>-<last>.{json,xml,csv}` for a frame range). |
