@@ -218,14 +218,13 @@ class UnsupportedRangeError(ValueError):
     pass
 
 
-def validate_range_config(start_frame=None, frame_count=None, subsample=1,
-                          gpu=False, labels=None):
+def validate_range_config(start_frame=None, frame_count=None, subsample=1, labels=None):
     """
     Check a frame range and the options it is combined with, without probing
     any input. Vmaf() runs it in its constructor; the CLI runs it once.
 
     Args:
-        start_frame ... gpu: as in Vmaf(); gpu is allowed with a range
+        start_frame, frame_count, subsample: as in Vmaf()
         labels: names shown in error messages for each argument
 
     Raises:
@@ -451,7 +450,7 @@ class Vmaf():
         if gpu and cpu_reason:
             logger.info("VMAF runs on the CPU (libvmaf): %s", cpu_reason)
         self.cambi_heatmap = cambi_heatmap
-        validate_range_config(start_frame, frame_count, subsample, gpu)
+        validate_range_config(start_frame, frame_count, subsample)
         self.start_frame = start_frame
         self.frame_count = frame_count
         self._validateModelConfig(distorted)

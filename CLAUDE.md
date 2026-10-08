@@ -222,10 +222,10 @@ VMAF computation orchestration.
   bitdepth 10), or `None` when `libvmaf_cuda` computes it. Used by the
   constructor (`self.cuda`, and a `logger.info` with the reason) and by the CLI
   `cuda_vmaf` check
-- `validate_range_config(start_frame, frame_count, subsample, gpu,
-  labels=None)`: run by the constructor and once by the CLI. Raises
+- `validate_range_config(start_frame, frame_count, subsample, labels=None)`: run
+  by the constructor and once by the CLI. Raises
   `UnsupportedRangeError(ValueError)` for a non-integer or negative start, a count
-  below 1, or a range with `subsample > 1` (`gpu` is accepted). With a range,
+  below 1, or a range with `subsample > 1`. With a range,
   the constructor also rejects containers outside `_RANGE_FORMATS` (mp4/mov,
   matroska/webm) via `formatInfo['format_name']`.
 - `validate_model_config(display, vmaf_versions, views, hfr, bitdepth, enc_size,

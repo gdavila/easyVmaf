@@ -369,7 +369,7 @@ def get_args():
             args.display, args.vmaf_versions, args.views, args.hfr, args.bitdepth,
             args.enc_size, args.enc_bitdepth, args.model_options, labels=_FLAG_LABELS)
         validate_range_config(args.start_frame, args.frame_count, args.subsample,
-                              args.gpu, labels=_FLAG_LABELS)
+                              labels=_FLAG_LABELS)
     except ValueError as e:
         parser.error(str(e))
     return args
