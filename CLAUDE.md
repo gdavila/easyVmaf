@@ -433,9 +433,8 @@ identical:
   inputs (two frames of duration tolerance), a range past the last frame and a
   heatmap file not holding one picture per measured frame raise
   `UnsupportedRangeError`. libvmaf writes no log when no frame reaches it, so
-  `compute()` deletes an existing log at the range path before running, and the
-  `cambi_heatmap_scale_*.gray` files of the range heatmap directory: libvmaf
-  truncates only the files named after the current encoding size
+  `compute()` deletes an existing log at the range path before running (and the
+  old heatmaps, as for every calculation: see Output formats)
 - **Heatmap pictures**: one raw 16-bit file per scale (5), distorted picture n at
   n × picture size. The file name gives the scale size from the encoding size,
   not the picture size: v1 models set `cambi_high_res_speedup: 1080`, which halves
@@ -546,7 +545,11 @@ whenever `n_threads` is set. Never remove it from the GPU command. Built via
 VMAF results written to file: json (default), xml, csv.
 File path: same directory as distorted input, same base name + `_vmaf.{ext}`
 (`_vmaf_f<start>-<last>.{ext}` for a frame range). CAMBI heatmaps:
-`<distorted>_cambi_heatmap/` (`_cambi_heatmap_f<start>-<last>/` for a frame range)
+`<distorted>_cambi_heatmap/` (`_cambi_heatmap_f<start>-<last>/` for a frame range).
+`compute()` deletes the `cambi_heatmap_scale_*.gray` files of that directory
+before every calculation with `cambi_heatmap`, range or not: libvmaf truncates
+only the files named after the current encoding size, so a run at another size
+(`enc_size`, v1 vs v0.6-only CAMBI) would leave its files next to the new ones
 
 Summary file (always written, one per input, schema 2), named after the log:
 `<log>_summary.json` (`<distorted>_vmaf_summary.json`,

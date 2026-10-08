@@ -1189,10 +1189,11 @@ class Vmaf():
             # A range past the end writes no log: never read one left by an earlier run.
             if os.path.exists(log_path):
                 os.remove(log_path)
-            # Nor heatmaps of another encoding size, which libvmaf does not truncate.
-            if self.cambi_heatmap:
-                for path in heatmap_files(self.cambi_heatmap_path):
-                    os.remove(path)
+        # libvmaf truncates only the heatmaps of the current encoding size: never
+        # keep those of an earlier run at another size next to the new ones.
+        if self.cambi_heatmap:
+            for path in heatmap_files(self.cambi_heatmap_path):
+                os.remove(path)
         self.ffmpegQos.getVmaf(self.models, subsample=self.subsample, log_path=log_path,
                                output_fmt=self.output_format, threads=self.threads, print_progress=self.progress, shortest=self.shortest, features=self.features, gpu=self.gpu)
         log_path = self.ffmpegQos.vmafpath

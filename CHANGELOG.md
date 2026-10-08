@@ -120,6 +120,12 @@ each change.
   v1, the error says how to install a suitable FFmpeg on the platform (Homebrew
   on macOS, the BtbN static build on Linux) and links the README instead of
   recommending a Docker image that is not published.
+- `--cambi-heatmap` no longer mixes the heatmaps of two runs. libvmaf
+  overwrites only the files named after the current encoding size, so running
+  it again on the same distorted video at another encoding size (another
+  `--enc-size`, or VMAF v1 vs `--vmaf-version 0.6`) left the files of both
+  runs in `<distorted>_cambi_heatmap/`. Every run now deletes the directory's
+  `cambi_heatmap_scale_*.gray` files first.
 
 ## 4.0.0
 
