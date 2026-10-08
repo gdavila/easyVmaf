@@ -28,7 +28,7 @@ import os
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from statistics import mean
-from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 from .models import ModelRun
 
@@ -55,6 +55,9 @@ class VmafResult:
     frame_count: Optional[int] = None  # frames requested; None: to the end
     frames_scored: Optional[int] = None  # frames in the log; fewer at the end
     gpu: bool = False                  # True when libvmaf_cuda computed the scores
+    # enable_hwaccel: {'api': 'cuda', 'decode': {'distorted': 'hw' | 'sw',
+    # 'reference': 'hw' | 'sw'}}; None without it.
+    hwaccel: Optional[Dict[str, Any]] = None
 
 
 def read_scores(log_path: str, output_fmt: str, names: Sequence[str]) -> Dict[str, float]:

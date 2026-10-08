@@ -9,7 +9,7 @@ from unittest.mock import Mock
 import pytest
 
 from conftest import CAPABILITIES, SCORES, STREAM, strict_loads, write_scores
-from easyvmaf import Vmaf, cli, ffmpeg
+from easyvmaf import Vmaf, cli, ffmpeg, vmaf
 from easyvmaf.models import model_names, select_models
 from easyvmaf.results import VmafResult, read_scores
 
@@ -193,17 +193,23 @@ def test_options_are_forwarded(batch, monkeypatch, options, forwarded):
         calculation.sync.assert_not_called()
 
 
-def test_summary_reports_v1_by_default(tmp_path, monkeypatch, capsys, ffmpeg_ok, scored):
-    """JSON schema 2 contract, with VMAF v1 as the default model set."""
+@pytest.mark.parametrize("hwaccel", [False, True], ids=["default", "enable-hwaccel"])
+def test_summary_reports_v1_by_default(tmp_path, monkeypatch, capsys, ffmpeg_ok, scored,
+                                       hwaccel):
+    """JSON schema 2 contract, with VMAF v1 as the default model set; vmaf.hwaccel
+    only with --enable-hwaccel."""
     reference, distorted = tmp_path / "ref.mkv", tmp_path / "dist.mkv"
     reference.touch()
     distorted.touch()
+    # The GPU decodes the reference only.
+    monkeypatch.setattr(vmaf, "probe_hw_decode", lambda path, hwaccel: path == str(reference))
 
-    run(monkeypatch, "-d", str(distorted), "-r", str(reference), "--fps", "10")
+    run(monkeypatch, "-d", str(distorted), "-r", str(reference), "--fps", "10",
+        *(["--enable-hwaccel"] if hwaccel else []))
 
     path = tmp_path / "dist_vmaf_summary.json"
     assert "Summary file path:  %s" % path in capsys.readouterr().out
-    assert summary(path) == {
+    expected = {
         "schema_version": 2,
         "distorted": str(distorted),
         "reference": str(reference),
@@ -223,6 +229,10 @@ def test_summary_reports_v1_by_default(tmp_path, monkeypatch, capsys, ffmpeg_ok,
             "output_file": str(tmp_path / "dist_vmaf.json"),
         },
     }
+    if hwaccel:
+        expected["vmaf"]["hwaccel"] = {
+            "api": "cuda", "decode": {"distorted": "sw", "reference": "hw"}}
+    assert summary(path) == expected
 
 
 def test_vmaf_v06_keeps_its_metrics(tmp_path, monkeypatch, ffmpeg_ok, scored):

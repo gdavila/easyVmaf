@@ -2,6 +2,7 @@
 libvmaf log reading, with FFmpeg stubbed."""
 
 import json
+import logging
 import re
 import threading
 import time
@@ -12,7 +13,7 @@ from unittest.mock import Mock
 import pytest
 
 from conftest import STREAM
-from easyvmaf import Vmaf, ffmpeg
+from easyvmaf import Vmaf, ffmpeg, vmaf
 from easyvmaf.results import read_scores
 from easyvmaf.vmaf import UnsupportedModelConfigError
 
@@ -151,7 +152,7 @@ def test_gpu_vmaf_uploads_after_cpu_filters_and_trims_distorted_on_reverse(fake_
 
 def stream(width=1920, height=1080, fps="25/1", pix_fmt="yuv420p", interlaced=False):
     return dict(width=width, height=height, r_frame_rate=fps, duration="10.0",
-                start_time="0", pix_fmt=pix_fmt, interlaced=interlaced)
+                start_time="0", codec_name="h264", pix_fmt=pix_fmt, interlaced=interlaced)
 
 
 @pytest.fixture
@@ -221,6 +222,23 @@ def test_hfr_models_follow_the_effective_frame_rate(final_vmaf, distorted, refer
 
     assert [("_hfr_" in run.libvmaf_model) for run in result.models] == [hfr, hfr]
     assert result.hfr is hfr
+
+
+def test_input_the_gpu_cannot_decode_is_decoded_on_the_cpu(final_vmaf, monkeypatch, caplog):
+    """--enable-hwaccel never fails on an input the GPU cannot decode: it says so,
+    decodes it in software and records it (AV1 on a Turing GPU, ProRes, FFV1, ...)."""
+    monkeypatch.setattr(vmaf, "probe_hw_decode", lambda path, hwaccel: path == "ref.mp4")
+    caplog.set_level(logging.WARNING)
+
+    calculation, result = final_vmaf(stream(), stream(), enable_hwaccel="auto")
+
+    assert result.hwaccel == {"api": "cuda", "decode": {"distorted": "sw", "reference": "hw"}}
+    assert any("dist.mp4" in r.getMessage() and "software" in r.getMessage()
+               for r in caplog.records if r.levelno == logging.WARNING)
+    # Only the reference input is hardware decoded.
+    cmd = calculation.ffmpegQos._cmd
+    assert cmd.count("-hwaccel") == 1
+    assert cmd.index("dist.mp4") < cmd.index("-hwaccel") < cmd.index("ref.mp4")
 
 
 def test_gpu_rejects_vmaf_v1():

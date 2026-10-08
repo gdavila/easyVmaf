@@ -341,6 +341,32 @@ def test_frame_ranges_join_into_the_full_calculation(gop_clips, distorted, refer
         assert len(joined_heatmaps) == 5 and all(joined_heatmaps.values())
 
 
+@pytest.mark.requires_cuda
+@pytest.mark.parametrize("distorted_size", ["1920x1080", "1280x720"],
+                         ids=["gpu-resident", "downloaded"])
+def test_enable_hwaccel_never_changes_a_score(encode, tmp_path, distorted_size):
+    """Hardware decoding may only make the calculation faster. 1080p inputs stay
+    on the GPU up to libvmaf_cuda; a 720p distorted is downloaded and scaled on
+    the CPU, since scale_cuda changes the scores."""
+    reference, distorted = tmp_path / "reference.mp4", tmp_path / "distorted.mp4"
+    source = "testsrc2=s=1920x1080:r=25:d=2"
+    # The CUDA image's FFmpeg has no libx264.
+    nvenc = ("-pix_fmt", "yuv420p", "-c:v", "h264_nvenc", "-rc", "constqp")
+    encode("-f", "lavfi", "-i", source, *nvenc, "-qp", "12", reference)
+    encode("-f", "lavfi", "-i", source, "-s", distorted_size, *nvenc, "-qp", "35", distorted)
+
+    def calculate(**options):
+        result = Vmaf(str(distorted), str(reference), vmaf_versions=("0.6",), gpu=True,
+                      **options).compute()
+        return result, read_frames(result.log_path, "json")
+
+    _, software = calculate()
+    result, hardware = calculate(enable_hwaccel="auto")
+
+    assert result.hwaccel == {"api": "cuda", "decode": {"distorted": "hw", "reference": "hw"}}
+    assert hardware == software
+
+
 def test_frame_range_past_the_end_fails_instead_of_reading_a_stale_log(gop_clips, tmp_path):
     """An orchestrator plans ranges from an estimated frame count; the range
     past the end measures nothing, and libvmaf then writes no log at all."""

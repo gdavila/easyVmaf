@@ -196,11 +196,15 @@ VMAF computation orchestration.
   hfr='auto', bitdepth='auto', enc_size=None, enc_bitdepth=None, model_options=(),
   output_format='json', loglevel='info', subsample=1, threads=0, progress=False,
   shortest=False, fps=0, cambi_heatmap=False, gpu=False, sync_offset=0.0,
-  start_frame=None, frame_count=None)`: pixel format, auto-scaling,
-  auto-deinterlace, parallel sync offset search, model resolution, optional frame
-  range and final VMAF scoring. `sync(window, start=0, reverse=False)` searches the
-  offset, stores it in `self.sync_offset` and returns `SyncResult(offset, psnr)`;
-  `compute()` applies `sync_offset` and returns a `VmafResult`.
+  start_frame=None, frame_count=None, enable_hwaccel=None)`: pixel format,
+  auto-scaling, auto-deinterlace, parallel sync offset search, model resolution,
+  optional frame range, optional hardware decoding and final VMAF scoring.
+  `sync(window, start=0, reverse=False)` searches the offset, stores it in
+  `self.sync_offset` and returns `SyncResult(offset, psnr)`; `compute()` applies
+  `sync_offset` and returns a `VmafResult`.
+- `resolve_hwaccel(enable_hwaccel)`: `None`, or the `HW_ACCELS` name (`'auto'`
+  → `'cuda'`, the only one); `ValueError` for an unknown value. Used by the
+  constructor and by the CLI check against `check_ffmpeg()['hwaccels']`
 - `validate_range_config(start_frame, frame_count, subsample, gpu,
   labels=None)`: run by the constructor and once by the CLI. Raises
   `UnsupportedRangeError(ValueError)` for a non-integer or negative start, a count
@@ -225,7 +229,9 @@ VMAF computation orchestration.
 - `results.py`: `SyncResult` NamedTuple (`offset`, `psnr`), `VmafResult` dataclass
   (`scores`, `models`, `display`, `pix_fmt`, `hfr`, `log_path`,
   `cambi_heatmap_path`, `sync_offset`, and for a range `start_frame`,
-  `frame_count`, `frames_scored`; `gpu`, true when `libvmaf_cuda` computed it) and
+  `frame_count`, `frames_scored`; `gpu`, true when `libvmaf_cuda` computed it;
+  `hwaccel`, `None` without `enable_hwaccel`, else `{'api': 'cuda', 'decode':
+  {'distorted': 'hw'|'sw', 'reference': 'hw'|'sw'}}`) and
   `read_scores(log_path, output_fmt, names)`, which averages the per-frame values of
   each model name in a json, xml or csv libvmaf log. It reads only model names:
   feature columns differ between v0.6 and v1. `read_frames(log_path, output_fmt)`
@@ -247,7 +253,8 @@ CLI entry point only. Argparse, glob pattern expansion for batch processing,
 printing results and writing the JSON summary file.
 - Flags are `--kebab-case`, grouped in `--help` as input, synchronization, frame
   range, models, VMAF v1 parameters, output and execution. Only `-d`/`-r` have short forms.
-  `allow_abbrev=False`.
+  `allow_abbrev=False`. `--enable-hwaccel [API]` (execution) takes `auto` (also
+  without a value) or `cuda`, and is passed resolved as `enable_hwaccel=`.
 - `_REMOVED_FLAGS`: removed flag → how to replace it. `MyParser.parse_known_args()`
   checks it **before** parsing (argparse would read `-reverse` as `-r everse`) and
   exits with code 2: `error: -sw was removed, use --sync-window`.
@@ -264,7 +271,8 @@ printing results and writing the JSON summary file.
 - `_print_text_result()`: one line per score with value, libvmaf model and range,
   plus the log and summary paths
 - `check_ffmpeg()` called at startup: exits 1 if `meets_minimum` or `libvmaf_v1` is
-  false, or if `--gpu` is set and `cuda_vmaf` is false
+  false, if `--gpu` is set and `cuda_vmaf` is false, or if the `--enable-hwaccel`
+  backend is not in `hwaccels`
 
 Must NOT contain FFmpeg filter logic, VMAF computation or libvmaf log parsing.
 
@@ -334,23 +342,57 @@ would run its own frames probe.
 - Each worker starts with fresh filter chains on its own QoS instance
 
 ### Filter application order (`Vmaf.compute()`, always this sequence)
-1. `clearFilters()` — reset state (also resets `_hwupload_done`)
-2. `_applyPixelFormat()` — resolve the measurement `pix_fmt` and add
+1. `clearFilters()` — reset state (also resets `_hwupload_done`, the seek and
+   the hardware decode)
+2. `_applyHwDecode()` — only with `enable_hwaccel` (see Hardware decoding):
+   `setHwDecode()` on each input the GPU decodes, and `setHwDownloadFilter(<native
+   pix_fmt>)` as its **first** filter unless it stays on the GPU. The download
+   gives the software decoder's frames in the native `pix_fmt`, so every later
+   step, step 3's comparison included, is unchanged
+3. `_applyPixelFormat()` — resolve the measurement `pix_fmt` and add
    `format=<pix_fmt>` as the **first** filter of each chain whose native format
-   differs (CPU only; in GPU mode `pix_fmt = 'yuv420p'` and no filter is added)
-3. `_normalizeChains()` — `_applyDeinterlaceFilters()` (yadif and/or fps), or the
+   differs (after the download, if any; CPU only; in GPU mode `pix_fmt =
+   'yuv420p'` and no filter is added)
+4. `_normalizeChains()` — `_applyDeinterlaceFilters()` (yadif and/or fps), or the
    `--fps` filter on both chains, **then** `_applyScaleFilters()` to
    `DISPLAY_RESOLUTION[display]`; records the effective distorted frame rate in
    `self.output_fps`. Deinterlacing goes before scaling: `scale` treats the picture
    as progressive and would blend the two fields (−22 VMAF on a 720i input)
-4. `_applyOffset()` — apply trim filters for `sync_offset`; with a frame range,
+5. `_applyOffset()` — apply trim filters for `sync_offset`; with a frame range,
    `_applyRange()` instead (see Frame range)
-5. `_resolveModels()` — HFR decision from `output_fps`, `select_models()`, v1 overrides
-6. `ffmpegQos.getVmaf(models, ...)` — if `gpu=True`, auto-inserts `hwupload_cuda` on both chains as the last CPU→GPU step before `libvmaf_cuda`
+6. `_resolveModels()` — HFR decision from `output_fps`, `select_models()`, v1 overrides
+7. `ffmpegQos.getVmaf(models, ...)` — if `gpu=True`, auto-inserts `hwupload_cuda` on both chains as the last CPU→GPU step before `libvmaf_cuda` (on a chain still on the GPU, `scale_cuda=format=yuv420p` instead)
 
 `sync()` runs before `compute()`, on its own worker chains, and only sets the
-offset of step 4: `_applyOffset()` is private because `compute()` rebuilds every
+offset of step 5: `_applyOffset()` is private because `compute()` rebuilds every
 chain.
+
+### Hardware decoding (`enable_hwaccel`, `--enable-hwaccel`)
+Rule: it never changes a score. Each input is decoded on the GPU when it can be,
+and **stays on the GPU only while every step of its chain is bit-exact there**;
+otherwise its frames are downloaded right after decoding and run today's CPU
+chain. Decided per input, never from the other input:
+- **Decode** (`_canHwDecode()`, once per input, cached in `_hwDecodable`): an
+  allow-list from `streamInfo` (`_HW_DECODE_EXACT`, validated bit-exact on NVDEC:
+  `h264` `yuv420p`, `hevc` `yuv420p`/`yuv420p10le`, `vp9` `yuv420p`), then
+  `probe_hw_decode()`, since what decodes depends on the GPU (AV1 on Turing).
+  Anything else (MPEG-2 decodes differently on NVDEC; AV1 and VP9 10-bit are not
+  validated; ProRes, FFV1, H.264 High 10 / 4:2:2, `yuvj*`, ...) is decoded in
+  software with a `logger.warning` naming the input and the reason, and
+  reported as `"sw"`
+- **Stay on the GPU** (`_staysOnDevice()`): only with `gpu`, and only an input
+  in `yuv420p` (no bit depth reduction), at the display resolution (no scaling)
+  and not deinterlaced (any interlaced input without `--fps` is downloaded).
+  `fps`, `trim`, `setpts` and the range filters are exact on CUDA frames.
+  Without `gpu`, libvmaf runs on the CPU and every input is downloaded
+- **Not on the GPU**: `scale_cuda`/`scale_npp` scaling (−2.2 VMAF v1 720p →
+  1080p), 10 → 8 bit conversion and `yadif_cuda` all differ from the CPU
+- The sync workers never decode on the GPU. A frame range keeps the hardware
+  decode options next to its seek (`extraOptions`), and its anchor probe runs on
+  the same chains (`showinfo=checksum=0`)
+- `VmafResult.hwaccel` / `vmaf.hwaccel`: `{'api': 'cuda', 'decode':
+  {'distorted': 'hw'|'sw', 'reference': 'hw'|'sw'}}`, `None` (absent from the
+  summary) without the flag
 
 The format conversion goes first on purpose: with `scale` in the chain FFmpeg
 negotiates the output format into the scaler, but without scaling and with `yadif`
@@ -451,6 +493,16 @@ normalization, which crashes because `auto_scale` cannot accept CUDA frames.
 `_insertHwupload()` is idempotent — the `_hwupload_done` flag prevents double insertion.
 `clearFilters()` resets this flag so the sequence is repeatable.
 
+With `--enable-hwaccel`, an input that stays on the GPU (see Hardware decoding)
+never leaves it: NVDEC frames (`nv12`), the exact steps on CUDA frames, then
+`_insertHwupload()`'s conversion instead of the upload:
+```
+[NVDEC] → [fps] → [trim] → [scale_cuda=format=yuv420p] → [setparams=colorspace=unknown:range=unknown] → [libvmaf_cuda]
+```
+A downloaded input runs the chain above unchanged after
+`hwdownload,format=<nv12|p010>,format=<native pix_fmt>`. Without
+`--enable-hwaccel` the `--gpu` command is unchanged (`GOLDEN_GPU`).
+
 ### Duration calculation
 `getDuration()` tries `streamInfo['duration']` first. On KeyError (common with MKV,
 some TS streams) falls back to `formatInfo['duration']`. Both values subtract
@@ -504,9 +556,11 @@ writes `<distorted>_sync_summary.json`:
 { schema_version: 2, distorted, reference, sync: { offset, psnr[, psnr_status] },
   vmaf: { display, pix_fmt, hfr, gpu, scores: { name: mean }, models: [ { name,
   libvmaf_model, vmaf_version, view, range } ], output_file[, cambi_heatmap_path]
+  [, hwaccel: { api, decode: { distorted, reference } }]
   [, range: { start_frame, frame_count, frames_scored }] } }
 ```
-`--sync-only` summaries have `schema_version` and no `vmaf` block.
+`--sync-only` summaries have `schema_version` and no `vmaf` block. `vmaf.hwaccel`
+is written only with `--enable-hwaccel`; `decode` is `"hw"` or `"sw"` per input.
 
 ---
 
@@ -568,7 +622,10 @@ cannot pass by skipping. Other skips (Windows-only UNC, ...) are unchanged, and
 so are the `requires_cuda` skips: CI has no GPU runner. The `gpu-*` cases of
 `test_frame_ranges_join_into_the_full_calculation` run only on a GPU host
 (`Dockerfile.cuda` image, Docker section); run them before changing the range
-or the GPU pipeline.
+or the GPU pipeline. `test_enable_hwaccel_never_changes_a_score` (`requires_cuda`)
+also needs NVDEC in the container (`NVIDIA_DRIVER_CAPABILITIES` with `video`)
+and encodes its clips with `h264_nvenc`; it fails, rather than passing, if an
+input is decoded in software.
 
 CI (`.github/workflows/test.yml`: pushes to master, pull requests, manual runs,
 and `workflow_call`) runs the full suite in four jobs:
@@ -671,6 +728,10 @@ distorted reported at 2x (`_deinterlaceFrame(0.5, main)`), pinned by
   compares ranges with the full calculation exactly (logs, and CAMBI heatmaps byte
   for byte with one thread; a warning with two, Netflix/vmaf#1676); never loosen
   it to a tolerance or drop cases to make a change pass
+- `--enable-hwaccel` never changes a score: only the steps validated bit-exact
+  run on the GPU (Hardware decoding). `test_enable_hwaccel_never_changes_a_score`
+  compares the logs exactly; never loosen it, and never move scaling,
+  deinterlacing or a bit depth reduction to the GPU under this flag
 
 ---
 

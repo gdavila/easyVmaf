@@ -23,6 +23,7 @@ SOFTWARE.
 """
 from .ffmpeg import FFprobe
 from .ffmpeg import FFmpegQos
+from .ffmpeg import HW_ACCELS, probe_hw_decode
 from .models import DISPLAY_RESOLUTION, model_names, select_models
 from .results import SyncResult, VmafResult, heatmap_files, read_frames, read_scores, trim_heatmaps, trim_log
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -60,6 +61,15 @@ _RANGE_BOUND_MARGIN = 0.25
 # Containers whose seek lands on the requested frame. MPEG-TS seeks to the
 # next keyframe instead, and raw elementary streams have no timestamps.
 _RANGE_FORMATS = ('mov', 'mp4', 'matroska', 'webm')
+
+# What enable_hwaccel='auto' uses: the only hardware decoding implemented.
+_HWACCEL_AUTO = 'cuda'
+# Inputs whose hardware decoding gives the software decoder's frames, as
+# validated bit-exact per hwaccel: codec_name -> native pix_fmts. NVDEC decodes
+# MPEG-2 differently; AV1 and VP9 10-bit are not validated.
+_HW_DECODE_EXACT = {
+    'cuda': {'h264': ('yuv420p',), 'hevc': ('yuv420p', 'yuv420p10le'), 'vp9': ('yuv420p',)},
+}
 
 # --model-option syntax: no ':', '|', '[', ']', ';' or quotes can reach the filtergraph.
 _MODEL_OPTION_RE = re.compile(r'^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*=[A-Za-z0-9_.\-]+$')
@@ -248,6 +258,25 @@ def validate_range_config(start_frame=None, frame_count=None, subsample=1,
             f"({label('start_frame')}, {label('frame_count')})")
 
 
+def resolve_hwaccel(enable_hwaccel):
+    """
+    The hardware decoding that enable_hwaccel selects: None, or a name of
+    HW_ACCELS ('auto' is 'cuda', the only one).
+
+    Raises:
+        ValueError: an unknown value
+    """
+    if enable_hwaccel is None:
+        return None
+    name = str(enable_hwaccel).lower()
+    if name == 'auto':
+        return _HWACCEL_AUTO
+    if name not in HW_ACCELS:
+        raise ValueError(f"enable_hwaccel must be None, 'auto' or one of "
+                         f"{', '.join(HW_ACCELS)}, not {enable_hwaccel!r}")
+    return name
+
+
 class UnsupportedModelConfigError(ValueError):
     """
     Raised when the requested models cannot be computed with the given
@@ -371,7 +400,7 @@ class Vmaf():
         - Frame rate conversion (if needed)
     """
 
-    def __init__(self, distorted, reference, *, display='hd', vmaf_versions=('1',), views=None, hfr='auto', bitdepth='auto', enc_size=None, enc_bitdepth=None, model_options=(), output_format='json', loglevel="info", subsample=1, threads=0, progress=False, shortest=False, fps=0, cambi_heatmap=False, gpu=False, sync_offset=0.0, start_frame=None, frame_count=None):
+    def __init__(self, distorted, reference, *, display='hd', vmaf_versions=('1',), views=None, hfr='auto', bitdepth='auto', enc_size=None, enc_bitdepth=None, model_options=(), output_format='json', loglevel="info", subsample=1, threads=0, progress=False, shortest=False, fps=0, cambi_heatmap=False, gpu=False, sync_offset=0.0, start_frame=None, frame_count=None, enable_hwaccel=None):
         """
         Args (model selection and VMAF v1 parameters):
             display:       'hd' or '4k'; target resolution of the scaling
@@ -400,12 +429,21 @@ class Vmaf():
                            frames of the full calculation, with the same
                            frame numbers and scores.
 
+        Args (execution):
+            enable_hwaccel: None, 'auto' or 'cuda': decode each input on the
+                           GPU when it can be decoded there exactly, keeping
+                           every score unchanged (see _applyHwDecode); 'auto'
+                           is 'cuda'
+
         Raises:
             UnsupportedModelConfigError: options that the selected models
                 cannot honour (see validate_model_config)
             UnsupportedRangeError: a range with unsupported options or inputs
-            ValueError: unknown display, version or view
+            ValueError: unknown display, version or view, or enable_hwaccel
         """
+        hwaccel = resolve_hwaccel(enable_hwaccel)
+        self.hwaccel = HW_ACCELS[hwaccel] if hwaccel else None
+        self._hwDecodable = {}    # role -> bool: the probe result does not change
         self.display = str(display).lower()
         self.vmaf_versions = tuple(str(v) for v in vmaf_versions)
         self.views = views
@@ -549,6 +587,69 @@ class Vmaf():
                               (self.ref, self.ffmpegQos.ref)):
             if stream.streamInfo.get('pix_fmt') != self.pix_fmt:
                 chain.setFormatFilter(self.pix_fmt)
+
+    def _canHwDecode(self, stream, role):
+        """
+        Whether stream can be decoded with self.hwaccel to the software
+        decoder's frames: a validated codec and pixel format, then a probe of
+        one frame, since what decodes depends on the GPU (AV1). Decided once
+        per input; a software decoded input is reported with a warning.
+        """
+        if role not in self._hwDecodable:
+            codec = stream.streamInfo.get('codec_name')
+            pix_fmt = stream.streamInfo.get('pix_fmt')
+            if pix_fmt not in _HW_DECODE_EXACT[self.hwaccel.name].get(codec, ()):
+                format_name = ' '.join(str(v) for v in (codec, pix_fmt) if v) or 'its format'
+                reason = f"{self.hwaccel.name} decoding of {format_name} is not supported"
+            elif not probe_hw_decode(stream.videoSrc, self.hwaccel):
+                reason = f"{self.hwaccel.name} could not decode its first frame on this system"
+            else:
+                reason = None
+            if reason:
+                logger.warning("Decoding the %s video %s in software: %s",
+                               role, stream.videoSrc, reason)
+            self._hwDecodable[role] = reason is None
+        return self._hwDecodable[role]
+
+    def _staysOnDevice(self, stream):
+        """
+        Whether a hardware decoded input can stay on the GPU up to libvmaf:
+        only with gpu, and only if no step of its chain differs on the GPU:
+        no scaling, no deinterlacing and no bit depth reduction (gpu measures
+        in yuv420p). fps, trims and setpts select the same frames there.
+        """
+        size = [stream.streamInfo['width'], stream.streamInfo['height']]
+        # Deinterlacing is decided against the other input; any interlaced
+        # input is downloaded, so that the decision depends on this one only.
+        deinterlaced = self.fps == 0 and stream.interlaced
+        return (self.gpu and stream.streamInfo.get('pix_fmt') == 'yuv420p'
+                and size == self.target_resolution and not deinterlaced)
+
+    def _applyHwDecode(self):
+        """
+        With enable_hwaccel, decode each input on the GPU when it can be, and
+        keep its frames there only while every step of its chain is exact on
+        the GPU. Any other hardware decoded input is downloaded first, as its
+        native pixel format: the software decoder's frames, through the CPU
+        chain unchanged, so the scores never change.
+
+        Returns {'distorted': 'hw' | 'sw', 'reference': 'hw' | 'sw'}, or None
+        without enable_hwaccel.
+        """
+        if self.hwaccel is None:
+            return None
+        decode = {}
+        # The shared ffmpegQos always keeps main=distorted, ref=reference.
+        for stream, chain, role in ((self.main, self.ffmpegQos.main, 'distorted'),
+                                    (self.ref, self.ffmpegQos.ref, 'reference')):
+            if not self._canHwDecode(stream, role):
+                decode[role] = 'sw'
+                continue
+            chain.setHwDecode(self.hwaccel)
+            if not self._staysOnDevice(stream):
+                chain.setHwDownloadFilter(stream.streamInfo['pix_fmt'])
+            decode[role] = 'hw'
+        return decode
 
     def _deinterlaceFrame(self, factor, chain):
         """Returns the fps forced on the chain, or None if yadif sets its rate."""
@@ -1005,18 +1106,23 @@ class Vmaf():
 
         Filter application contract — always in this order:
             1. clearFilters()       — reset all filter chains on ffmpegQos
-            2. _applyPixelFormat()  — format=<measurement pix_fmt> as the first
+            2. _applyHwDecode()     — with enable_hwaccel: hardware decode, and
+                                      the download as the first filter of each
+                                      input that cannot stay on the GPU
+            3. _applyPixelFormat()  — format=<measurement pix_fmt> as the first
                                       filter of each chain that needs it (CPU only)
-            3. _normalizeChains()   — deinterlace or convert the frame rate
+            4. _normalizeChains()   — deinterlace or convert the frame rate
                                       (--fps), then scale to the display
                                       resolution; records output_fps
-            4. _applyOffset()       — apply trim filters for temporal sync,
+            5. _applyOffset()       — apply trim filters for temporal sync,
                or _applyRange()     — with a frame range: seek, sync trims
                                       anchored to the full calculation, range
-            5. _resolveModels()     — HFR choice from output_fps, v1 overrides
-            6. ffmpegQos.getVmaf()  — with gpu, inserts hwupload_cuda last
+            6. _resolveModels()     — HFR choice from output_fps, v1 overrides
+            7. ffmpegQos.getVmaf()  — with gpu, inserts hwupload_cuda last (on
+                                      frames still on the GPU, the yuv420p
+                                      conversion there)
 
-        Note: sync(), called before compute(), sets the offset of step 4. Its
+        Note: sync(), called before compute(), sets the offset of step 5. Its
         workers build their own FFmpegQos with the same _normalizeChains()
         and trim after it, like _applyOffset(), so the offset they choose
         selects the same frame here; self.ffmpegQos filter chains are left intact.
@@ -1028,6 +1134,7 @@ class Vmaf():
         self.ffmpegQos.main.clearFilters()
         self.ffmpegQos.ref.clearFilters()
 
+        hw_decode = self._applyHwDecode()
         self._applyPixelFormat()
 
         if self.fps:
@@ -1064,6 +1171,9 @@ class Vmaf():
         logger.info("Models:     %s", ', '.join(
             f'{run.spec.name} ({run.libvmaf_model})' for run in self.models))
         logger.info("pix_fmt:    %s", self.pix_fmt)
+        if hw_decode:
+            logger.info("Decoding:   %s (distorted %s, reference %s)", self.hwaccel.name,
+                        hw_decode['distorted'], hw_decode['reference'])
         logger.debug("loglevel:   %s", self.loglevel)
         logger.info("subsample:  %s", self.subsample)
         logger.info("output_format: %s", self.output_format)
@@ -1100,6 +1210,7 @@ class Vmaf():
             frame_count=self.frame_count,
             frames_scored=frames_scored,
             gpu=self.gpu,
+            hwaccel={'api': self.hwaccel.name, 'decode': hw_decode} if hw_decode else None,
         )
 
 
