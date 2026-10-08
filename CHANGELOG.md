@@ -99,7 +99,10 @@ each change.
   stays on the CPU. The summary adds `vmaf.hwaccel` (`VmafResult.hwaccel`):
   `{api, decode: {distorted, reference}}`, `"hw"` or `"sw"` per input, only
   with the flag; `schema_version` stays 2. If FFmpeg has no `cuda` hardware
-  decoding (`ffmpeg -hwaccels`), easyvmaf exits with code 1.
+  decoding (`ffmpeg -hwaccels`), easyvmaf exits with code 1. See
+  [Hardware decoding](README.md#hardware-decoding).
+- The CUDA image sets `NVIDIA_DRIVER_CAPABILITIES=compute,utility,video`, so
+  NVDEC works in the container without `-e` (`--enable-hwaccel`).
 
 ### Fixed
 

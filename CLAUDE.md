@@ -39,6 +39,7 @@ easyvmaf -d distorted.mp4 -r reference.mp4 --display 4k         # VMAF v1 4K
 easyvmaf -d distorted.mp4 -r reference.mp4 --vmaf-version 0.6   # v0.6 models, as in 3.x
 easyvmaf -d distorted.mp4 -r reference.mp4 --vmaf-version 1 0.6 # both generations in one pass
 easyvmaf -d distorted.mp4 -r reference.mp4 --vmaf-version 0.6 --gpu  # GPU (CUDA), v0.6 only
+easyvmaf -d distorted.mp4 -r reference.mp4 --enable-hwaccel     # NVDEC decoding, any model, same scores
 easyvmaf -d "folder/*.mp4" -r reference.mp4                     # batch
 
 # Module invocation (no install)
@@ -68,6 +69,8 @@ docker run --rm -v /path/to/videos:/videos easyvmaf \
 docker build -f Dockerfile.cuda -t easyvmaf:cuda .
 docker run --rm --gpus all -v /path/to/videos:/videos easyvmaf:cuda \
   -d /videos/distorted.mp4 -r /videos/reference.mp4 --vmaf-version 0.6 --gpu
+docker run --rm --gpus all -v /path/to/videos:/videos easyvmaf:cuda \
+  -d /videos/distorted.mp4 -r /videos/reference.mp4 --vmaf-version 0.6 --gpu --enable-hwaccel
 
 # docker-compose
 docker compose build
@@ -83,6 +86,13 @@ docker run --rm -v $(pwd):/src -w /src --entrypoint sh easyvmaf \
 docker run --rm --gpus all -v $(pwd):/src -w /src --entrypoint sh easyvmaf:cuda \
   -c 'pip install -q --root-user-action=ignore pytest && python3 -m pytest -q -rs -p no:cacheprovider'
 ```
+
+`Dockerfile.cuda` sets `NVIDIA_DRIVER_CAPABILITIES=compute,utility,video`:
+NVDEC (`--enable-hwaccel`) needs the `video` capability, and without it every
+input falls back to software decoding (`Cannot load libnvcuvid.so.1`). A CUDA
+image built before that line (e.g. `easyvmaf-bench:5.0.0-e02f2b42ec79-cuda`)
+needs `-e NVIDIA_DRIVER_CAPABILITIES=compute,utility,video` in `docker run`,
+or `test_enable_hwaccel_never_changes_a_score` fails.
 
 ---
 
@@ -626,9 +636,9 @@ so are the `requires_cuda` skips: CI has no GPU runner. The `gpu-*` cases of
 `test_frame_ranges_join_into_the_full_calculation` run only on a GPU host
 (`Dockerfile.cuda` image, Docker section); run them before changing the range
 or the GPU pipeline. `test_enable_hwaccel_never_changes_a_score` (`requires_cuda`)
-also needs NVDEC in the container (`NVIDIA_DRIVER_CAPABILITIES` with `video`)
-and encodes its clips with `h264_nvenc`; it fails, rather than passing, if an
-input is decoded in software.
+also needs NVDEC in the container (`NVIDIA_DRIVER_CAPABILITIES` with `video`,
+set by the CUDA image) and encodes its clips with `h264_nvenc`; it fails,
+rather than passing, if an input is decoded in software.
 
 CI (`.github/workflows/test.yml`: pushes to master, pull requests, manual runs,
 and `workflow_call`) runs the full suite in four jobs:
@@ -746,7 +756,10 @@ distorted reported at 2x (`_deinterlaceFrame(0.5, main)`), pinned by
 - libvmaf >= 3.2.1 built with `-Dbuilt_in_models=true` (3.2.0 is not enough: its
   default build cannot compute the v1 `speed_chroma` feature). 3.2.1 reports its
   version as 3.2.0; only the frame probe tells them apart
-- GPU: FFmpeg built with `--enable-libvmaf --enable-ffnvcodec --enable-cuda-nvcc --enable-nonfree`, libvmaf 3.2.1 built with `-Denable_cuda=true`; CUDA 12.3+ with nvidia-container-toolkit on host. VMAF v0.6 only
+- GPU VMAF (`--gpu`): FFmpeg built with `--enable-libvmaf --enable-ffnvcodec --enable-cuda-nvcc --enable-nonfree`, libvmaf 3.2.1 built with `-Denable_cuda=true`; CUDA 12.3+ with nvidia-container-toolkit on host. VMAF v0.6 only
+- GPU decoding (`--enable-hwaccel`): FFmpeg with NVDEC (`--enable-ffnvcodec`;
+  `ffmpeg -hwaccels` lists `cuda`) and `scale_cuda` (`--enable-cuda-nvcc`);
+  any model. In Docker, the `video` driver capability (set by `Dockerfile.cuda`)
 - Dependency: `ffmpeg-progress-yield >= 0.7.0` (pip)
 
 ### Docker image versions (pinned)

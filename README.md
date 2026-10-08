@@ -101,6 +101,17 @@ For GPU-accelerated VMAF (`--gpu`, VMAF v0.6 only, see [GPU](#gpu)):
 - libvmaf built with `-Denable_cuda=true`
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) (for Docker GPU usage)
 
+For GPU decoding (`--enable-hwaccel`, any model, see
+[Hardware decoding](#hardware-decoding)):
+
+- NVIDIA GPU with NVDEC
+- FFmpeg built with `--enable-ffnvcodec` and `--enable-cuda-nvcc` (or
+  `--enable-cuda-llvm`): `ffmpeg -hwaccels` must list `cuda`, and the
+  `scale_cuda` filter must exist, or every input is decoded on the CPU. libvmaf
+  needs CUDA only with `--gpu`
+- In Docker, the `video` driver capability
+  (`NVIDIA_DRIVER_CAPABILITIES=compute,utility,video`), which the CUDA image sets
+
 ## Installation
 
 easyVmaf needs Python >= 3.10 and an FFmpeg build that passes the startup
@@ -257,6 +268,7 @@ final results (`<distorted>_vmaf_summary.json`).
 | `--threads N` | `0` | Parallel single-threaded sync workers and libvmaf threads (0 = CPU count). |
 | `--subsample N` | `1` | Frame subsampling factor to speed up the computation. |
 | `--gpu` | off | GPU-accelerated VMAF via `libvmaf_cuda`. Only supports `--vmaf-version 0.6`. Requires a CUDA build of FFmpeg (see [Docker: CUDA](#cuda--gpu-build)). |
+| `--enable-hwaccel [API]` | off | Decode the inputs on the GPU (`auto` or `cuda`; alone: `auto`) without changing any score. Any model; combinable with `--gpu`. See [Hardware decoding](#hardware-decoding). |
 
 ### Validation
 
@@ -616,7 +628,65 @@ error: --gpu only supports --vmaf-version 0.6: libvmaf_cuda cannot compute VMAF 
 ```
 
 In GPU mode both inputs are measured in `yuv420p`. Sync always runs on CPU; the
-GPU is used only for the final VMAF scoring step.
+GPU is used only for the final VMAF scoring step, and also for decoding with
+[`--enable-hwaccel`](#hardware-decoding).
+
+### Hardware decoding
+
+```bash
+# Decode on the GPU, compute the default v1 models on the CPU
+easyvmaf -d distorted.mp4 -r reference.mp4 --enable-hwaccel
+
+# Decode and compute v0.6 on the GPU
+easyvmaf -d distorted.mp4 -r reference.mp4 --vmaf-version 0.6 --gpu --enable-hwaccel
+```
+
+`--enable-hwaccel` decodes the inputs with NVDEC (`--enable-hwaccel` alone is
+`auto`, which is `cuda`, the only API for now). It **never changes a score**: a
+frame stays on the GPU only for the steps that give exactly the CPU's frames.
+It works with any model without `--gpu`, and with `--gpu` (v0.6 on CUDA).
+
+- **Without `--gpu`**, libvmaf runs on the CPU: each decoded frame is copied
+  back to the CPU right away and goes through the usual chain.
+- **With `--gpu`**, an input already at the display resolution (1920x1080 or
+  3840x2160), in `yuv420p` and not deinterlaced (progressive, or with `--fps`)
+  stays on the GPU up to `libvmaf_cuda`. Scaling, deinterlacing and 10 to 8 bit conversion give
+  different frames on the GPU (`scale_cuda` costs 2.2 VMAF v1 points from 720p
+  to 1080p), so an input that needs any of them is copied back to the CPU after
+  decoding: only its decoding moves to the GPU.
+
+It helps when software decoding is what keeps the CPU busy, as with
+high-bitrate inputs. Measured with the equivalent FFmpeg commands (not an easyVmaf
+benchmark), on a Tesla T4 with 4 vCPU, one run each, 1080p against 1080p:
+
+| Calculation | CPU decoding | NVDEC | Score |
+|---|---|---|---|
+| v0.6 with `--gpu`, 1200 frames | 55.2 s (212 s of CPU) | **12.8 s** (7 s of CPU) | identical |
+| v1 on the CPU, 300 frames | 22.6 s | **11.1 s** | identical |
+
+Inputs decoded on the GPU: H.264 8-bit 4:2:0, HEVC 8 and 10-bit 4:2:0 and VP9
+8-bit 4:2:0, the decoders validated as bit-exact. Each one is first checked by
+decoding one frame, since what NVDEC supports depends on the GPU. Any other
+input (MPEG-2, whose NVDEC output differs, AV1, ProRes, FFV1, H.264 High 10 or
+4:2:2, ...), or one this GPU cannot decode, is decoded on the CPU with a
+warning, and the summary records it as `"sw"`:
+
+```
+Decoding the reference video ref.mov in software: cuda decoding of prores yuv422p10le is not supported
+```
+
+```json
+"hwaccel": {"api": "cuda", "decode": {"distorted": "hw", "reference": "sw"}}
+```
+
+Requirements: FFmpeg built with NVDEC (`ffmpeg -hwaccels` lists `cuda`;
+otherwise easyvmaf exits with code 1), see [GPU requirements](#gpu-requirements).
+In Docker, NVDEC needs the `video` driver capability, which the CUDA image
+sets. The sync search always decodes on the CPU.
+
+Roadmap: an explicit option to run the whole chain on the GPU, scaling and
+deinterlacing included, which changes the scores; and other APIs
+(VideoToolbox, VAAPI, QSV, Vulkan).
 
 ## Summary file
 
@@ -669,6 +739,7 @@ The path is printed at the end of each result (`Summary file path:`). For
 | `vmaf.models` | One entry per score: libvmaf model id (the `_hfr_` variant when HFR is on), VMAF version, view (`default`, `neg` or `phone` for v0.6) and score range. |
 | `vmaf.output_file` | Per-frame libvmaf log: same directory and base name as the distorted video, plus `_vmaf.{json,xml,csv}` (`_vmaf_f<first>-<last>.{json,xml,csv}` for a frame range). |
 | `vmaf.cambi_heatmap_path` | Heatmap directory, only with `--cambi-heatmap`. |
+| `vmaf.hwaccel` | Only with `--enable-hwaccel`: `api` (`cuda`) and `decode`, `"hw"` or `"sw"` for the `distorted` and `reference` inputs. See [Hardware decoding](#hardware-decoding). |
 | `vmaf.range` | Only with a frame range: `start_frame`, `frame_count` (`null` without `--frame-count`) and `frames_scored`, which is lower than `frame_count` for the last range of a video. |
 
 `vmaf.scores` is the flat view for quick reads; `vmaf.models` carries the context
@@ -725,7 +796,8 @@ result.frames_scored  # 9000, or fewer for the last range
 paths are keyword-only: `display`, `vmaf_versions`, `views`, `hfr`, `bitdepth`,
 `enc_size`, `enc_bitdepth`, `model_options`, `output_format`, `loglevel`,
 `subsample`, `threads`, `progress`, `shortest`, `fps`, `cambi_heatmap`, `gpu`,
-`sync_offset`, `start_frame` and `frame_count`.
+`sync_offset`, `start_frame`, `frame_count` and `enable_hwaccel` (`None`,
+`'auto'` or `'cuda'`).
 
 The public API is what the `easyvmaf` package exports: `Vmaf`, `VmafResult`,
 `SyncResult`, `validate_model_config`, `validate_range_config`,
@@ -783,7 +855,17 @@ docker run --rm -v /path/to/videos:/videos \
 # GPU (requires NVIDIA Container Toolkit; VMAF v0.6 only)
 docker run --rm --gpus all -v /path/to/videos:/videos \
   easyvmaf:cuda -d /videos/distorted.mp4 -r /videos/reference.mp4 --vmaf-version 0.6 --gpu
+
+# GPU decoding (any model; add --gpu for v0.6 on the GPU)
+docker run --rm --gpus all -v /path/to/videos:/videos \
+  easyvmaf:cuda -d /videos/distorted.mp4 -r /videos/reference.mp4 --enable-hwaccel
 ```
+
+The CUDA image sets `NVIDIA_DRIVER_CAPABILITIES=compute,utility,video`: NVDEC
+needs the `video` capability. Without it every input is decoded on the CPU,
+with a warning. An image built from an older `Dockerfile.cuda` lacks it:
+rebuild it, or pass `-e NVIDIA_DRIVER_CAPABILITIES=compute,utility,video` to
+`docker run`.
 
 ### Docker Compose
 

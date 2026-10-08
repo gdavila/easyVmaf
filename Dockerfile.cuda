@@ -107,6 +107,9 @@ COPY . /app/easyvmaf/
 FROM nvidia/cuda:12.3.2-runtime-ubuntu22.04 AS release-cuda
 
 ENV LD_LIBRARY_PATH="/usr/local/lib"
+# NVDEC (--enable-hwaccel) needs the video capability; nvidia/cuda only sets
+# compute,utility, and without it FFmpeg cannot load libnvcuvid.so.1
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
 
 ARG FFMPEG_version
 ARG VMAF_version
