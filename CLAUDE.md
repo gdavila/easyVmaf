@@ -69,7 +69,7 @@ docker build -t easyvmaf .
 docker run --rm -v /path/to/videos:/videos easyvmaf \
   -d /videos/distorted.mp4 -r /videos/reference.mp4
 
-# GPU build (requires CUDA 12.3, nvidia-container-toolkit on host)
+# GPU build (requires NVIDIA driver >= 570, nvidia-container-toolkit on host)
 docker build -f Dockerfile.cuda -t easyvmaf:cuda .
 docker run --rm --gpus all -v /path/to/videos:/videos easyvmaf:cuda \
   -d /videos/distorted.mp4 -r /videos/reference.mp4 --vmaf-version 0.6 --gpu
@@ -742,7 +742,7 @@ Docker images (`publish-images`, a matrix `cpu`/`cuda`, `linux/amd64` only):
 - Cache: the CPU image reads the `type=gha` cache that `test.yml` writes on
   master; the CUDA image always builds cold (no cache: its devel layers would
   fill most of the repository's 10 GB cache and evict the CPU one) and first
-  frees disk space (the runner documents 14 GB; the build needs about 16 GB),
+  frees disk space (the runner documents 14 GB; the build needs about 19 GB),
   failing early below 20 GB free.
 - After the first push, by hand: GHCR creates the `easyvmaf` package private
   and linked to the repository. Make it public (*Package settings → Change
@@ -842,7 +842,9 @@ host to validate it.
   version as 3.2.0; only the frame probe tells them apart
 - GPU VMAF (`--gpu`, v0.6 at 8 bits): FFmpeg built with `--enable-libvmaf
   --enable-ffnvcodec` (no `--enable-nonfree`), libvmaf 3.2.1 built with
-  `-Denable_cuda=true`; CUDA 12.3+ with nvidia-container-toolkit on host
+  `-Denable_cuda=true`; nvidia-container-toolkit on host. The CUDA image
+  (CUDA 12.8) needs an NVIDIA driver >= 570: libvmaf embeds PTX ISA 8.7
+  (`compute_50`, `compute_120`) besides `sm_75` ... `sm_120` kernels
 - GPU decoding (`--gpu`, any model): FFmpeg with NVDEC (`--enable-ffnvcodec`;
   `ffmpeg -hwaccels` lists `cuda`) and `scale_cuda` (`--enable-cuda-llvm` or
   `--enable-cuda-nvcc`). In Docker, the `video` driver capability (set by
@@ -854,7 +856,7 @@ host to validate it.
   `/usr/local/lib`, `bin` and `share` from the build stage, never the whole
   `/usr/local` (the CUDA devel toolkit lives in `/usr/local/cuda`), onto
   `nvidia/cuda:*-base`, not `-runtime` (cuBLAS, cuFFT, NPP, ... unused): the
-  image is ~0.7 GB
+  image is ~0.6 GB
 - Dependency: `ffmpeg-progress-yield >= 0.7.0` (pip)
 
 ### Docker image versions (pinned)
@@ -866,4 +868,4 @@ host to validate it.
 | dav1d      | 1.4.3   |
 | nv-codec-headers (CUDA) | 13.0.19.1 |
 | Python     | 3.12 (CPU image), 3.10 (CUDA image: Ubuntu 22.04 `python3`) |
-| CUDA base  | 12.3.2 (`devel` build, `base` release) |
+| CUDA base  | 12.8.2 (`devel` build, `base` release) |

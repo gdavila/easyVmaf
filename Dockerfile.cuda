@@ -7,7 +7,7 @@ ARG DAV1D_version=1.4.3
 ARG NVCODEC_version=13.0.19.1
 ARG EASYVMAF_VERSION=5.0.0
 
-FROM nvidia/cuda:12.3.2-devel-ubuntu22.04 AS base-cuda
+FROM nvidia/cuda:12.8.2-devel-ubuntu22.04 AS base-cuda
 
 FROM base-cuda AS build-cuda
 
@@ -20,8 +20,7 @@ RUN apt-get update -yqq && \
     apt-get install --no-install-recommends \
         python3 python3-pip git \
         ninja-build wget doxygen autoconf automake cmake \
-        g++ gcc pkg-config make nasm xxd yasm \
-        cuda-nvcc-12-3 libnpp-dev-12-3 -y && \
+        g++ gcc pkg-config make nasm xxd yasm -y && \
     apt-get autoremove -y && \
     apt-get clean -y && \
     pip3 install meson
@@ -102,10 +101,10 @@ RUN export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}" && \
 WORKDIR /app
 COPY . /app/easyvmaf/
 
-# base, not runtime: runtime adds 1.7 GB of CUDA libraries (cuBLAS, cuFFT, NPP,
+# base, not runtime: runtime adds 3.1 GB of CUDA libraries (cuBLAS, cuFFT, NPP,
 # ...) that nothing here links. FFmpeg and libvmaf load libcuda and libnvcuvid,
 # injected by the host driver, through the ffnvcodec headers
-FROM nvidia/cuda:12.3.2-base-ubuntu22.04 AS release-cuda
+FROM nvidia/cuda:12.8.2-base-ubuntu22.04 AS release-cuda
 
 ENV LD_LIBRARY_PATH="/usr/local/lib"
 # NVDEC (--gpu decoding) needs the video capability; nvidia/cuda only sets
@@ -134,7 +133,7 @@ RUN apt-get update -yqq && \
     python3 -m pip install ffmpeg-progress-yield
 
 # Only what was built (FFmpeg, libvmaf, dav1d, VMAF models): /usr/local/cuda
-# of the build stage is the CUDA devel toolkit (4.4 GB, nvcc, NPP, ...), not
+# of the build stage is the CUDA devel toolkit (6.4 GB, nvcc, NPP, ...), not
 # needed at runtime and not ours to redistribute
 COPY --from=build-cuda /usr/local/lib /usr/local/lib/
 COPY --from=build-cuda /usr/local/bin /usr/local/bin/

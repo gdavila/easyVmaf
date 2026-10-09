@@ -178,8 +178,8 @@ jobs:
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/easyvmaf
     steps:
-      # The CUDA build needs about 16 GB: the nvidia/cuda devel image (7.1 GB,
-      # and its 4 GB of compressed layers, which BuildKit keeps), the build
+      # The CUDA build needs about 19 GB: the nvidia/cuda devel image (9.1 GB,
+      # and its 5.1 GB of compressed layers, which BuildKit keeps), the build
       # tools, the FFmpeg build tree and the images. The runner documents 14 GB
       # of disk, so first remove the SDKs this job never uses.
       - name: Free disk space

@@ -111,6 +111,8 @@ For VMAF on the GPU (`--gpu` with VMAF v0.6 at 8 bits, see [GPU](#gpu)):
 - FFmpeg built with `--enable-ffnvcodec --enable-libvmaf`
 - libvmaf built with `-Denable_cuda=true`
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) (for Docker GPU usage)
+- For the CUDA image: NVIDIA driver >= 570 on the host. Its libvmaf is built
+  with CUDA 12.8, whose PTX (ISA 8.7) needs that driver
 
 For GPU decoding (`--gpu` with any model, see
 [Hardware decoding](#hardware-decoding)):
@@ -862,7 +864,7 @@ Container Registry, `ghcr.io/gdavila/easyvmaf`, built from this repository's
 | Image | Tags | Contents |
 |-------|------|----------|
 | CPU | `5.0.0`, `5.0`, `5`, `latest` | easyVmaf, FFmpeg 8.1, libvmaf 3.2.1 |
-| CUDA | `5.0.0-cuda`, `5.0-cuda`, `5-cuda`, `latest-cuda`, `cuda` | The same, plus `libvmaf_cuda`, NVDEC and the CUDA filters, on the `nvidia/cuda` 12.3 base image |
+| CUDA | `5.0.0-cuda`, `5.0-cuda`, `5-cuda`, `latest-cuda`, `cuda` | The same, plus `libvmaf_cuda`, NVDEC and the CUDA filters, on the `nvidia/cuda` 12.8 base image (NVIDIA driver >= 570) |
 
 A pre-release (`5.1.0rc1`) is tagged only with its full version (`5.1.0rc1`,
 `5.1.0rc1-cuda`). Both images are `linux/amd64` only: on Apple Silicon, Docker

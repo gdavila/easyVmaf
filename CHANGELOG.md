@@ -123,12 +123,22 @@ each change.
   are the frames and the scores. Both images label their licenses (easyVmaf
   MIT, FFmpeg LGPL-3.0-or-later, libvmaf BSD-2-Clause-Patent, dav1d
   BSD-2-Clause) and their source repository.
-- The CUDA image is 0.7 GB instead of 7.4 GB. It copied the whole
+- The CUDA image is 0.6 GB instead of 7.4 GB. It copied the whole
   `/usr/local` of the build stage, the CUDA development toolkit included
   (nvcc, NPP, ...), into the `runtime` CUDA base, which adds 1.7 GB of CUDA
   libraries. It now copies only `lib`, `bin` and `share` (FFmpeg, libvmaf,
   dav1d, the VMAF models) into the `base` CUDA image; FFmpeg and libvmaf link
   no CUDA library, they load the driver's at runtime.
+- The CUDA image is built on CUDA 12.8.2 instead of 12.3.2 and needs an
+  NVIDIA driver >= 570 on the host (545 before): libvmaf's CUDA code now
+  embeds PTX ISA 8.7. The CUDA 12.3 license lets the CUDA driver libraries
+  of the `nvidia/cuda` base image (`cuda-compat`) be redistributed only on
+  Docker Hub or NVIDIA GPU Cloud, not on the GitHub Container Registry; the
+  license of CUDA 12.4 and later has no such condition, and the 12.8.2 base
+  ships none of those libraries. NVIDIA also deletes `nvidia/cuda` tags six
+  months after the last driver branch they support ends: 12.3.2's (R535)
+  ended in June 2026, while 12.8.2 is supported with R580 until June 2028.
+  The frames of `scale_cuda` and `yadif_cuda` and the scores are unchanged.
 - Docker images on the GitHub Container Registry. From this release on, each
   release publishes the CPU and the CUDA image, `linux/amd64` only:
   `ghcr.io/gdavila/easyvmaf:5.0.0` (also `5.0`, `5`, `latest`) and
