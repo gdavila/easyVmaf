@@ -123,6 +123,11 @@ change below says how to migrate; users of 3.x can follow
   are the frames and the scores. Both images label their licenses (easyVmaf
   MIT, FFmpeg LGPL-3.0-or-later, libvmaf BSD-2-Clause-Patent, dav1d
   BSD-2-Clause) and their source repository.
+- Both images carry the license texts of what they build from source in
+  `/usr/local/share/licenses` (FFmpeg, libvmaf; in the CUDA image also dav1d
+  and nv-codec-headers), which they lacked, and `ffmpeg/SOURCE` says where
+  FFmpeg's source code is: the archive built, its sha256 and the commit of its
+  tag, as the LGPL requires. The release smoke test checks them.
 - The CUDA image is 0.6 GB instead of 7.4 GB. It copied the whole
   `/usr/local` of the build stage, the CUDA development toolkit included
   (nvcc, NPP, ...), into the `runtime` CUDA base, which adds 1.7 GB of CUDA

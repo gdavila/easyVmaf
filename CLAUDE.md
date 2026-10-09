@@ -721,7 +721,8 @@ Docker images (`publish-images`, a matrix `cpu`/`cuda`, `linux/amd64` only):
 - Each job builds with `load: true`, smoke-tests that image, then builds again
   with `push: true`: the second build takes every layer from the builder cache.
   Smoke tests: `easyvmaf --help`, the installed package version equals the
-  release version, `check_ffmpeg()` `meets_minimum` and `libvmaf_v1`; CUDA
+  release version, `check_ffmpeg()` `meets_minimum` and `libvmaf_v1`, the
+  license files and `ffmpeg/SOURCE` (see Redistribution in Environment); CUDA
   also: `ffmpeg -filters` has `libvmaf_cuda`, `scale_cuda`, `yadif_cuda`,
   `hwupload_cuda`, `ffmpeg -hwaccels` has `cuda`, `ffmpeg -L` is LGPL and has
   no "redistributable" (a nonfree build says "not legally redistributable"),
@@ -875,6 +876,14 @@ variants) and a GPU host to validate it.
   `/usr/local` (the CUDA devel toolkit lives in `/usr/local/cuda`), onto
   `nvidia/cuda:*-base`, not `-runtime` (cuBLAS, cuFFT, NPP, ... unused): the
   image is ~0.6 GB
+- Redistribution, both images: every component built from source installs its
+  license under `/usr/local/share/licenses/<component>/` (FFmpeg
+  `COPYING.LGPLv3`, `COPYING.GPLv3`, `LICENSE.md`; libvmaf `LICENSE`; CUDA
+  image also dav1d `COPYING` and the nv-codec-headers notices). FFmpeg's
+  source code is not in the image: `ffmpeg/SOURCE` points to the exact GitHub
+  archive built, with its sha256 and the tag's commit (read from the archive's
+  pax header), as LGPL-3.0 (GPL-3.0 §6(d)) allows. Keep the FFmpeg download a
+  GitHub tag archive, or the commit cannot be read and the build fails
 - Dependency: `ffmpeg-progress-yield >= 0.7.0` (pip)
 
 ### Docker image versions (pinned)

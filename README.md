@@ -959,6 +959,16 @@ compiled with clang (`--enable-cuda-llvm`) instead of nvcc, and libnpp is left
 out, so the image can be redistributed. FFmpeg is LGPL-3.0-or-later in both
 images (`--enable-version3`, no `--enable-gpl`).
 
+The license texts of what each image builds from source (FFmpeg, libvmaf, and
+in the CUDA image dav1d and nv-codec-headers) are in
+`/usr/local/share/licenses`. FFmpeg is unmodified; `ffmpeg/SOURCE` there says
+where its source code is: the archive the image was built from, with its
+sha256 and the commit of its tag:
+
+```bash
+docker run --rm --entrypoint cat ghcr.io/gdavila/easyvmaf:5.0.0 /usr/local/share/licenses/ffmpeg/SOURCE
+```
+
 ### Build arguments
 
 Both Dockerfiles accept these build-time arguments:

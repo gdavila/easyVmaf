@@ -245,6 +245,7 @@ jobs:
       - name: Smoke test
         env:
           VERSION: ${{ needs.build.outputs.version }}
+          FLAVOR: ${{ matrix.flavor }}
         run: |
           docker run --rm easyvmaf:smoke --help > /dev/null
           docker run --rm --entrypoint easyvmaf easyvmaf:smoke --help > /dev/null
@@ -257,6 +258,16 @@ jobs:
           caps = check_ffmpeg()
           print(version("easyvmaf"), caps)
           sys.exit(0 if version("easyvmaf") == os.environ["VERSION"] and caps["meets_minimum"] and caps["libvmaf_v1"] else 1)
+          '
+          # Redistribution: the license texts of what the image builds from
+          # source, and where FFmpeg's source code is (archive sha256, commit)
+          docker run --rm --entrypoint sh -e FLAVOR easyvmaf:smoke -c '
+          cd /usr/local/share/licenses && cat ffmpeg/SOURCE
+          files="ffmpeg/COPYING.LGPLv3 ffmpeg/COPYING.GPLv3 libvmaf/LICENSE"
+          [ "$FLAVOR" = cuda ] && files="$files dav1d/COPYING nv-codec-headers/NOTICE"
+          for f in $files; do [ -s "$f" ] || { echo "::error::The image has no $f"; exit 1; }; done
+          grep -Eq "^  sha256 [0-9a-f]{64}$" ffmpeg/SOURCE && grep -Eq "commit [0-9a-f]{40}\.$" ffmpeg/SOURCE \
+            || { echo "::error::ffmpeg/SOURCE does not identify the FFmpeg source"; exit 1; }
           '
 
       # No GPU on the runner: what the image was built with, not what runs.

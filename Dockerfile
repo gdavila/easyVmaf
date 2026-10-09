@@ -35,9 +35,14 @@ RUN wget https://github.com/Netflix/vmaf/archive/v${VMAF_version}.tar.gz && \
     ldconfig && \
     mkdir -p /usr/local/share/model && \
     cp -R ../model/* /usr/local/share/model && \
+    install -Dm644 ../LICENSE /usr/local/share/licenses/libvmaf/LICENSE && \
     rm -rf /tmp/vmaf
 
 # Build FFmpeg with libvmaf
+# Redistribution: the image carries the license texts under
+# /usr/local/share/licenses, and ffmpeg/SOURCE says where FFmpeg's source code
+# is (the LGPL requires it with the binaries): the archive built, its sha256 and
+# the commit of its tag, which GitHub writes in the archive's pax header
 WORKDIR /tmp/ffmpeg
 RUN export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}" && \
     export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}" && \
@@ -51,6 +56,21 @@ RUN export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}" && \
         --enable-libdav1d && \
     make -j$(nproc) && \
     make install && \
+    install -Dm644 -t /usr/local/share/licenses/ffmpeg COPYING.LGPLv3 COPYING.GPLv3 LICENSE.md && \
+    sha256=$(sha256sum ../n${FFMPEG_version}.tar.gz | cut -d' ' -f1) && \
+    commit=$(python3 -c "import sys, tarfile; t = tarfile.open(sys.argv[1]); t.next(); print(t.pax_headers['comment'])" ../n${FFMPEG_version}.tar.gz) && \
+    printf '%s\n' \
+        "FFmpeg ${FFMPEG_version}, LGPL-3.0-or-later (--enable-version3, without --enable-gpl or --enable-nonfree)." \
+        "" \
+        "Its source code, unmodified, is the archive this image was built from:" \
+        "  https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n${FFMPEG_version}.tar.gz" \
+        "  sha256 ${sha256}" \
+        "It is tag n${FFMPEG_version} of https://git.ffmpeg.org/ffmpeg.git, commit ${commit}." \
+        "" \
+        "It was configured and built by the Dockerfile of https://github.com/gdavila/easyVmaf" \
+        "at the tag of this image's version (label org.opencontainers.image.version)." \
+        "ffmpeg -buildconf prints its configure flags." \
+        > /usr/local/share/licenses/ffmpeg/SOURCE && \
     rm -rf /tmp/ffmpeg
 
 # Copy easyVmaf source for installation

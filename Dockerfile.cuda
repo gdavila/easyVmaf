@@ -34,6 +34,10 @@ WORKDIR /tmp/nv-codec
 RUN git clone --depth 1 --branch n${NVCODEC_version} https://git.videolan.org/git/ffmpeg/nv-codec-headers.git && \
     cd nv-codec-headers && \
     make install && \
+    mkdir -p /usr/local/share/licenses/nv-codec-headers && \
+    for header in include/ffnvcodec/*.h; do \
+        echo "${header##*/}:" && sed -n '1,/\*\//p' "$header" && echo; \
+    done > /usr/local/share/licenses/nv-codec-headers/NOTICE && \
     rm -rf /tmp/nv-codec
 
 # Build dav1d from source — Ubuntu 22.04 ships 0.9.2, FFmpeg 8.1 requires >= 1.0.0.
@@ -46,6 +50,7 @@ RUN wget https://downloads.videolan.org/pub/videolan/dav1d/${DAV1D_version}/dav1
     ninja -vC build && \
     ninja -vC build install && \
     ldconfig && \
+    install -Dm644 COPYING /usr/local/share/licenses/dav1d/COPYING && \
     rm -rf /tmp/dav1d
 
 # Build libvmaf with CUDA support
@@ -65,6 +70,7 @@ RUN wget https://github.com/Netflix/vmaf/archive/v${VMAF_version}.tar.gz && \
     ldconfig && \
     mkdir -p /usr/local/share/model && \
     cp -R ../model/* /usr/local/share/model && \
+    install -Dm644 ../LICENSE /usr/local/share/licenses/libvmaf/LICENSE && \
     rm -rf /tmp/vmaf
 
 # clang compiles FFmpeg's CUDA filters (scale_cuda, yadif_cuda, ...) with
@@ -76,7 +82,11 @@ RUN apt-get update -yqq && \
     apt-get clean -y
 
 # Build FFmpeg with libvmaf + CUDA. libvmaf links no CUDA library (it loads
-# CUDA at runtime through the ffnvcodec headers), so no CUDA SDK path is needed
+# CUDA at runtime through the ffnvcodec headers), so no CUDA SDK path is needed.
+# Redistribution: the image carries the license texts under
+# /usr/local/share/licenses, and ffmpeg/SOURCE says where FFmpeg's source code
+# is (the LGPL requires it with the binaries): the archive built, its sha256 and
+# the commit of its tag, which GitHub writes in the archive's pax header
 WORKDIR /tmp/ffmpeg
 RUN export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}" && \
     export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}" && \
@@ -96,6 +106,21 @@ RUN export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}" && \
     || ( echo "=== ffbuild/config.log (last 80 lines) ===" && tail -80 ffbuild/config.log && exit 1 ) ) && \
     make -j$(nproc) && \
     make install && \
+    install -Dm644 -t /usr/local/share/licenses/ffmpeg COPYING.LGPLv3 COPYING.GPLv3 LICENSE.md && \
+    sha256=$(sha256sum ../n${FFMPEG_version}.tar.gz | cut -d' ' -f1) && \
+    commit=$(python3 -c "import sys, tarfile; t = tarfile.open(sys.argv[1]); t.next(); print(t.pax_headers['comment'])" ../n${FFMPEG_version}.tar.gz) && \
+    printf '%s\n' \
+        "FFmpeg ${FFMPEG_version}, LGPL-3.0-or-later (--enable-version3, without --enable-gpl or --enable-nonfree)." \
+        "" \
+        "Its source code, unmodified, is the archive this image was built from:" \
+        "  https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n${FFMPEG_version}.tar.gz" \
+        "  sha256 ${sha256}" \
+        "It is tag n${FFMPEG_version} of https://git.ffmpeg.org/ffmpeg.git, commit ${commit}." \
+        "" \
+        "It was configured and built by the Dockerfile.cuda of https://github.com/gdavila/easyVmaf" \
+        "at the tag of this image's version (label org.opencontainers.image.version)." \
+        "ffmpeg -buildconf prints its configure flags." \
+        > /usr/local/share/licenses/ffmpeg/SOURCE && \
     rm -rf /tmp/ffmpeg
 
 WORKDIR /app
