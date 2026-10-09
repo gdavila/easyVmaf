@@ -1,10 +1,19 @@
 # easyVmaf
 
-Python tool based on FFmpeg and FFprobe to handle the video preprocessing required for VMAF:
+Video Multi-Method Assessment Fusion (VMAF) is one of the most widely used
+metrics to assess the quality of encoded video. It is a *full reference*
+metric: it compares a *distorted* video (e.g., an encode) with its *reference*
+frame by frame. However, computing it correctly is tricky. Both videos must
+have the same resolution, frame rate, scan type and pixel format, and their
+first frames must be aligned in time; otherwise, the score measures the
+mismatch instead of the encoding.
+
+easyVmaf is a Python tool, built on FFmpeg and FFprobe, that does this
+preprocessing for you:
 
 - Deinterlacing
-- Upscaling / downscaling
-- Frame-to-frame syncing
+- Upscaling and downscaling to the display resolution
+- Frame-accurate synchronization
 - Frame rate adaptation
 - Pixel format normalization
 
@@ -19,7 +28,8 @@ not released yet (see the `unreleased` entry of the
 the version you installed (`pip show easyvmaf`), read its page on
 [PyPI](https://pypi.org/project/easyvmaf/) or the README of its `v<version>` tag.
 
-Details about **How it Works** can be found [here](https://gdavila.github.io/video/Vmaf/2020-03-05-Vmaf/).
+We explain how it works in [this article](https://gdavila.github.io/video/Vmaf/2020-03-05-Vmaf/),
+written for an earlier version of easyVmaf.
 
 ## Requirements
 
@@ -29,9 +39,9 @@ Details about **How it Works** can be found [here](https://gdavila.github.io/vid
 - libvmaf >= 3.2.1 built with `-Dbuilt_in_models=true`
 - Python package: [`ffmpeg-progress-yield`](https://github.com/slhck/ffmpeg-progress-yield)
 
-easyVmaf checks both at startup. It exits with an error if FFmpeg is older than
-8.1, or if its libvmaf cannot compute a frame with the VMAF v1 model
-`vmaf_v1.0.16_3d0h`.
+easyVmaf checks FFmpeg and libvmaf at startup. It exits with an error if FFmpeg
+is older than 8.1, or if its libvmaf cannot compute a frame with the VMAF v1
+model `vmaf_v1.0.16_3d0h`.
 
 ### Why libvmaf 3.2.1
 
@@ -52,7 +62,7 @@ but 3.2.0 is not enough:
 libvmaf 3.2.1 still reports itself as **3.2.0**: `pkg-config --modversion libvmaf`
 and the `version` field of the libvmaf log both say `3.2.0`, because the upstream
 `v3.2.1` tag kept that version string. No version check can tell the two apart.
-The only reliable test is to compute a frame with a v1 model, which is what
+Hence, in practice, the only reliable test is to compute a frame with a v1 model, which is what
 easyVmaf does at startup (see [Verifying your build](#verifying-your-build)).
 
 ### Building FFmpeg from source
@@ -88,7 +98,8 @@ ffmpeg -hide_banner -loglevel error \
 ```
 
 The build is valid when the command exits with code 0 and prints nothing. The
-probe frames are 320x240 because the SpEED feature of v1 rejects frames smaller
+probe frames are 320x240 because the Spatial Efficient Entropic Differencing
+(SpEED) feature of v1 rejects frames smaller
 than about 288x162. That limit does not affect normal use: easyVmaf always scales
 the inputs to 1920x1080 or 3840x2160 before libvmaf.
 
@@ -104,7 +115,7 @@ For VMAF on the GPU (`--gpu` with VMAF v0.6 at 8 bits, see [GPU](#gpu)):
 For GPU decoding (`--gpu` with any model, see
 [Hardware decoding](#hardware-decoding)):
 
-- NVIDIA GPU with NVDEC
+- NVIDIA GPU with NVDEC, its hardware video decoder
 - FFmpeg built with `--enable-ffnvcodec` and `--enable-cuda-llvm` (or
   `--enable-cuda-nvcc`, which also needs `--enable-nonfree` and makes the build
   not redistributable): `ffmpeg -hwaccels` must list `cuda`, and the
@@ -169,7 +180,8 @@ export PATH="$PWD/ffmpeg-n8.1-latest-linux64-gpl-8.1/bin:$PATH"
 ```
 
 **Docker.** The [Docker](#docker) images bundle easyVmaf, FFmpeg 8.1 and
-libvmaf 3.2.1 (`linux/amd64`). They are published on GHCR from the 5.0.0
+libvmaf 3.2.1 (`linux/amd64`). They are published on the GitHub Container
+Registry (GHCR) from the 5.0.0
 release on (`ghcr.io/gdavila/easyvmaf:5.0.0`); before that, clone the repository
 and build them with `docker build -t easyvmaf .`.
 
@@ -246,7 +258,7 @@ These flags apply only to VMAF v1 models. Using them without `1` in
 |------|---------|-------------|
 | `--view {3h,5h,phone,1.5h} [...]` | hd: `3h 5h`; 4k: `1.5h` | Viewing distances, in picture heights. `phone` is an alias of `5h`. With `--display 4k`, `3h` selects the [0, 110] model. |
 | `--hfr {auto,on,off}` | `auto` | High frame rate models. `auto`: when the effective frame rate is >= 47 fps. See [High frame rate](#high-frame-rate). |
-| `--enc-size WxH` | distorted video size | Encoding resolution passed to CAMBI. |
+| `--enc-size WxH` | distorted video size | Encoding resolution passed to CAMBI, the v1 banding feature. |
 | `--enc-bitdepth {8,10,12}` | from the distorted `pix_fmt` | Encoding bit depth passed to CAMBI. |
 | `--model-option FEATURE.OPTION=VALUE` | — | Advanced override of a v1 model option, e.g. `cambi.topk=0.5`. Repeatable. |
 
@@ -324,13 +336,13 @@ replaced with defaults.
 | `vmaf_4k` | `vmaf_4k_v0.6.1` | 0.6 | 4k | — | [0, 100] | yes |
 
 All models are libvmaf built-in models. Each v1 model also has a high frame rate
-variant with `_hfr_` in its id (e.g. `vmaf_v1.0.16_hfr_3d0h`). The HFR variant
+(HFR) variant with `_hfr_` in its id (e.g. `vmaf_v1.0.16_hfr_3d0h`). The HFR variant
 keeps the score name; only `libvmaf_model` changes.
 
 VMAF v1 differs from v0.6 in ways that change the scores:
 
-- v1 uses the `cambi`, `speed_chroma_uv`, `adm3` and `motion3` features. VIF is
-  gone. v1 measures chroma and banding; v0.6 measures luma only.
+- v1 uses the `cambi` (Contrast Aware Multiscale Banding Index), `speed_chroma_uv`,
+  `adm3` and `motion3` features. VIF is gone. v1 measures chroma and banding; v0.6 measures luma only.
 - The v1 phone model is a separate 5H model, not the score transform of v0.6.
   The v1 models already enable their own score transform.
 - The 4K model at 3H (`vmaf_v1_4k_3h`) ranges from 0 to 110.
@@ -360,7 +372,8 @@ FFmpeg picks one and may convert the reference down, for example from 4:2:2 to
 4:2:0, or from 10 to 8 bits. v1 measures chroma, so that conversion would erase
 exactly the chroma loss v1 is meant to measure.
 
-easyVmaf measures both inputs in one format:
+easyVmaf measures both inputs in one format. We prefer to leave the reference
+unmodified, so the measurement format is never lower than the reference's:
 
 - Chroma subsampling: the reference's (4:2:0, 4:2:2 or 4:4:4). An unrecognized
   reference format is measured as 4:2:0, with a warning in the log.
@@ -385,7 +398,8 @@ easyVmaf passes the distorted video size and bit depth as `cambi.enc_width`,
 `cambi.enc_height` and `cambi.enc_bitdepth` to every v1 model.
 
 libvmaf 3.2.1 CAMBI rejects encoding sizes below 180x150, or with both sides
-below 216, and the whole v1 calculation fails. Low ABR rungs such as 256x144,
+below 216, and the whole v1 calculation fails. Low rungs of an adaptive bitrate
+(ABR) ladder, such as 256x144,
 192x108 or 160x90 fall below that limit. easyVmaf raises the size to the smallest
 accepted one with the same aspect ratio and logs a warning:
 
@@ -414,7 +428,8 @@ blended, and the sync search aligns on single fields.
 In the table, `1080i25` is an interlaced video with 25 frames (50 fields) per
 second; the 29.97/59.94 family behaves the same (`1080i29.97` vs `59.94p`).
 `1080i25*` is the same video when ffprobe reports it at its field rate
-(`r_frame_rate` of 50, typical of H.264 PAFF broadcast streams).
+(`r_frame_rate` of 50, typical of H.264 Picture-Adaptive Frame-Field (PAFF)
+broadcast streams).
 
 | Reference | Distorted | Typical case | What easyVmaf does | Compared at | Supported |
 |---|---|---|---|---|---|
@@ -445,8 +460,9 @@ An interlaced `field_order` (`tt`, `bb`, `tb`, `bt`) with `r_frame_rate` twice
 
 ## Frame ranges
 
-`--start-frame` and `--frame-count` measure a range of frames instead of the
-whole video, without cutting or re-encoding the inputs. Frames are numbered as
+Measuring a long video takes time, and a single calculation runs on one
+machine. `--start-frame` and `--frame-count` measure a range of frames instead
+of the whole video, without cutting or re-encoding the inputs. Frames are numbered as
 in the log of the full calculation: after sync, deinterlacing and frame rate
 conversion, at the frame rate libvmaf receives.
 
@@ -587,6 +603,10 @@ VMAF output file path:  distorted_vmaf.json
 Summary file path:  distorted_vmaf_summary.json
 ```
 
+The offset of 1.5 s means that the first frame of `distorted.mp4` matches the
+reference 1.5 s in. So easyVmaf trimmed the first 1.5 s of the reference before
+computing VMAF; 40.03 dB is the PSNR of that best match.
+
 Without a sync search, `--sync-offset X` applies a manual offset: positive to trim
 the reference, negative to trim the distorted video. Automatic offsets use the
 same sign convention in the summary file and the human output, so the offset reported by
@@ -667,19 +687,24 @@ for the steps that give exactly the CPU's frames.
 - **With `libvmaf_cuda`**, an input already at the display resolution
   (1920x1080 or 3840x2160), in `yuv420p` and not deinterlaced (progressive, or
   with `--fps`) stays on the GPU up to `libvmaf_cuda`. Scaling, deinterlacing
-  and 10 to 8 bit conversion give different frames on the GPU (`scale_cuda`
-  costs 2.2 VMAF v1 points from 720p to 1080p), so an input that needs any of
+  and 10 to 8 bit conversion give different frames on the GPU. For instance, in
+  our tests, upscaling a 720p H.264 encode to 1080p with `scale_cuda` instead of
+  FFmpeg's `scale` lowered VMAF v1 by 2.2 points. So an input that needs any of
   them is copied back to the CPU after decoding: only its decoding moves to the
   GPU.
 
-It helps when software decoding is what keeps the CPU busy, as with
-high-bitrate inputs. Measured with the equivalent FFmpeg commands (not an easyVmaf
-benchmark), on a Tesla T4 with 4 vCPU, one run each, 1080p against 1080p:
+In practice, it helps when software decoding is what keeps the CPU busy, as
+with high-bitrate inputs. We measured it with the equivalent FFmpeg commands
+(not an easyVmaf benchmark), on a Tesla T4 with 4 vCPU, one run each, with a
+synthetic 1080p25 H.264 distorted video against a 268 Mb/s H.264 reference:
 
 | Calculation | CPU decoding | NVDEC | Score |
 |---|---|---|---|
 | v0.6 with `libvmaf_cuda`, 1200 frames | 55.2 s (212 s of CPU) | **12.8 s** (7 s of CPU) | identical |
 | v1 on the CPU, 300 frames | 22.6 s | **11.1 s** | identical |
+
+The gain depends on the codec, the bitrate and the CPU: with a light input and
+a fast CPU, software decoding is cheap and the gain is smaller.
 
 Inputs decoded on the GPU: H.264 8-bit 4:2:0, HEVC 8 and 10-bit 4:2:0 and VP9
 8-bit 4:2:0, the decoders validated as bit-exact. Each one is first checked by
@@ -769,9 +794,10 @@ the summaries of earlier files in a batch remain. A summary left by a previous
 run is not removed.
 
 SIGINT (Ctrl-C) exits with code 130 and reports the interruption on stderr.
-The interrupted calculation writes no summary; completed batch summaries remain. An active VMAF scoring process is stopped and reaped, with a bounded wait.
-During automatic synchronization, shutdown can still wait for running PSNR search
-workers to finish.
+The interrupted calculation writes no summary, and the summaries of the files
+already completed in a batch remain. easyVmaf stops the running VMAF process
+and waits a bounded time for it to exit; during an automatic sync search, it
+can still wait for the running PSNR workers to finish.
 
 Finite sync PSNR values keep their numeric value, rounded to six decimal places.
 When sync PSNR was not calculated, `sync.psnr` is `null` with no status field.
@@ -840,7 +866,7 @@ Container Registry, `ghcr.io/gdavila/easyvmaf`, built from this repository's
 
 A pre-release (`5.1.0rc1`) is tagged only with its full version (`5.1.0rc1`,
 `5.1.0rc1-cuda`). Both images are `linux/amd64` only: on Apple Silicon, Docker
-runs them emulated, which is much slower; there, install easyVmaf and FFmpeg
+runs them emulated, which is slower; there, install easyVmaf and FFmpeg
 with Homebrew instead (see [Installation](#installation)).
 
 ```bash
@@ -939,7 +965,7 @@ The services build the images from the checkout (`easyvmaf:latest`,
 easyvmaf -d distorted-A.ts -r reference.ts --sync-window 2
 ```
 
-The sync window of 2 seconds means easyVmaf searches the first 2 seconds of `reference.ts` for the best PSNR match against the first frames of `distorted-A.ts`.
+With a 2-second sync window, easyVmaf searches the first 2 seconds of `reference.ts` for the best PSNR match against the first frames of `distorted-A.ts`. The reported offset is 0.7: the first 0.7 seconds of `reference.ts` were trimmed.
 
 ### Distorted delayed relative to reference
 
