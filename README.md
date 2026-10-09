@@ -117,11 +117,12 @@ For GPU decoding (`--gpu` with any model, see
 [Hardware decoding](#hardware-decoding)):
 
 - NVIDIA GPU with NVDEC, its hardware video decoder
-- FFmpeg built with `--enable-ffnvcodec` and `--enable-cuda-llvm` (or
-  `--enable-cuda-nvcc`, which also needs `--enable-nonfree` and makes the build
-  not redistributable): `ffmpeg -hwaccels` must list `cuda`, and the
-  `scale_cuda` filter must exist, or every input is decoded on the CPU. libvmaf
-  needs CUDA only for VMAF on the GPU
+- FFmpeg built with `--enable-ffnvcodec --enable-cuda-llvm`. To check it,
+  `ffmpeg -hwaccels` must list `cuda` and `ffmpeg -filters` must list
+  `scale_cuda`; otherwise every input is decoded on the CPU.
+  `--enable-cuda-nvcc` also works, but it requires `--enable-nonfree`, which
+  makes the FFmpeg build not redistributable
+- libvmaf does not need CUDA for GPU decoding, only for VMAF on the GPU
 - In Docker, the `video` driver capability
   (`NVIDIA_DRIVER_CAPABILITIES=compute,utility,video`), which the CUDA image sets
 
@@ -257,7 +258,7 @@ These flags apply only to VMAF v1 models. Using them without `1` in
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--view {3h,5h,phone,1.5h} [...]` | hd: `3h 5h`; 4k: `1.5h` | Viewing distances, in picture heights. `phone` is an alias of `5h`. With `--display 4k`, `3h` selects the [0, 110] model. |
+| `--view {3h,5h,phone,1.5h} [...]` | hd: `3h 5h`; 4k: `1.5h` | Viewing distance, as a multiple of the screen height (`3h`: the viewer sits 3 screen heights away). The farther the viewer, the fewer artifacts are visible and the higher the score. `phone` is another name for `5h`. With `--display 4k`, `3h` uses a model whose scores go from 0 to 110 instead of 0 to 100. |
 | `--hfr {auto,on,off}` | `auto` | High frame rate models. `auto`: when the effective frame rate is >= 47 fps. See [High frame rate](#high-frame-rate). |
 | `--enc-size WxH` | distorted video size | Encoding resolution passed to CAMBI, the v1 banding feature. |
 | `--enc-bitdepth {8,10,12}` | from the distorted `pix_fmt` | Encoding bit depth passed to CAMBI. |

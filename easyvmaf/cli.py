@@ -289,7 +289,7 @@ def get_args():
     v1 = parser.add_argument_group('VMAF v1 parameters')
     v1.add_argument('--view', dest='views', nargs='+', type=str.lower,
                     choices=('3h', '5h', 'phone', '1.5h'),
-                    help="VMAF v1 viewing distances (phone = 5h). (Default: 3h 5h for hd; 1.5h for 4k).")
+                    help="VMAF v1 viewing distance, in screen heights (phone = 5h). With --display 4k, 3h scores range from 0 to 110. (Default: 3h 5h for hd; 1.5h for 4k).")
     v1.add_argument('--hfr', dest='hfr', type=str.lower,
                     choices=('auto', 'on', 'off'), default='auto',
                     help="VMAF v1 high frame rate models. auto: when the effective frame rate is >= 47 fps. (Default: auto).")
@@ -319,13 +319,11 @@ def get_args():
     execution.add_argument('--subsample', dest='subsample', type=int, default=1,
                            help="Specifies the subsampling of frames to speed up calculation. (default=1, None).")
     execution.add_argument('--gpu', dest='gpu', action='store_true',
-                           help='Use the NVIDIA GPU (CUDA) where it can: decode each input with '
-                                'NVDEC when the GPU decodes it exactly (otherwise on the CPU, '
-                                'with a warning), never changing a score, and compute VMAF with '
-                                'libvmaf_cuda when the models allow it (--vmaf-version 0.6 at '
-                                '8 bits), otherwise with libvmaf on the CPU. '
-                                'Use the provided Dockerfile.cuda to build a compatible image. '
-                                '(Default: false).')
+                           help='Use the NVIDIA GPU (CUDA) where it can, and the CPU for the rest: '
+                                'decode each input on the GPU (NVDEC) when the GPU decodes it '
+                                'exactly as the CPU, and compute VMAF with libvmaf_cuda when the '
+                                'models allow it (--vmaf-version 0.6 at 8 bits). Requires a CUDA '
+                                'build of FFmpeg, such as the Dockerfile.cuda image. (Default: false).')
     execution.add_argument('--disable-hw-decode', dest='disable_hw_decode', action='store_true',
                            help='With --gpu, decode every input on the CPU. (Default: false).')
     execution.add_argument('--disable-vmaf-cuda', dest='disable_vmaf_cuda', action='store_true',
