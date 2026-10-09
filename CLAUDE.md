@@ -743,7 +743,7 @@ Docker images (`publish-images`, a matrix `cpu`/`cuda`, `linux/amd64` only):
   master; the CUDA image always builds cold (no cache: its devel layers would
   fill most of the repository's 10 GB cache and evict the CPU one) and first
   frees disk space (the runner documents 14 GB; the build needs about 19 GB),
-  failing early below 20 GB free.
+  failing early below 23 GB free.
 - After the first push, by hand: GHCR creates the `easyvmaf` package private
   and linked to the repository. Make it public (*Package settings → Change
   visibility*) and check that *Manage Actions access* lists the repository
@@ -754,40 +754,58 @@ Docker images (`publish-images`, a matrix `cpu`/`cuda`, `linux/amd64` only):
 
 ## Known Tech Debt
 
-Deinterlacing in `_applyDeinterlaceFilters()` is wrong for these combinations,
-which are documented as unsupported in the README (numbers refer to the
-combination table of the 4.0 deinterlace review):
+### Unsupported interlaced combinations
 
-- **Case 5, both inputs interlaced** (1080i25 vs 1080i25): the "same interlacing"
-  branch only normalizes fps, so VMAF scores woven frames.
-- **Case 11, interlaced reference reported at its field rate vs progressive
-  distorted at that rate** (25i reported as 50 vs 50p): `round(ref) == round(main)`
-  picks `_deinterlaceFrame(1, ref)`; the reference ends at 25 frames/s against a
-  50p distorted, so every reference frame is paired twice and half of the pairs
-  are half a frame apart.
-- **Case 13, progressive reference vs interlaced distorted reported at its field
-  rate** (50p vs 25i reported as 50): `_deinterlaceFrame(1, main)` leaves the
-  distorted at 25 frames/s, so only its first field is scored, while
-  `output_fps` reports 50 and VMAF v1 picks the HFR models.
+`_applyDeinterlaceFilters()` picks the wrong filters for three combinations of
+an interlaced input. The README lists them as unsupported: the **No** rows of
+the table in "Interlaced sources". The notation is that table's:
 
-Root cause of 11 and 13: decisions use `r_frame_rate`, and an interlaced stream
-reported at its field rate (H.264 PAFF) cannot be told from a 50 frames/s one.
-A candidate fix, not verified on a real PAFF file, is to normalize an interlaced
-stream to its frame rate first (e.g. use `avg_frame_rate` when `r_frame_rate` is
-twice it). Fixed in 4.0, keep fixed: progressive reference at 2x an interlaced
-distorted (`_deinterlaceField(2, main)`) and progressive reference vs interlaced
-distorted reported at 2x (`_deinterlaceFrame(0.5, main)`), pinned by
+- `1080i25`: interlaced, 25 frames (50 fields) per second;
+- `1080i25*`: the same video when ffprobe reports `r_frame_rate` at its field
+  rate (50), as H.264 Picture-Adaptive Frame-Field (PAFF) streams do;
+- `25p`, `50p`: progressive at 25 or 50 frames per second.
+
+The three combinations:
+
+1. **Both inputs interlaced** (reference `1080i25`, distorted `1080i25`, e.g. an
+   interlaced transcode). Both inputs take the "same interlacing" branch, which
+   only normalizes the frame rate and never deinterlaces. VMAF then scores
+   woven frames, with both fields in one picture. Expected: deinterlace both
+   inputs the same way.
+2. **PAFF reference, distorted at its field rate** (reference `1080i25*`,
+   distorted `50p`). Both report 50 frames/s, so `round(ref) == round(main)`
+   picks `_deinterlaceFrame(1, ref)`, one frame per frame. The reference ends
+   at 25 frames/s against a 50 frames/s distorted: each reference frame is
+   paired with two distorted frames, and half of the pairs are 20 ms apart.
+   Expected: one frame per field (`yadif=1`), as for a `1080i25` reference.
+3. **Progressive reference, PAFF distorted** (reference `50p`, distorted
+   `1080i25*`). `_deinterlaceFrame(1, main)` leaves the distorted at 25
+   frames/s, so only its first field is scored. `output_fps` still reports 50,
+   so VMAF v1 picks the HFR models as if the distorted were at 50 frames/s.
+   Expected: one frame per field for the distorted.
+
+Cases 2 and 3 share a root cause: the decisions use `r_frame_rate`, and from it
+alone a `1080i25*` stream cannot be told from a `50p` one. A candidate fix, not
+verified on a real PAFF file, is to normalize an interlaced stream to its frame
+rate first (e.g. use `avg_frame_rate` when `r_frame_rate` is twice it). The
+README shows how to detect such a file with ffprobe.
+
+Fixed in 4.0, keep fixed: reference `50p` against distorted `1080i25` (one
+distorted frame per field, `_deinterlaceField(2, main)`), and reference `25p`
+against distorted `1080i25*` (one distorted frame per frame,
+`_deinterlaceFrame(0.5, main)`). Both are pinned by
 `test_interlaced_distorted_scores_each_reference_frame_once`.
 
-**Docker images are `linux/amd64` only.** On Apple Silicon and other arm64
-hosts they run emulated. An `arm64` image would need: native
-`ubuntu-24.04-arm` runners building each architecture (QEMU emulation is far
-too slow for the FFmpeg and libvmaf builds), each pushed by digest and then a
-job merging both into one manifest list (`docker buildx imagetools create`),
-and an arm64 `integration-docker` job in `test.yml` before publishing, since
-nothing tests the arm64 FFmpeg/libvmaf build today. The CUDA image would also
-need an arm64 base (`nvidia/cuda` publishes `sbsa`/`arm64` variants) and a GPU
-host to validate it.
+### Docker images are `linux/amd64` only
+
+On Apple Silicon and other arm64 hosts they run emulated. An `arm64` image would
+need: native `ubuntu-24.04-arm` runners building each architecture (QEMU
+emulation is far too slow for the FFmpeg and libvmaf builds), each pushed by
+digest and then a job merging both into one manifest list (`docker buildx
+imagetools create`), and an arm64 `integration-docker` job in `test.yml` before
+publishing, since nothing tests the arm64 FFmpeg/libvmaf build today. The CUDA
+image would also need an arm64 base (`nvidia/cuda` publishes `sbsa`/`arm64`
+variants) and a GPU host to validate it.
 
 ## What to Never Change Without Explicit Instruction
 

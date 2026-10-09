@@ -191,8 +191,8 @@ jobs:
           docker system prune -af
           df -h /
           free_gb=$(df --output=avail -BG / | tail -1 | tr -dc '0-9')
-          if [ "$free_gb" -lt 20 ]; then
-            echo "::error::only ${free_gb} GB free for the CUDA build, 20 GB needed"
+          if [ "$free_gb" -lt 23 ]; then
+            echo "::error::only ${free_gb} GB free for the CUDA build, 23 GB needed"
             exit 1
           fi
 
