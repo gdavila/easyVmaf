@@ -722,6 +722,47 @@ Decoding the reference video ref.mov in software: cuda decoding of prores yuv422
 "hw_decode": {"api": "cuda", "distorted": "hw", "reference": "sw"}
 ```
 
+#### What runs on the GPU
+
+We split every step of the calculation into three groups, based on what we
+measured on a Tesla T4 with FFmpeg 8.1 and libvmaf 3.2.1.
+
+**On the GPU with `--gpu`:**
+
+| Step | On the GPU | Score |
+|---|---|---|
+| Decoding (H.264, HEVC and VP9, see above) | NVDEC | Unchanged: bit-exact |
+| Format conversion without resizing (`nv12` → `yuv420p`) | `scale_cuda` | Unchanged: bit-exact |
+| Frame selection and timestamps (`fps`, `trim`, sync, frame ranges) | Same filters on GPU frames | Unchanged: the same frames |
+| VMAF v0.6 features (ADM, VIF, motion) | `libvmaf_cuda` | Differs from the CPU by thousandths (see [GPU](#gpu)) |
+
+**Possible on the GPU, but kept on the CPU because the score changes.** The
+error is the typical difference per pixel between the CPU and the GPU output,
+in 8-bit levels (0 to 255; one level is the smallest possible step):
+
+| Step | CUDA filter | Error per pixel | Effect on VMAF |
+|---|---|---|---|
+| Scaling (e.g. 720p → 1080p) | `scale_cuda` | 1.0 level | VMAF v1 −2.2 points in our test |
+| Deinterlacing | `yadif_cuda` | 1.1 levels | Not measured |
+| 10 to 8 bit conversion | `scale_cuda` | 0.6 levels | Not measured |
+| MPEG-2 decoding | NVDEC | 0.13 levels | Not measured |
+
+These differences are invisible, but they are systematic on edges and detail,
+which is what VMAF weighs: a scaler that differs by one level per pixel moved
+VMAF v1 by 2.2 points. Hence, in practice, an input that needs one of these
+steps is copied back to the CPU after decoding.
+
+**Not available on the GPU:**
+
+| Step | Why | Consequence |
+|---|---|---|
+| PSNR in the libvmaf log | Neither libvmaf nor FFmpeg has a CUDA PSNR | With `libvmaf_cuda`, both frames are copied to the CPU for it. It stays: without a CPU feature, libvmaf 3.2.1 crashes with `n_threads` set |
+| PSNR of the sync search | FFmpeg's `psnr` filter is CPU only | The sync search always runs on the CPU |
+| VMAF v1 features (`cambi`, `speed_chroma`, `adm3`, `motion3`) | libvmaf has no CUDA version | With v1, VMAF runs on the CPU (`vmaf.cuda: false`) |
+| CAMBI heatmaps (`--cambi-heatmap`) | CAMBI is CPU only | Frames are copied to the CPU for it |
+| VMAF at 10 bits | easyVmaf measures in `yuv420p` with `libvmaf_cuda` | With `--bitdepth 10`, VMAF runs on the CPU |
+| Other codecs (ProRes, FFV1, H.264 High 10 or 4:2:2, AV1, ...) | No NVDEC support, or not validated as bit-exact | Decoded on the CPU, recorded as `"sw"` |
+
 Requirements: see [GPU requirements](#gpu-requirements). An FFmpeg build
 without `libvmaf_cuda` exits with code 1 only when VMAF would run on the GPU;
 one without NVDEC decodes every input on the CPU, with the warning above. In
