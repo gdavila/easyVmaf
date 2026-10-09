@@ -123,6 +123,12 @@ each change.
   are the frames and the scores. Both images label their licenses (easyVmaf
   MIT, FFmpeg LGPL-3.0-or-later, libvmaf BSD-2-Clause-Patent, dav1d
   BSD-2-Clause) and their source repository.
+- The CUDA image is 0.7 GB instead of 7.4 GB. It copied the whole
+  `/usr/local` of the build stage, the CUDA development toolkit included
+  (nvcc, NPP, ...), into the `runtime` CUDA base, which adds 1.7 GB of CUDA
+  libraries. It now copies only `lib`, `bin` and `share` (FFmpeg, libvmaf,
+  dav1d, the VMAF models) into the `base` CUDA image; FFmpeg and libvmaf link
+  no CUDA library, they load the driver's at runtime.
 
 ### Fixed
 

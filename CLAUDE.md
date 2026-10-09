@@ -798,7 +798,11 @@ distorted reported at 2x (`_deinterlaceFrame(0.5, main)`), pinned by
 - `Dockerfile.cuda` must stay redistributable: FFmpeg with `--enable-cuda-llvm`
   (clang), never `--enable-nonfree`, `--enable-cuda-nvcc` or `--enable-libnpp`
   (FFmpeg's nonfree list). libvmaf is still compiled with nvcc: its license
-  (BSD-2-Clause-Patent) is not affected
+  (BSD-2-Clause-Patent) is not affected. Its release stage copies only
+  `/usr/local/lib`, `bin` and `share` from the build stage, never the whole
+  `/usr/local` (the CUDA devel toolkit lives in `/usr/local/cuda`), onto
+  `nvidia/cuda:*-base`, not `-runtime` (cuBLAS, cuFFT, NPP, ... unused): the
+  image is ~0.7 GB
 - Dependency: `ffmpeg-progress-yield >= 0.7.0` (pip)
 
 ### Docker image versions (pinned)
@@ -810,4 +814,4 @@ distorted reported at 2x (`_deinterlaceFrame(0.5, main)`), pinned by
 | dav1d      | 1.4.3   |
 | nv-codec-headers (CUDA) | 13.0.19.1 |
 | Python     | 3.12    |
-| CUDA base  | 12.3.2  |
+| CUDA base  | 12.3.2 (`devel` build, `base` release) |

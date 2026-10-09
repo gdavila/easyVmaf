@@ -103,7 +103,10 @@ RUN export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}" && \
 WORKDIR /app
 COPY . /app/easyvmaf/
 
-FROM nvidia/cuda:12.3.2-runtime-ubuntu22.04 AS release-cuda
+# base, not runtime: runtime adds 1.7 GB of CUDA libraries (cuBLAS, cuFFT, NPP,
+# ...) that nothing here links. FFmpeg and libvmaf load libcuda and libnvcuvid,
+# injected by the host driver, through the ffnvcodec headers
+FROM nvidia/cuda:12.3.2-base-ubuntu22.04 AS release-cuda
 
 ENV LD_LIBRARY_PATH="/usr/local/lib"
 # NVDEC (--gpu decoding) needs the video capability; nvidia/cuda only sets
@@ -131,7 +134,12 @@ RUN apt-get update -yqq && \
     python3 -m pip install --upgrade pip && \
     python3 -m pip install ffmpeg-progress-yield
 
-COPY --from=build-cuda /usr/local /usr/local/
+# Only what was built (FFmpeg, libvmaf, dav1d, VMAF models): /usr/local/cuda
+# of the build stage is the CUDA devel toolkit (4.4 GB, nvcc, NPP, ...), not
+# needed at runtime and not ours to redistribute
+COPY --from=build-cuda /usr/local/lib /usr/local/lib/
+COPY --from=build-cuda /usr/local/bin /usr/local/bin/
+COPY --from=build-cuda /usr/local/share /usr/local/share/
 COPY --from=build-cuda /app/easyvmaf /app/easyvmaf/
 
 WORKDIR /app/easyvmaf
