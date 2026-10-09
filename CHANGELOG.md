@@ -5,9 +5,9 @@
 easyVmaf 5.0 is the first release published on PyPI (`pipx install easyvmaf`).
 From this version easyVmaf follows Semantic Versioning: see
 [Versioning](README.md#versioning) for what the contract covers. It requires
-Python >= 3.10. The models and scores of 4.0 are unchanged. See
-[Migrating from 4.x](README.md#migrating-from-4x) for the one-line migration of
-each change.
+Python >= 3.10. The models and scores of 4.0 are unchanged. Each breaking
+change below says how to migrate; users of 3.x can follow
+[Migrating from 3.x](README.md#migrating-from-3x).
 
 ### Breaking changes
 

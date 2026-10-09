@@ -19,8 +19,7 @@ preprocessing for you:
 
 Since 4.0, easyVmaf computes [VMAF v1](https://github.com/Netflix/vmaf/blob/master/resource/doc/models_v1.md)
 by default. The VMAF v0.6 models of easyVmaf 3.x are still available with
-`--vmaf-version 0.6`. Upgrading? See [Migrating from 4.x](#migrating-from-4x) or
-[Migrating from 3.x](#migrating-from-3x).
+`--vmaf-version 0.6`. Upgrading from 3.x? See [Migrating from 3.x](#migrating-from-3x).
 
 On GitHub, this README follows the `master` branch, which can document changes
 not released yet (see the `unreleased` entry of the
@@ -655,7 +654,7 @@ without changing a score, and the CPU for the rest. Each part has an opt-out:
 |---|---|---|
 | (none) | CPU | CPU (`libvmaf`) |
 | `--gpu` | GPU (NVDEC) where the input allows it | GPU (`libvmaf_cuda`) where the models allow it, else CPU |
-| `--gpu --disable-hw-decode` | CPU | as `--gpu`; with v0.6, the `--gpu` of 4.x |
+| `--gpu --disable-hw-decode` | CPU | as `--gpu`; with v0.6, the `--gpu` of earlier versions |
 | `--gpu --disable-vmaf-cuda` | as `--gpu` | CPU |
 
 `--disable-hw-decode` and `--disable-vmaf-cuda` without `--gpu` are a usage
@@ -1018,61 +1017,35 @@ and are removed in the next major release.
 
 Releases before 5.0.0 made no compatibility guarantees.
 
-## Migrating from 4.x
-
-easyVmaf 5.0 keeps the models, the scores and the summary schema 2 of 4.0. It
-renames two flags, moves the manual offset to its own flag, replaces `--json`
-with the summary file, renames the Python API after the CLI flags and extends
-`--gpu` to decoding, without changing its scores. See also
-[CHANGELOG.md](https://github.com/gdavila/easyVmaf/blob/master/CHANGELOG.md#500-unreleased).
-
-| Contract | 4.x | 5.0 | Migration |
-|---|---|---|---|
-| Python | >= 3.8 | >= 3.10 | Upgrade Python |
-| `--end-sync` | Stops when the shorter video ends | `--shortest` | Rename the flag |
-| `--reverse` | Reverse sync search | `--sync-reverse`, requires `--sync-window` | Rename the flag |
-| Manual offset | `--sync-start S` without `--sync-window`, negative with `--reverse` | `--sync-offset S`: positive trims the reference, negative the distorted video | `--sync-start 1.5 --reverse` → `--sync-offset -1.5` |
-| `--gpu` | `libvmaf_cuda` (v0.6 only; an error with v1), CPU decoding | Also decodes on the GPU (NVDEC), with identical scores; with v1 or `--bitdepth 10`, VMAF on the CPU instead of an error (`vmaf.cuda: false`) | None; `--gpu --disable-hw-decode` is the 4.x command |
-| `--json` | Schema 2 record printed to stdout | Always written to the [summary file](#summary-file) (`<log>_summary.json`) | Read the summary file |
-| `docker-compose.yml` | `VIDEO_DIR` defaults to `./video_samples` | `VIDEO_DIR` is required | Set `VIDEO_DIR` |
-| `vmaf(mainSrc, refSrc, ...)` | Class `vmaf` | `Vmaf(distorted, reference, ...)` | `from easyvmaf import Vmaf` |
-| `vmaf()` arguments | `manual_fps=`, `output_fmt=`, `print_progress=`, `end_sync=`, `gpu_mode=` | `fps=`, `output_format=`, `progress=`, `shortest=`, `gpu=` | Rename the arguments; `validate_model_config()` takes no GPU argument |
-| Manual offset (API) | `v.offset = 1.5` | `Vmaf(..., sync_offset=1.5)` | Pass it to the constructor |
-| `syncOffset(syncWindow=3, start=0, reverse=False)` | Returns `[offset, psnr]` | `sync(window, start=0, reverse=False)` returns `SyncResult(offset, psnr)`; `window` has no default | Rename the method; pass the window |
-| `getVmaf(autoSync=False)` | `autoSync=True` runs `syncOffset()` first | `compute()`, no `autoSync` | Call `sync()` before `compute()` |
-| `setOffset()` | Public | Removed | Use `sync_offset` |
-| `VmafResult.offset` | Offset applied | `VmafResult.sync_offset` | Rename the field |
-| `FFprobe`, `FFmpegQos`, `inputFFmpeg` | Exported by `easyvmaf` | Not exported: the submodules are internal | Use `Vmaf` |
-
-The package also exports `SyncResult`, `ModelRun`, `FFmpegExecutionError`,
-`check_ffmpeg`, `validate_range_config` and `UnsupportedRangeError`.
-
-New in 5.0: [frame ranges](#frame-ranges) (`--start-frame`, `--frame-count`),
-GPU decoding with `--gpu` and its opt-outs (`--disable-hw-decode`,
-`--disable-vmaf-cuda`), `vmaf.cuda` and `vmaf.hw_decode` in the summary, and
-the [Docker images](#docker) on GHCR.
-
 ## Migrating from 3.x
 
-easyVmaf 4.0 changes the default model, the CLI flags, the Python API and the
-JSON output. Every change has a one-line migration. Moving from 3.x to 5.0,
-apply this section, then [Migrating from 4.x](#migrating-from-4x). See also
-[CHANGELOG.md](https://github.com/gdavila/easyVmaf/blob/master/CHANGELOG.md).
+easyVmaf 5.0 changes the default model, the requirements, the CLI flags, the
+Python API and the JSON output of 3.x. Every change has a one-line migration.
+Coming from 4.x instead? The
+[CHANGELOG](https://github.com/gdavila/easyVmaf/blob/master/CHANGELOG.md) lists
+the changes since 4.0.
 
-| Contract | 3.x | 4.0 | Migration |
+| Contract | 3.x | 5.0 | Migration |
 |---|---|---|---|
 | Default model | v0.6 (`vmaf_hd`, `vmaf_hd_neg`, `vmaf_hd_phone`) | v1 (`vmaf_v1_hd`, `vmaf_v1_phone`) | `--vmaf-version 0.6` |
-| Requirements | FFmpeg >= 5.0, libvmaf with built-in v0.6 models | FFmpeg >= 8.1, libvmaf >= 3.2.1 with built-in models (verified by computing a v1 frame) | 4.0 Docker image, `brew upgrade libvmaf ffmpeg`, or rebuild libvmaf |
-| CLI flags | `-model HD`, `-sw`, `-output_fmt`, ... | `--display hd`, `--sync-window`, `--output-format`, ... | 3.x flags are rejected; see the table below |
-| `--gpu` | Any model | Only `--vmaf-version 0.6` | Add `--vmaf-version 0.6` |
+| Python | >= 3.8 | >= 3.10 | Upgrade Python |
+| FFmpeg and libvmaf | FFmpeg >= 5.0, libvmaf with built-in v0.6 models | FFmpeg >= 8.1, libvmaf >= 3.2.1 with built-in models (verified by computing a v1 frame) | The [Docker](#docker) images, `brew upgrade libvmaf ffmpeg`, a BtbN build, or rebuild libvmaf (see [Installation](#installation)) |
+| Installation | From a clone of the repository | `pipx install easyvmaf` (PyPI), or the Docker images on GHCR | See [Installation](#installation) |
+| CLI flags | `-model HD`, `-sw`, `-output_fmt`, ... | `--display hd`, `--sync-window`, `--output-format`, ... | 3.x flags are rejected; see [Flag equivalences](#flag-equivalences) |
+| Manual offset | `-ss S` without `-sw`, negative with `-reverse` | `--sync-offset S`: positive trims the reference, negative the distorted video | `-ss 1.5 -reverse` → `--sync-offset -1.5` |
+| `-gpu` | `libvmaf_cuda` with any model, CPU decoding | `--gpu`: also decodes on the GPU (NVDEC), with identical scores. `libvmaf_cuda` only computes v0.6 at 8 bits, so with the default v1 models VMAF runs on the CPU (`vmaf.cuda: false`) | Add `--vmaf-version 0.6` to compute VMAF on the GPU, as in 3.x |
 | JSON (`-json`) | Printed to stdout: `vmaf.model` and flat scores in `vmaf` | Always written to the [summary file](#summary-file): `schema_version: 2`, `vmaf.display`, `vmaf.scores`, `vmaf.models` | Read scores from `vmaf.scores` of `<distorted>_vmaf_summary.json` |
 | Text output | `VMAF HD:`, `VMAF Neg:`, `VMAF Phone:`, `VMAF 4K:` labels | One line per score: name, value, libvmaf model and range | Parse score names, or read the summary file |
-| `vmaf(main, ref, output_fmt, model='HD', phone=False, ...)` | `output_fmt` positional, `model`, `phone` | Keyword-only after the paths: `display='hd'`, `vmaf_versions=('1',)`, `views=None`, ...; `output_fmt` defaults to `'json'` | Rename the arguments; `phone` is gone (select with `views`) |
-| `vmaf.getVmaf()` | Returns the FFmpeg process | Returns `VmafResult` with scores, models and paths | Read `result.scores` instead of parsing the log |
-| `FFmpegQos.getVmaf(model='HD', cambi_heatmap=...)` | Model key | `models`: resolved `ModelRun` list; complete `features` string | Only affects direct use of `easyvmaf.ffmpeg` |
-| `VMAF_MODELS`, `HD_MODEL_NAME`, `_4K_MODEL_NAME`, `*_VERSION` | In `easyvmaf.ffmpeg` | Removed; the catalog is `easyvmaf.models.CATALOG` | `from easyvmaf import CATALOG` |
-| `check_ffmpeg()['builtin_models']` | Probe of `vmaf_v0.6.1` | `libvmaf_v1` (probe of `vmaf_v1.0.16_3d0h`) | Rename the key |
-| `FFmpegQos.vmaf_cambi_heatmap_path` | In layer 1 | `vmaf.cambi_heatmap_path` and `VmafResult.cambi_heatmap_path` | Read it from the result |
+| `docker-compose.yml` | `VIDEO_DIR` defaults to `./video_samples` | `VIDEO_DIR` is required | Set `VIDEO_DIR` |
+| `vmaf(mainSrc, refSrc, output_fmt, model='HD', phone=False, ...)` | Class `vmaf`, `output_fmt` positional, `model`, `phone` | `Vmaf(distorted, reference, ...)`, keyword-only after the paths: `display='hd'`, `vmaf_versions=('1',)`, `views=None`, ...; `output_format` defaults to `'json'` | `from easyvmaf import Vmaf`; `phone` is gone (select with `views`) |
+| `vmaf()` arguments | `output_fmt=`, `print_progress=`, `end_sync=`, `manual_fps=`, `gpu_mode=` | `output_format=`, `progress=`, `shortest=`, `fps=`, `gpu=` | Rename the arguments |
+| Manual offset (API) | `v.offset = 1.5`, or `setOffset(1.5)` | `Vmaf(..., sync_offset=1.5)` | Pass it to the constructor |
+| `syncOffset(syncWindow=3, start=0, reverse=False)` | Returns `[offset, psnr]` | `sync(window, start=0, reverse=False)` returns `SyncResult(offset, psnr)`; `window` has no default | Rename the method; pass the window |
+| `getVmaf(autoSync=False)` | Returns the FFmpeg process; `autoSync=True` runs `syncOffset()` first | `compute()` returns a `VmafResult` with scores, models and paths; no `autoSync` | Call `sync()` before `compute()`; read `result.scores` instead of parsing the log |
+| `FFprobe`, `FFmpegQos`, `inputFFmpeg` | Exported by `easyvmaf` | Not exported: the submodules are internal | Use `Vmaf` |
+| `VMAF_MODELS`, `HD_MODEL_NAME`, `_4K_MODEL_NAME`, `*_VERSION` | In `easyvmaf.ffmpeg` | Removed; the catalog is `CATALOG` | `from easyvmaf import CATALOG` |
+| `check_ffmpeg()['builtin_models']` | Probe of `vmaf_v0.6.1` | `libvmaf_v1` (probe of `vmaf_v1.0.16_3d0h`) | `from easyvmaf import check_ffmpeg`; rename the key |
+| `FFmpegQos.vmaf_cambi_heatmap_path` | In `easyvmaf.ffmpeg` | `vmaf.cambi_heatmap_path` and `VmafResult.cambi_heatmap_path` | Read it from the result |
 
 Unchanged: the v0.6 score names, the libvmaf log path
 (`<distorted>_vmaf.{json,xml,csv}`), the PSNR sync search for progressive
@@ -1083,19 +1056,31 @@ keeps sync field accurate. Reverse sync between inputs at different frame
 rates now converts the right one, so its reported PSNR changes (see the
 changelog).
 
-With `--vmaf-version 0.6`, easyVmaf 4.0 produces the same v0.6 scores as 3.x on
+With `--vmaf-version 0.6`, easyVmaf 5.0 produces the same v0.6 scores as 3.x on
 the same libvmaf for progressive inputs; interlaced inputs can score
-differently because of those fixes. Moving from libvmaf 3.0.0 to 3.2.1 changed them by at most
-0.00002 in our checks. With `--vmaf-version 1 0.6`, the v0.6 models are measured
-at 10 bits, which moved them by at most 0.028 when the inputs are scaled. See
-the [CHANGELOG](https://github.com/gdavila/easyVmaf/blob/master/CHANGELOG.md) for the full verification.
+differently because of those fixes. Moving from libvmaf 3.0.0 to 3.2.1 changed
+them by at most 0.00002 in our checks. With `--vmaf-version 1 0.6`, the v0.6
+models are measured at 10 bits, which moved them by at most 0.028 when the
+inputs are scaled. See the
+[CHANGELOG](https://github.com/gdavila/easyVmaf/blob/master/CHANGELOG.md) for
+the full verification.
+
+New since 3.x:
+- VMAF v1 and its parameters: `--vmaf-version`, `--view`, `--hfr`,
+  `--bitdepth`, `--enc-size`, `--enc-bitdepth` and `--model-option`.
+- [Frame ranges](#frame-ranges): `--start-frame` and `--frame-count`.
+- GPU decoding with `--gpu`, and its opt-outs `--disable-hw-decode` and
+  `--disable-vmaf-cuda`.
+- The [summary file](#summary-file), and the [Docker images](#docker) on GHCR.
+- In the Python API: `VmafResult`, `SyncResult`, `ModelSpec`, `ModelRun`,
+  `CATALOG`, `select_models`, `check_ffmpeg`, `validate_model_config`,
+  `validate_range_config`, and the `UnsupportedModelConfigError`,
+  `UnsupportedRangeError` and `FFmpegExecutionError` exceptions.
 
 ### Flag equivalences
 
 Only `-d` and `-r` keep their short form. Every other 3.x flag exits with code 2
-and names its replacement. After 4.0, `--reverse` became `--sync-reverse`, the
-manual offset moved from `--sync-start` without a sync window to `--sync-offset`,
-and `--json` was removed: the summary file is always written.
+and names its replacement.
 
 | 3.x flag (removed) | Current flag |
 |---|---|
@@ -1116,8 +1101,5 @@ and `--json` was removed: the summary file is always written.
 | `-json` | None: the [summary file](#summary-file) is always written |
 | `-gpu` | `--gpu` |
 | `-model HD` / `-model 4K` | `--display hd` / `--display 4k` |
-
-New in 4.0: `--vmaf-version`, `--view`, `--hfr`, `--bitdepth`, `--enc-size`,
-`--enc-bitdepth` and `--model-option`.
 
 Unique prefixes of long flags (`--sync-w`) are not accepted: write the full name.
