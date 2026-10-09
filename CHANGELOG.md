@@ -129,6 +129,15 @@ each change.
   libraries. It now copies only `lib`, `bin` and `share` (FFmpeg, libvmaf,
   dav1d, the VMAF models) into the `base` CUDA image; FFmpeg and libvmaf link
   no CUDA library, they load the driver's at runtime.
+- Docker images on the GitHub Container Registry. From this release on, each
+  release publishes the CPU and the CUDA image, `linux/amd64` only:
+  `ghcr.io/gdavila/easyvmaf:5.0.0` (also `5.0`, `5`, `latest`) and
+  `ghcr.io/gdavila/easyvmaf:5.0.0-cuda` (also `5.0-cuda`, `5-cuda`,
+  `latest-cuda`, `cuda`). They are published after PyPI accepts the same
+  version, from the commit whose tests passed, once each image passes a smoke
+  test; the CUDA image is never published if its FFmpeg is nonfree. On Apple
+  Silicon they run emulated. Building them locally still works. See
+  [Docker](README.md#docker).
 
 ### Fixed
 

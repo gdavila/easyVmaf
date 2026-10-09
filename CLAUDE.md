@@ -60,6 +60,9 @@ negative the distorted), mutually exclusive with `--sync-window`.
 
 ## Docker
 
+Published from 5.0.0 on GHCR, `linux/amd64` only (see Releasing):
+`docker pull ghcr.io/gdavila/easyvmaf:5.0.0` (`:5.0.0-cuda`).
+
 ```bash
 # CPU build
 docker build -t easyvmaf .
@@ -679,6 +682,7 @@ and `workflow_call`) runs the full suite in four jobs:
 - `integration-docker`: inside the `Dockerfile` image, the minimum FFmpeg 8.1
   and libvmaf 3.2.1 (the pytest command of the Docker section). The build stage
   is cached with the GitHub Actions cache, written only by pushes to master
+  (release.yml's CPU image reads it too)
 - `integration-btbn`: pip users on Linux x86_64, BtbN `n8.1-latest` FFmpeg and
   Python 3.10
 - `integration-macos`: pip users on macOS, Homebrew FFmpeg and Python 3.12
@@ -691,22 +695,60 @@ change; no tests of implementation details, duplicated cases or unrealistic inpu
 ## Releasing
 
 `.github/workflows/release.yml` builds and publishes with PyPI Trusted Publishing
-(no tokens). Its first job calls `test.yml` (`workflow_call`): nothing is built
-or published unless every test job, integration included, passes on that commit.
+(no tokens), then publishes both Docker images on GHCR with `GITHUB_TOKEN`. Its
+first job calls `test.yml` (`workflow_call`): nothing is built or published
+unless every test job, integration included, passes on that commit.
 
 1. Bump `__version__` in `easyvmaf/__init__.py` (the only place the version
    lives; `pyproject.toml` reads it) and rename the CHANGELOG `(unreleased)`
    heading to the release date.
 2. Recommended: run the full test suite locally, with FFmpeg and libvmaf v1
    available. CI runs it again before publishing.
-3. Push a tag `v<version>` equal to `__version__` → PyPI (environment `pypi`).
-   A tag that differs from `__version__` fails the build before anything is
-   published.
+3. Push a tag `v<version>` equal to `__version__` → PyPI (environment `pypi`),
+   then the Docker images → `ghcr.io/gdavila/easyvmaf`. A tag that differs
+   from `__version__` fails the build before anything is published.
 - `workflow_dispatch` publishes to TestPyPI (environment `testpypi`) as
   `<version>.dev<run number>`, so every run uploads a new version.
 - A version on PyPI is immutable: it can never be uploaded again, even after
   deleting it. Never move or reuse a published tag; fix forward with a new
   version.
+
+Docker images (`publish-images`, a matrix `cpu`/`cuda`, `linux/amd64` only):
+- On a tag push, after `publish-pypi` (`needs`): the `pypi` environment's
+  approval gates the images too, and no image is pushed for a version PyPI
+  did not accept. On `workflow_dispatch` the same jobs build and smoke-test
+  both images and never log in or push.
+- Each job builds with `load: true`, smoke-tests that image, then builds again
+  with `push: true`: the second build takes every layer from the builder cache.
+  Smoke tests: `easyvmaf --help`, the installed package version equals the
+  release version, `check_ffmpeg()` `meets_minimum` and `libvmaf_v1`; CUDA
+  also: `ffmpeg -filters` has `libvmaf_cuda`, `scale_cuda`, `yadif_cuda`,
+  `hwupload_cuda`, `ffmpeg -hwaccels` has `cuda`, `ffmpeg -L` is LGPL and has
+  no "redistributable" (a nonfree build says "not legally redistributable"),
+  `-buildconf` has no `--enable-nonfree`, `NVIDIA_DRIVER_CAPABILITIES` has
+  `video`. Never weaken the license checks: a nonfree build must never be
+  published.
+- `ghcr.io/<owner>/easyvmaf`: `<version>`, `<major>.<minor>`, `<major>`,
+  `latest`; CUDA the same with `-cuda` (`latest-cuda` too) plus `cuda`. A pre,
+  post or dev release gets only `<version>` (`-cuda`). `docker/metadata-action`
+  computes them from the version the `build` job read and checked against the
+  tag (its `version` and `final` outputs); `EASYVMAF_VERSION` comes from the
+  same value. Of the metadata labels only `source`, `revision` and `created`
+  are used: its `title`, `description` and `licenses` would replace the
+  Dockerfiles', and its `version` label carries `-cuda`.
+- `GITHUB_TOKEN` with `packages: write` on `publish-images` only;
+  `fail-fast: false`, so a failure in one image never cancels the other while
+  it pushes: re-run the failed job.
+- Cache: the CPU image reads the `type=gha` cache that `test.yml` writes on
+  master; the CUDA image always builds cold (no cache: its devel layers would
+  fill most of the repository's 10 GB cache and evict the CPU one) and first
+  frees disk space (the runner documents 14 GB; the build needs about 16 GB),
+  failing early below 20 GB free.
+- After the first push, by hand: GHCR creates the `easyvmaf` package private
+  and linked to the repository. Make it public (*Package settings → Change
+  visibility*) and check that *Manage Actions access* lists the repository
+  with write access (the link is automatic with `GITHUB_TOKEN`; a package
+  first pushed by hand would not be linked).
 
 ---
 
@@ -736,6 +778,16 @@ twice it). Fixed in 4.0, keep fixed: progressive reference at 2x an interlaced
 distorted (`_deinterlaceField(2, main)`) and progressive reference vs interlaced
 distorted reported at 2x (`_deinterlaceFrame(0.5, main)`), pinned by
 `test_interlaced_distorted_scores_each_reference_frame_once`.
+
+**Docker images are `linux/amd64` only.** On Apple Silicon and other arm64
+hosts they run emulated. An `arm64` image would need: native
+`ubuntu-24.04-arm` runners building each architecture (QEMU emulation is far
+too slow for the FFmpeg and libvmaf builds), each pushed by digest and then a
+job merging both into one manifest list (`docker buildx imagetools create`),
+and an arm64 `integration-docker` job in `test.yml` before publishing, since
+nothing tests the arm64 FFmpeg/libvmaf build today. The CUDA image would also
+need an arm64 base (`nvidia/cuda` publishes `sbsa`/`arm64` variants) and a GPU
+host to validate it.
 
 ## What to Never Change Without Explicit Instruction
 

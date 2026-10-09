@@ -1,7 +1,9 @@
 # Builds easyvmaf and publishes it with PyPI Trusted Publishing (no tokens):
 # - push of a tag v<version> -> PyPI (environment pypi); the tag must equal
-#   easyvmaf.__version__
-# - workflow_dispatch -> TestPyPI (environment testpypi) as <version>.dev<run number>
+#   easyvmaf.__version__. Then the Docker images (Dockerfile, Dockerfile.cuda;
+#   linux/amd64) -> ghcr.io/<owner>/easyvmaf, with GITHUB_TOKEN
+# - workflow_dispatch -> TestPyPI (environment testpypi) as <version>.dev<run number>,
+#   and the Docker images are built and smoke-tested, never pushed
 #
 # Nothing is built or published unless the whole test workflow (test.yml,
 # including the FFmpeg/libvmaf integration jobs) passes on the same commit.
@@ -36,6 +38,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    # The version of the commit, before the TestPyPI suffix: on a tag push it
+    # equals the tag. The images are tagged with it.
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      final: ${{ steps.version.outputs.final }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -45,14 +52,27 @@ jobs:
         with:
           enable-cache: false
 
+      # final: a release segment only (no pre, post or dev release), the
+      # versions that move :latest
+      - name: Read easyvmaf.__version__
+        id: version
+        run: |
+          version=$(python3 -c 'import ast, sys; print(next(n.value.value for n in ast.parse(open("easyvmaf/__init__.py").read()).body if isinstance(n, ast.Assign) and any(getattr(t, "id", None) == "__version__" for t in n.targets)))')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$version" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+            echo "final=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "final=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Check that the tag matches easyvmaf.__version__
         if: github.event_name == 'push'
         env:
           TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          version=$(python3 -c 'import ast, sys; print(next(n.value.value for n in ast.parse(open("easyvmaf/__init__.py").read()).body if isinstance(n, ast.Assign) and any(getattr(t, "id", None) == "__version__" for t in n.targets)))')
-          if [ "${TAG#v}" != "$version" ]; then
-            echo "::error::tag $TAG does not match easyvmaf.__version__ $version"
+          if [ "${TAG#v}" != "$VERSION" ]; then
+            echo "::error::tag $TAG does not match easyvmaf.__version__ $VERSION"
             exit 1
           fi
 
@@ -118,3 +138,176 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           repository-url: https://test.pypi.org/legacy/
+
+  # Both images, linux/amd64 only. Each job builds its image and loads it,
+  # smoke-tests it, and on a tag push builds it again with push: the second
+  # build takes every layer from the builder cache, so the pushed image has
+  # the tested layers. The full integration suite already ran on this commit
+  # in tests (integration-docker).
+  publish-images:
+    name: Docker image (${{ matrix.flavor }})
+    needs: [build, publish-pypi]
+    # On a tag push, only once PyPI accepted the version: the pypi
+    # environment's approval gates the images too. On workflow_dispatch
+    # publish-pypi is skipped, which would skip this job without the condition.
+    if: >-
+      !cancelled() && needs.build.result == 'success' &&
+      (needs.publish-pypi.result == 'success' ||
+      (github.event_name == 'workflow_dispatch' && needs.publish-pypi.result == 'skipped'))
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.timeout }}
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io with GITHUB_TOKEN, on a tag push only
+    strategy:
+      # A failing image never cancels the other one while it pushes; re-run
+      # the failed job.
+      fail-fast: false
+      matrix:
+        include:
+          - flavor: cpu
+            file: Dockerfile
+            suffix: ""
+            timeout: 45
+          # Always a cold build (no cache, see Build): libvmaf with nvcc and
+          # FFmpeg with clang on 4 vCPUs, from the nvidia/cuda devel image
+          - flavor: cuda
+            file: Dockerfile.cuda
+            suffix: -cuda
+            timeout: 90
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/easyvmaf
+    steps:
+      # The CUDA build needs about 16 GB: the nvidia/cuda devel image (7.1 GB,
+      # and its 4 GB of compressed layers, which BuildKit keeps), the build
+      # tools, the FFmpeg build tree and the images. The runner documents 14 GB
+      # of disk, so first remove the SDKs this job never uses.
+      - name: Free disk space
+        if: matrix.flavor == 'cuda'
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL
+          docker system prune -af
+          df -h /
+          free_gb=$(df --output=avail -BG / | tail -1 | tr -dc '0-9')
+          if [ "$free_gb" -lt 20 ]; then
+            echo "::error::only ${free_gb} GB free for the CUDA build, 20 GB needed"
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Tags from the version the build job checked against the tag (value=),
+      # so a workflow_dispatch computes the tags the release would push. A pre,
+      # post or dev release gets only its full version, without :latest.
+      # CUDA: the same tags with -cuda, latest-cuda included, plus :cuda.
+      - name: Docker tags and labels
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: |
+            latest=auto
+            suffix=${{ matrix.suffix }},onlatest=true
+          tags: |
+            type=pep440,pattern={{version}},value=${{ needs.build.outputs.version }}
+            type=pep440,pattern={{major}}.{{minor}},value=${{ needs.build.outputs.version }}
+            type=pep440,pattern={{major}},value=${{ needs.build.outputs.version }}
+            type=raw,value=cuda,suffix=,enable=${{ matrix.flavor == 'cuda' && needs.build.outputs.final == 'true' }}
+
+      # Only the source, revision and created labels of the metadata: its
+      # title, description and licenses would replace the Dockerfiles' (the
+      # repository license is easyVmaf's alone), and its version label carries
+      # the -cuda suffix. EASYVMAF_VERSION sets org.opencontainers.image.version.
+      # The CPU build stage comes from the cache written by test.yml on master;
+      # CUDA builds cold: its devel layers would take most of the repository's
+      # 10 GB of cache and evict the CPU one, and a release is rare.
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          build-args: EASYVMAF_VERSION=${{ needs.build.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.source'] }}
+            org.opencontainers.image.revision=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.revision'] }}
+            org.opencontainers.image.created=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+          load: true
+          push: false
+          tags: easyvmaf:smoke
+          cache-from: ${{ matrix.flavor == 'cpu' && 'type=gha' || '' }}
+
+      - name: Smoke test
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          docker run --rm easyvmaf:smoke --help > /dev/null
+          docker run --rm --entrypoint easyvmaf easyvmaf:smoke --help > /dev/null
+          # The installed package is the tagged version, and its FFmpeg computes
+          # a VMAF v1 frame (on the CPU, in both images)
+          docker run --rm --entrypoint python3 -e VERSION easyvmaf:smoke -c '
+          import os, sys
+          from importlib.metadata import version
+          from easyvmaf import check_ffmpeg
+          caps = check_ffmpeg()
+          print(version("easyvmaf"), caps)
+          sys.exit(0 if version("easyvmaf") == os.environ["VERSION"] and caps["meets_minimum"] and caps["libvmaf_v1"] else 1)
+          '
+
+      # No GPU on the runner: what the image was built with, not what runs.
+      # The license check: a nonfree FFmpeg (--enable-cuda-nvcc, --enable-libnpp)
+      # says "not legally redistributable" and must never be published. Each
+      # output is read whole before grep: with pipefail, grep -q closing the
+      # pipe early could fail the pipeline and pass a check
+      - name: Smoke test (CUDA)
+        if: matrix.flavor == 'cuda'
+        run: |
+          ffmpeg() { docker run --rm --entrypoint ffmpeg easyvmaf:smoke -hide_banner "$@"; }
+          filters=$(ffmpeg -filters)
+          for filter in libvmaf_cuda scale_cuda yadif_cuda hwupload_cuda; do
+            grep -qE "^ [^ ]+ $filter " <<< "$filters" || { echo "::error::FFmpeg has no $filter filter"; exit 1; }
+          done
+          hwaccels=$(ffmpeg -hwaccels)
+          grep -qx cuda <<< "$hwaccels" || { echo "::error::FFmpeg has no cuda hwaccel"; exit 1; }
+          license=$(ffmpeg -L)
+          echo "$license"
+          if grep -qi redistributable <<< "$license" || ! grep -q "GNU Lesser General Public License" <<< "$license"; then
+            echo "::error::FFmpeg is not LGPL: the image cannot be redistributed"
+            exit 1
+          fi
+          buildconf=$(ffmpeg -buildconf)
+          if grep -q -- --enable-nonfree <<< "$buildconf"; then
+            echo "::error::FFmpeg was configured with --enable-nonfree"
+            exit 1
+          fi
+          caps=$(docker run --rm --entrypoint sh easyvmaf:smoke -c 'echo "$NVIDIA_DRIVER_CAPABILITIES"')
+          [[ ",$caps," == *,video,* ]] \
+            || { echo "::error::NVIDIA_DRIVER_CAPABILITIES=$caps has no video (NVDEC)"; exit 1; }
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push
+        if: github.event_name == 'push'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          build-args: EASYVMAF_VERSION=${{ needs.build.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.source'] }}
+            org.opencontainers.image.revision=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.revision'] }}
+            org.opencontainers.image.created=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: ${{ matrix.flavor == 'cpu' && 'type=gha' || '' }}

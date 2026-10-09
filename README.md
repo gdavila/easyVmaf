@@ -167,9 +167,10 @@ tar -xf ffmpeg-n8.1-latest-linux64-gpl-8.1.tar.xz
 export PATH="$PWD/ffmpeg-n8.1-latest-linux64-gpl-8.1/bin:$PATH"
 ```
 
-**Docker.** The [Docker](#docker) image bundles FFmpeg 8.1 and libvmaf 3.2.1.
-It is not published to a registry yet: clone the repository and build it with
-`docker build -t easyvmaf .`.
+**Docker.** The [Docker](#docker) images bundle easyVmaf, FFmpeg 8.1 and
+libvmaf 3.2.1 (`linux/amd64`). They are published on GHCR from the 5.0.0
+release on (`ghcr.io/gdavila/easyvmaf:5.0.0`); before that, clone the repository
+and build them with `docker build -t easyvmaf .`.
 
 **Other platforms or builds.** See [Building FFmpeg from source](#building-ffmpeg-from-source).
 
@@ -267,7 +268,7 @@ final results (`<distorted>_vmaf_summary.json`).
 |------|---------|-------------|
 | `--threads N` | `0` | Parallel single-threaded sync workers and libvmaf threads (0 = CPU count). |
 | `--subsample N` | `1` | Frame subsampling factor to speed up the computation. |
-| `--gpu` | off | Use the NVIDIA GPU where it can: decode on the GPU (NVDEC) each input it decodes exactly, never changing a score, and compute VMAF with `libvmaf_cuda` when the models allow it (`--vmaf-version 0.6`, 8 bits), otherwise on the CPU. Requires a CUDA build of FFmpeg (see [Docker: CUDA](#cuda--gpu-build)). See [GPU](#gpu). |
+| `--gpu` | off | Use the NVIDIA GPU where it can: decode on the GPU (NVDEC) each input it decodes exactly, never changing a score, and compute VMAF with `libvmaf_cuda` when the models allow it (`--vmaf-version 0.6`, 8 bits), otherwise on the CPU. Requires a CUDA build of FFmpeg (such as the CUDA [Docker](#docker) image). See [GPU](#gpu). |
 | `--disable-hw-decode` | off | With `--gpu`: decode every input on the CPU. |
 | `--disable-vmaf-cuda` | off | With `--gpu`: compute VMAF on the CPU (`libvmaf`). |
 
@@ -827,16 +828,60 @@ release.
 
 ## Docker
 
-### CPU build
+From the 5.0.0 release on, every release publishes two images on the GitHub
+Container Registry, `ghcr.io/gdavila/easyvmaf`, built from this repository's
+`Dockerfile` and `Dockerfile.cuda`:
+
+| Image | Tags | Contents |
+|-------|------|----------|
+| CPU | `5.0.0`, `5.0`, `5`, `latest` | easyVmaf, FFmpeg 8.1, libvmaf 3.2.1 |
+| CUDA | `5.0.0-cuda`, `5.0-cuda`, `5-cuda`, `latest-cuda`, `cuda` | The same, plus `libvmaf_cuda`, NVDEC and the CUDA filters, on the `nvidia/cuda` 12.3 base image |
+
+A pre-release (`5.1.0rc1`) is tagged only with its full version (`5.1.0rc1`,
+`5.1.0rc1-cuda`). Both images are `linux/amd64` only: on Apple Silicon, Docker
+runs them emulated, which is much slower; there, install easyVmaf and FFmpeg
+with Homebrew instead (see [Installation](#installation)).
 
 ```bash
-docker build -t easyvmaf .
+docker pull ghcr.io/gdavila/easyvmaf:5.0.0
+docker pull ghcr.io/gdavila/easyvmaf:5.0.0-cuda
 ```
 
-### CUDA / GPU build
+### Running with Docker
 
 ```bash
-docker build -f Dockerfile.cuda -t easyvmaf:cuda .
+# CPU
+docker run --rm -v /path/to/videos:/videos \
+  ghcr.io/gdavila/easyvmaf:5.0.0 -d /videos/distorted.mp4 -r /videos/reference.mp4
+
+# With sync
+docker run --rm -v /path/to/videos:/videos \
+  ghcr.io/gdavila/easyvmaf:5.0.0 -d /videos/distorted.mp4 -r /videos/reference.mp4 --sync-window 2
+
+# GPU (requires NVIDIA Container Toolkit): GPU decoding and libvmaf_cuda (v0.6)
+docker run --rm --gpus all -v /path/to/videos:/videos \
+  ghcr.io/gdavila/easyvmaf:5.0.0-cuda -d /videos/distorted.mp4 -r /videos/reference.mp4 --vmaf-version 0.6 --gpu
+
+# GPU decoding, default v1 models on the CPU
+docker run --rm --gpus all -v /path/to/videos:/videos \
+  ghcr.io/gdavila/easyvmaf:5.0.0-cuda -d /videos/distorted.mp4 -r /videos/reference.mp4 --gpu
+```
+
+The CUDA image sets `NVIDIA_DRIVER_CAPABILITIES=compute,utility,video`: NVDEC
+needs the `video` capability. Without it every input is decoded on the CPU,
+with a warning. An image built from an older `Dockerfile.cuda` lacks it:
+rebuild it, or pass `-e NVIDIA_DRIVER_CAPABILITIES=compute,utility,video` to
+`docker run`.
+
+### Building the images
+
+Instead of pulling them, build the images from a clone of the repository, and
+use these names in place of `ghcr.io/gdavila/easyvmaf:5.0.0` and `:5.0.0-cuda`
+in the examples above:
+
+```bash
+docker build -t easyvmaf .                          # CPU
+docker build -f Dockerfile.cuda -t easyvmaf:cuda .  # CUDA
 ```
 
 The CUDA image builds FFmpeg without `--enable-nonfree`: its CUDA filters are
@@ -852,39 +897,13 @@ Both Dockerfiles accept these build-time arguments:
 |-----|---------|-------------|
 | `FFMPEG_version` | `8.1` | FFmpeg release tag (>= 8.1) |
 | `VMAF_version` | `3.2.1` | libvmaf release tag (>= 3.2.1) |
-| `EASYVMAF_VERSION` | `5.0.0` | easyVmaf version label |
+| `EASYVMAF_VERSION` | `5.0.0` | easyVmaf version label (the published images take it from the release tag) |
 | `DAV1D_version` | `1.4.3` | dav1d release (CUDA image only — built from source) |
 
 ```bash
 # Custom versions
 docker build --build-arg FFMPEG_version=8.1 --build-arg VMAF_version=3.2.1 -t easyvmaf .
 ```
-
-### Running with Docker
-
-```bash
-# CPU
-docker run --rm -v /path/to/videos:/videos \
-  easyvmaf -d /videos/distorted.mp4 -r /videos/reference.mp4
-
-# With sync
-docker run --rm -v /path/to/videos:/videos \
-  easyvmaf -d /videos/distorted.mp4 -r /videos/reference.mp4 --sync-window 2
-
-# GPU (requires NVIDIA Container Toolkit): GPU decoding and libvmaf_cuda (v0.6)
-docker run --rm --gpus all -v /path/to/videos:/videos \
-  easyvmaf:cuda -d /videos/distorted.mp4 -r /videos/reference.mp4 --vmaf-version 0.6 --gpu
-
-# GPU decoding, default v1 models on the CPU
-docker run --rm --gpus all -v /path/to/videos:/videos \
-  easyvmaf:cuda -d /videos/distorted.mp4 -r /videos/reference.mp4 --gpu
-```
-
-The CUDA image sets `NVIDIA_DRIVER_CAPABILITIES=compute,utility,video`: NVDEC
-needs the `video` capability. Without it every input is decoded on the CPU,
-with a warning. An image built from an older `Dockerfile.cuda` lacks it:
-rebuild it, or pass `-e NVIDIA_DRIVER_CAPABILITIES=compute,utility,video` to
-`docker run`.
 
 ### Docker Compose
 
@@ -901,6 +920,8 @@ VIDEO_DIR=/path/to/videos docker compose run easyvmaf-cuda \
 ```
 
 `VIDEO_DIR` is required: the directory with your videos, mounted at `/videos`.
+The services build the images from the checkout (`easyvmaf:latest`,
+`easyvmaf:cuda`); they do not pull the published ones.
 
 ---
 
