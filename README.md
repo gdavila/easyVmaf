@@ -19,7 +19,7 @@ not released yet (see the `unreleased` entry of the
 the version you installed (`pip show easyvmaf`), read its page on
 [PyPI](https://pypi.org/project/easyvmaf/) or the README of its `v<version>` tag.
 
-Details about **How it Works** can be found [here](https://ottverse.com/vmaf-easyvmaf/).
+Details about **How it Works** can be found [here](https://gdavila.github.io/video/Vmaf/2020-03-05-Vmaf/).
 
 ## Requirements
 
@@ -46,8 +46,8 @@ but 3.2.0 is not enough:
 - 3.2.0 can grow memory without bound when decoding is faster than feature
   extraction ([issue #1587](https://github.com/Netflix/vmaf/issues/1587)). v1 is
   slower to extract than v0.6, so the risk is higher. Fixed in 3.2.1.
-- 3.2.1 also fixes wrong CUDA scores with inputs above 8 bits, which matters for
-  `--gpu`.
+- 3.2.1 also fixes wrong CUDA scores with inputs above 8 bits. `--gpu` is not
+  affected: it computes VMAF on the GPU only at 8 bits.
 
 libvmaf 3.2.1 still reports itself as **3.2.0**: `pkg-config --modversion libvmaf`
 and the `version` field of the libvmaf log both say `3.2.0`, because the upstream
@@ -105,8 +105,9 @@ For GPU decoding (`--gpu` with any model, see
 [Hardware decoding](#hardware-decoding)):
 
 - NVIDIA GPU with NVDEC
-- FFmpeg built with `--enable-ffnvcodec` and `--enable-cuda-nvcc` (or
-  `--enable-cuda-llvm`): `ffmpeg -hwaccels` must list `cuda`, and the
+- FFmpeg built with `--enable-ffnvcodec` and `--enable-cuda-llvm` (or
+  `--enable-cuda-nvcc`, which also needs `--enable-nonfree` and makes the build
+  not redistributable): `ffmpeg -hwaccels` must list `cuda`, and the
   `scale_cuda` filter must exist, or every input is decoded on the CPU. libvmaf
   needs CUDA only for VMAF on the GPU
 - In Docker, the `video` driver capability
@@ -899,6 +900,7 @@ Both Dockerfiles accept these build-time arguments:
 | `VMAF_version` | `3.2.1` | libvmaf release tag (>= 3.2.1) |
 | `EASYVMAF_VERSION` | `5.0.0` | easyVmaf version label (the published images take it from the release tag) |
 | `DAV1D_version` | `1.4.3` | dav1d release (CUDA image only — built from source) |
+| `NVCODEC_version` | `13.0.19.1` | nv-codec-headers release (CUDA image only). 13.0.19.1 is the only release that builds both FFmpeg 8.1 and libvmaf 3.2.1 |
 
 ```bash
 # Custom versions
@@ -955,6 +957,10 @@ With `--sync-reverse`, the window slides over the distorted video: `--sync-start
 
 ## Known bugs
 
+- **Error messages at the end of a `libvmaf_cuda` run.** With `--gpu` and v0.6,
+  libvmaf 3.2.1 can print `problem flushing libvmaf context` or `context could
+  not be synchronized` when it finishes. The run succeeds and its log and scores
+  are complete.
 - **CAMBI heatmaps with more than one thread.** libvmaf 3.2.1 can leave part of
   the first pictures of a `--cambi-heatmap` file as zeros when it runs on more
   than one thread, which is the default
@@ -1013,10 +1019,16 @@ with the summary file, renames the Python API after the CLI flags and extends
 The package also exports `SyncResult`, `ModelRun`, `FFmpegExecutionError`,
 `check_ffmpeg`, `validate_range_config` and `UnsupportedRangeError`.
 
+New in 5.0: [frame ranges](#frame-ranges) (`--start-frame`, `--frame-count`),
+GPU decoding with `--gpu` and its opt-outs (`--disable-hw-decode`,
+`--disable-vmaf-cuda`), `vmaf.cuda` and `vmaf.hw_decode` in the summary, and
+the [Docker images](#docker) on GHCR.
+
 ## Migrating from 3.x
 
 easyVmaf 4.0 changes the default model, the CLI flags, the Python API and the
-JSON output. Every change has a one-line migration. See also
+JSON output. Every change has a one-line migration. Moving from 3.x to 5.0,
+apply this section, then [Migrating from 4.x](#migrating-from-4x). See also
 [CHANGELOG.md](https://github.com/gdavila/easyVmaf/blob/master/CHANGELOG.md).
 
 | Contract | 3.x | 4.0 | Migration |

@@ -865,5 +865,5 @@ host to validate it.
 | libvmaf    | 3.2.1   |
 | dav1d      | 1.4.3   |
 | nv-codec-headers (CUDA) | 13.0.19.1 |
-| Python     | 3.12    |
+| Python     | 3.12 (CPU image), 3.10 (CUDA image: Ubuntu 22.04 `python3`) |
 | CUDA base  | 12.3.2 (`devel` build, `base` release) |

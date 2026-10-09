@@ -6,7 +6,6 @@ ARG VMAF_version=3.2.1
 ARG DAV1D_version=1.4.3
 ARG NVCODEC_version=13.0.19.1
 ARG EASYVMAF_VERSION=5.0.0
-ARG PYTHON_VERSION=3.12
 
 FROM nvidia/cuda:12.3.2-devel-ubuntu22.04 AS base-cuda
 
