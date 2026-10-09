@@ -788,10 +788,17 @@ distorted reported at 2x (`_deinterlaceFrame(0.5, main)`), pinned by
 - libvmaf >= 3.2.1 built with `-Dbuilt_in_models=true` (3.2.0 is not enough: its
   default build cannot compute the v1 `speed_chroma` feature). 3.2.1 reports its
   version as 3.2.0; only the frame probe tells them apart
-- GPU VMAF (`--gpu`, v0.6 at 8 bits): FFmpeg built with `--enable-libvmaf --enable-ffnvcodec --enable-cuda-nvcc --enable-nonfree`, libvmaf 3.2.1 built with `-Denable_cuda=true`; CUDA 12.3+ with nvidia-container-toolkit on host
+- GPU VMAF (`--gpu`, v0.6 at 8 bits): FFmpeg built with `--enable-libvmaf
+  --enable-ffnvcodec` (no `--enable-nonfree`), libvmaf 3.2.1 built with
+  `-Denable_cuda=true`; CUDA 12.3+ with nvidia-container-toolkit on host
 - GPU decoding (`--gpu`, any model): FFmpeg with NVDEC (`--enable-ffnvcodec`;
-  `ffmpeg -hwaccels` lists `cuda`) and `scale_cuda` (`--enable-cuda-nvcc`).
-  In Docker, the `video` driver capability (set by `Dockerfile.cuda`)
+  `ffmpeg -hwaccels` lists `cuda`) and `scale_cuda` (`--enable-cuda-llvm` or
+  `--enable-cuda-nvcc`). In Docker, the `video` driver capability (set by
+  `Dockerfile.cuda`)
+- `Dockerfile.cuda` must stay redistributable: FFmpeg with `--enable-cuda-llvm`
+  (clang), never `--enable-nonfree`, `--enable-cuda-nvcc` or `--enable-libnpp`
+  (FFmpeg's nonfree list). libvmaf is still compiled with nvcc: its license
+  (BSD-2-Clause-Patent) is not affected
 - Dependency: `ffmpeg-progress-yield >= 0.7.0` (pip)
 
 ### Docker image versions (pinned)

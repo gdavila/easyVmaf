@@ -97,7 +97,7 @@ the inputs to 1920x1080 or 3840x2160 before libvmaf.
 For VMAF on the GPU (`--gpu` with VMAF v0.6 at 8 bits, see [GPU](#gpu)):
 
 - NVIDIA GPU with CUDA support
-- FFmpeg built with `--enable-nonfree --enable-ffnvcodec --enable-libvmaf`
+- FFmpeg built with `--enable-ffnvcodec --enable-libvmaf`
 - libvmaf built with `-Denable_cuda=true`
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) (for Docker GPU usage)
 
@@ -839,7 +839,10 @@ docker build -t easyvmaf .
 docker build -f Dockerfile.cuda -t easyvmaf:cuda .
 ```
 
-> **Note:** The CUDA image links FFmpeg with `--enable-nonfree` components (nvcc/CUDA). It cannot be legally redistributed — build and use locally only.
+The CUDA image builds FFmpeg without `--enable-nonfree`: its CUDA filters are
+compiled with clang (`--enable-cuda-llvm`) instead of nvcc, and libnpp is left
+out, so the image can be redistributed. FFmpeg is LGPL-3.0-or-later in both
+images (`--enable-version3`, no `--enable-gpl`).
 
 ### Build arguments
 

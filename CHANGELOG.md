@@ -115,6 +115,14 @@ each change.
   stays 2.
 - The CUDA image sets `NVIDIA_DRIVER_CAPABILITIES=compute,utility,video`, so
   NVDEC works in the container without `-e`.
+- The CUDA image can be redistributed. Its FFmpeg was configured with
+  `--enable-nonfree --enable-cuda-nvcc --enable-libnpp`, which FFmpeg marks
+  as unredistributable; it now compiles the CUDA filters with clang
+  (`--enable-cuda-llvm`) and leaves out libnpp, which easyVmaf never used.
+  `libvmaf_cuda`, NVDEC, `scale_cuda` and `yadif_cuda` are unchanged, and so
+  are the frames and the scores. Both images label their licenses (easyVmaf
+  MIT, FFmpeg LGPL-3.0-or-later, libvmaf BSD-2-Clause-Patent, dav1d
+  BSD-2-Clause) and their source repository.
 
 ### Fixed
 

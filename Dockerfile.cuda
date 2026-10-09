@@ -69,15 +69,18 @@ RUN wget https://github.com/Netflix/vmaf/archive/v${VMAF_version}.tar.gz && \
     cp -R ../model/* /usr/local/share/model && \
     rm -rf /tmp/vmaf
 
-# libcuda.so.1 is only injected at runtime by the host GPU driver; the devel image
-# ships only the stub at lib64/stubs/libcuda.so. Create the versioned symlink so
-# the linker can resolve CUDA symbols from libvmaf.so during the FFmpeg build.
-RUN ln -sf /usr/local/cuda/lib64/stubs/libcuda.so \
-           /usr/local/cuda/lib64/stubs/libcuda.so.1
+# clang compiles FFmpeg's CUDA filters (scale_cuda, yadif_cuda, ...) with
+# --enable-cuda-llvm. --enable-cuda-nvcc and --enable-libnpp are nonfree in
+# FFmpeg's configure and would make the binary unredistributable. A separate
+# layer, so the layers above stay cached
+RUN apt-get update -yqq && \
+    apt-get install --no-install-recommends clang -y && \
+    apt-get clean -y
 
-# Build FFmpeg with libvmaf + CUDA
+# Build FFmpeg with libvmaf + CUDA. libvmaf links no CUDA library (it loads
+# CUDA at runtime through the ffnvcodec headers), so no CUDA SDK path is needed
 WORKDIR /tmp/ffmpeg
-RUN export LD_LIBRARY_PATH="/usr/local/lib:/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH}" && \
+RUN export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}" && \
     export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}" && \
     echo "=== PKG_CONFIG_PATH ===" && echo "${PKG_CONFIG_PATH}" && \
     echo "=== libvmaf.pc ===" && find /usr/local -name "libvmaf.pc" && \
@@ -90,12 +93,8 @@ RUN export LD_LIBRARY_PATH="/usr/local/lib:/usr/local/cuda/lib64/stubs:${LD_LIBR
         --enable-version3 \
         --enable-shared \
         --enable-libdav1d \
-        --enable-nonfree \
         --enable-ffnvcodec \
-        --enable-cuda-nvcc \
-        --enable-libnpp \
-        --extra-cflags="-I/usr/local/cuda/include" \
-        --extra-ldflags="-L/usr/local/cuda/lib64 -L/usr/local/cuda/lib64/stubs" \
+        --enable-cuda-llvm \
     || ( echo "=== ffbuild/config.log (last 80 lines) ===" && tail -80 ffbuild/config.log && exit 1 ) ) && \
     make -j$(nproc) && \
     make install && \
@@ -115,11 +114,12 @@ ARG FFMPEG_version
 ARG VMAF_version
 ARG EASYVMAF_VERSION
 
-LABEL distribution.restriction="nonfree — binary contains nonfree components (nvcc/CUDA). Cannot be legally redistributed. Build and use locally only."
 LABEL org.opencontainers.image.title="easyVmaf-cuda"
 LABEL org.opencontainers.image.version="${EASYVMAF_VERSION}"
 LABEL org.opencontainers.image.description="GPU-accelerated FFmpeg-based VMAF computation"
-LABEL org.opencontainers.image.licenses="MIT"
+# easyVmaf, FFmpeg (--enable-version3, no --enable-gpl), libvmaf, dav1d
+LABEL org.opencontainers.image.licenses="MIT AND LGPL-3.0-or-later AND BSD-2-Clause-Patent AND BSD-2-Clause"
+LABEL org.opencontainers.image.source="https://github.com/gdavila/easyVmaf"
 LABEL ffmpeg.version="${FFMPEG_version}"
 LABEL libvmaf.version="${VMAF_version}"
 

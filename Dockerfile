@@ -68,7 +68,9 @@ ARG EASYVMAF_VERSION
 LABEL org.opencontainers.image.title="easyVmaf"
 LABEL org.opencontainers.image.version="${EASYVMAF_VERSION}"
 LABEL org.opencontainers.image.description="FFmpeg-based VMAF computation with auto deinterlace, scale and sync"
-LABEL org.opencontainers.image.licenses="MIT"
+# easyVmaf, FFmpeg (--enable-version3, no --enable-gpl), libvmaf, dav1d
+LABEL org.opencontainers.image.licenses="MIT AND LGPL-3.0-or-later AND BSD-2-Clause-Patent AND BSD-2-Clause"
+LABEL org.opencontainers.image.source="https://github.com/gdavila/easyVmaf"
 LABEL ffmpeg.version="${FFMPEG_version}"
 LABEL libvmaf.version="${VMAF_version}"
 
