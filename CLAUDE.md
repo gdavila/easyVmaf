@@ -699,16 +699,32 @@ change; no tests of implementation details, duplicated cases or unrealistic inpu
 first job calls `test.yml` (`workflow_call`): nothing is built or published
 unless every test job, integration included, passes on that commit.
 
+Always in this order, and never push the tag before step 4 passes: the tag
+publishes to PyPI, which cannot be undone, before the Docker images are built.
+
 1. Bump `__version__` in `easyvmaf/__init__.py` (the only place the version
    lives; `pyproject.toml` reads it) and rename the CHANGELOG `(unreleased)`
-   heading to the release date.
+   heading to the release date. Commit and push to `master`: this is the
+   commit the tag will point to.
 2. Recommended: run the full test suite locally, with FFmpeg and libvmaf v1
    available. CI runs it again before publishing.
-3. Push a tag `v<version>` equal to `__version__` → PyPI (environment `pypi`),
-   then the Docker images → `ghcr.io/gdavila/easyvmaf`. A tag that differs
-   from `__version__` fails the build before anything is published.
-- `workflow_dispatch` publishes to TestPyPI (environment `testpypi`) as
-  `<version>.dev<run number>`, so every run uploads a new version.
+3. Dry run on that commit: `gh workflow run release.yml --ref master`. It runs
+   every test job, publishes to TestPyPI (environment `testpypi`) as
+   `<version>.dev<run number>`, and builds and smoke-tests both Docker images
+   without pushing them. Wait until every job succeeds (`gh run watch`).
+4. Check the TestPyPI upload installs and runs, in a fresh virtualenv:
+   `pip install -i https://test.pypi.org/simple/ --extra-index-url
+   https://pypi.org/simple/ easyvmaf==<version>.dev<run number>`, then
+   `easyvmaf --help`.
+5. Only if steps 3 and 4 passed, and `master` has not moved since the dry run
+   (`git rev-parse origin/master` equals the run's `headSha`): push a tag
+   `v<version>` on that commit → PyPI (environment `pypi`, which needs the
+   owner's approval in the Actions UI), then the Docker images →
+   `ghcr.io/gdavila/easyvmaf`. A tag that differs from `__version__` fails
+   the build before anything is published. Any new commit before the tag
+   needs a new dry run.
+- Every `workflow_dispatch` run uploads a new version to TestPyPI, so a dry run
+  can be repeated.
 - A version on PyPI is immutable: it can never be uploaded again, even after
   deleting it. Never move or reuse a published tag; fix forward with a new
   version.

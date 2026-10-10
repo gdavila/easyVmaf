@@ -1,6 +1,6 @@
 # Changelog
 
-## 5.0.0 (unreleased)
+## 5.0.0 (2026-10-09)
 
 easyVmaf 5.0 is the first release published on PyPI (`pipx install easyvmaf`)
 and on the GitHub Container Registry (Docker). From this version easyVmaf
