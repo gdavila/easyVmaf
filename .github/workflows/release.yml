@@ -322,3 +322,41 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: ${{ matrix.flavor == 'cpu' && 'type=gha' || '' }}
+
+  # The GitHub release of the tag, once PyPI and both images are published:
+  # its notes are the CHANGELOG section of the version (an undated section
+  # fails here), and its assets the distributions uploaded to PyPI. A final
+  # version becomes the latest release; a pre, post or dev release is marked
+  # as a prerelease. After re-running a failed image job, this job runs too.
+  github-release:
+    name: GitHub release
+    if: github.event_name == 'push'
+    needs: [build, publish-images]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release of the tag
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.build.outputs.version }}
+          FINAL: ${{ needs.build.outputs.final }}
+        run: |
+          python3 .github/scripts/release_notes.py "$VERSION" "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/notes.md"
+          if [ "$FINAL" = true ]; then
+            flags=(--latest)
+          else
+            flags=(--prerelease --latest=false)
+          fi
+          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "easyVmaf $TAG" --notes-file "$RUNNER_TEMP/notes.md" "${flags[@]}"

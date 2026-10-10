@@ -695,9 +695,10 @@ change; no tests of implementation details, duplicated cases or unrealistic inpu
 ## Releasing
 
 `.github/workflows/release.yml` builds and publishes with PyPI Trusted Publishing
-(no tokens), then publishes both Docker images on GHCR with `GITHUB_TOKEN`. Its
-first job calls `test.yml` (`workflow_call`): nothing is built or published
-unless every test job, integration included, passes on that commit.
+(no tokens), then publishes both Docker images on GHCR and the GitHub release
+with `GITHUB_TOKEN`. Its first job calls `test.yml` (`workflow_call`): nothing
+is built or published unless every test job, integration included, passes on
+that commit.
 
 Always in this order, and never push the tag before step 4 passes: the tag
 publishes to PyPI, which cannot be undone, before the Docker images are built.
@@ -766,6 +767,16 @@ Docker images (`publish-images`, a matrix `cpu`/`cuda`, `linux/amd64` only):
   visibility*) and check that *Manage Actions access* lists the repository
   with write access (the link is automatic with `GITHUB_TOKEN`; a package
   first pushed by hand would not be linked).
+
+GitHub release (`github-release`, tag push only, after PyPI and both images;
+`contents: write` on this job only): `gh release create` with the
+distributions uploaded to PyPI as assets, the title `easyVmaf v<version>`
+and the notes from `.github/scripts/release_notes.py`: install commands, then
+the CHANGELOG section of the version with its paragraphs unwrapped and its
+relative links pointing to the tag. An undated `(unreleased)` section fails
+the job. A final version becomes the latest release; a pre, post or dev
+release is a prerelease. Never delete the old releases: they hold each
+version's notes.
 
 ---
 
