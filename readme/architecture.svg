@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-label="easyVmaf pipeline: the reference and the distorted video each go through an FFmpeg filter chain set from FFprobe (pixel format, deinterlace and frame rate, scaling, sync trim); a PSNR sync search sets the trim offset; libvmaf then computes the VMAF scores and writes the log and the summary JSON.">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#3c4650"/>
+    </marker>
+    <style>
+      .sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+      .mono { font-family: SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+      .ink { fill: #1b2733; }
+      .muted { fill: #5a6672; }
+      .edge { stroke: #3c4650; stroke-width: 2; fill: none; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="640" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="80" y="104" class="sans ink" font-size="52" font-weight="700">easyVmaf</text>
+  <text x="80" y="142" class="sans muted" font-size="22">Correct VMAF scores: both videos deinterlaced, scaled and synchronized before scoring</text>
+
+  <!-- Preprocessing container -->
+  <rect x="220" y="170" width="586" height="270" rx="10" fill="#f6f9fe" stroke="#007fff" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="236" y="198" class="sans muted" font-size="15" font-weight="600">FFmpeg filters per input, set from FFprobe</text>
+
+  <!-- Inputs -->
+  <g class="sans">
+    <rect x="80" y="214" width="120" height="70" rx="8" fill="#ffffff" stroke="#3c4650" stroke-width="2"/>
+    <text x="140" y="245" text-anchor="middle" class="ink" font-size="18" font-weight="700">reference</text>
+    <text x="140" y="268" text-anchor="middle" class="mono muted" font-size="13">-r</text>
+    <rect x="80" y="346" width="120" height="70" rx="8" fill="#ffffff" stroke="#3c4650" stroke-width="2"/>
+    <text x="140" y="377" text-anchor="middle" class="ink" font-size="18" font-weight="700">distorted</text>
+    <text x="140" y="400" text-anchor="middle" class="mono muted" font-size="13">-d</text>
+  </g>
+
+  <!-- Filter chains: one row per input -->
+  <g class="sans">
+    <!-- reference row -->
+    <rect x="236" y="214" width="122" height="70" rx="8" fill="#dae8fc" stroke="#6c8ebf" stroke-width="2"/>
+    <text x="297" y="245" text-anchor="middle" class="ink" font-size="17" font-weight="700">format</text>
+    <text x="297" y="267" text-anchor="middle" class="mono muted" font-size="13">pix_fmt</text>
+    <rect x="380" y="214" width="122" height="70" rx="8" fill="#dae8fc" stroke="#6c8ebf" stroke-width="2"/>
+    <text x="441" y="245" text-anchor="middle" class="ink" font-size="17" font-weight="700">deinterlace</text>
+    <text x="441" y="267" text-anchor="middle" class="mono muted" font-size="13">yadif · fps</text>
+    <rect x="524" y="214" width="122" height="70" rx="8" fill="#dae8fc" stroke="#6c8ebf" stroke-width="2"/>
+    <text x="585" y="245" text-anchor="middle" class="ink" font-size="17" font-weight="700">scale</text>
+    <text x="585" y="267" text-anchor="middle" class="mono muted" font-size="13">1080p · 2160p</text>
+    <rect x="668" y="214" width="122" height="70" rx="8" fill="#dae8fc" stroke="#6c8ebf" stroke-width="2"/>
+    <text x="729" y="245" text-anchor="middle" class="ink" font-size="17" font-weight="700">sync trim</text>
+    <text x="729" y="267" text-anchor="middle" class="mono muted" font-size="13">offset</text>
+
+    <!-- distorted row -->
+    <rect x="236" y="346" width="122" height="70" rx="8" fill="#dae8fc" stroke="#6c8ebf" stroke-width="2"/>
+    <text x="297" y="377" text-anchor="middle" class="ink" font-size="17" font-weight="700">format</text>
+    <text x="297" y="399" text-anchor="middle" class="mono muted" font-size="13">pix_fmt</text>
+    <rect x="380" y="346" width="122" height="70" rx="8" fill="#dae8fc" stroke="#6c8ebf" stroke-width="2"/>
+    <text x="441" y="377" text-anchor="middle" class="ink" font-size="17" font-weight="700">deinterlace</text>
+    <text x="441" y="399" text-anchor="middle" class="mono muted" font-size="13">yadif · fps</text>
+    <rect x="524" y="346" width="122" height="70" rx="8" fill="#dae8fc" stroke="#6c8ebf" stroke-width="2"/>
+    <text x="585" y="377" text-anchor="middle" class="ink" font-size="17" font-weight="700">scale</text>
+    <text x="585" y="399" text-anchor="middle" class="mono muted" font-size="13">1080p · 2160p</text>
+    <rect x="668" y="346" width="122" height="70" rx="8" fill="#dae8fc" stroke="#6c8ebf" stroke-width="2"/>
+    <text x="729" y="377" text-anchor="middle" class="ink" font-size="17" font-weight="700">sync trim</text>
+    <text x="729" y="399" text-anchor="middle" class="mono muted" font-size="13">offset</text>
+  </g>
+
+  <!-- Chain edges -->
+  <g class="edge" marker-end="url(#arrow)">
+    <line x1="200" y1="249" x2="234" y2="249"/>
+    <line x1="358" y1="249" x2="378" y2="249"/>
+    <line x1="502" y1="249" x2="522" y2="249"/>
+    <line x1="646" y1="249" x2="666" y2="249"/>
+    <line x1="200" y1="381" x2="234" y2="381"/>
+    <line x1="358" y1="381" x2="378" y2="381"/>
+    <line x1="502" y1="381" x2="522" y2="381"/>
+    <line x1="646" y1="381" x2="666" y2="381"/>
+    <line x1="790" y1="249" x2="828" y2="249"/>
+    <line x1="790" y1="381" x2="828" y2="381"/>
+    <line x1="960" y1="315" x2="998" y2="315"/>
+  </g>
+
+  <!-- Sync search -->
+  <rect x="236" y="474" width="554" height="58" rx="8" fill="#fff2cc" stroke="#d6b656" stroke-width="2"/>
+  <text x="513" y="509" text-anchor="middle" class="sans ink" font-size="17"><tspan font-weight="700">sync search</tspan> · PSNR at every offset of the window, in parallel</text>
+  <line x1="729" y1="474" x2="729" y2="420" class="edge" marker-end="url(#arrow)"/>
+
+  <!-- libvmaf -->
+  <rect x="830" y="214" width="130" height="202" rx="10" fill="#1f4e8c" stroke="#163a6a" stroke-width="2"/>
+  <g class="sans" fill="#ffffff" text-anchor="middle">
+    <text x="895" y="282" font-size="24" font-weight="700">libvmaf</text>
+    <text x="895" y="318" font-size="15">VMAF v1</text>
+    <text x="895" y="340" font-size="15">VMAF v0.6</text>
+    <text x="895" y="374" font-size="15" fill="#cfe0f7">CPU · CUDA</text>
+  </g>
+
+  <!-- Results -->
+  <rect x="1000" y="214" width="200" height="202" rx="10" fill="#f5f5f5" stroke="#3c4650" stroke-width="2"/>
+  <text x="1016" y="244" class="sans ink" font-size="16" font-weight="700">scores</text>
+  <text x="1016" y="270" class="mono ink" font-size="14">vmaf_v1_hd</text>
+  <text x="1016" y="292" class="mono ink" font-size="14">vmaf_v1_phone</text>
+  <line x1="1016" y1="314" x2="1184" y2="314" stroke="#c9cfd6" stroke-width="1"/>
+  <text x="1016" y="342" class="sans ink" font-size="16" font-weight="700">files</text>
+  <text x="1016" y="368" class="mono ink" font-size="14">_vmaf.json</text>
+  <text x="1016" y="390" class="mono ink" font-size="14">_vmaf_summary.json</text>
+
+  <!-- Footer -->
+  <text x="80" y="590" class="mono muted" font-size="18">pip install easyvmaf</text>
+  <text x="640" y="590" text-anchor="middle" class="sans muted" font-size="18">FFmpeg · FFprobe · libvmaf</text>
+  <text x="1200" y="590" text-anchor="end" class="mono muted" font-size="18">github.com/gdavila/easyVmaf</text>
+</svg>

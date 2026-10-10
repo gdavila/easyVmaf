@@ -17,6 +17,8 @@ preprocessing for you:
 - Frame rate adaptation
 - Pixel format normalization
 
+![easyVmaf pipeline: each input goes through the same FFmpeg filter chain, synchronized by a PSNR search, before libvmaf scores it](https://raw.githubusercontent.com/gdavila/easyVmaf/master/readme/architecture.svg)
+
 Since 4.0, easyVmaf computes [VMAF v1](https://github.com/Netflix/vmaf/blob/master/resource/doc/models_v1.md)
 by default. The VMAF v0.6 models of easyVmaf 3.x are still available with
 `--vmaf-version 0.6`. Upgrading from 3.x? See [Migrating from 3.x](#migrating-from-3x).
