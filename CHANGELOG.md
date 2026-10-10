@@ -2,19 +2,19 @@
 
 ## 5.0.0 (unreleased)
 
-easyVmaf 5.0 is the first release published on PyPI (`pipx install easyvmaf`).
-From this version easyVmaf follows Semantic Versioning: see
-[Versioning](README.md#versioning) for what the contract covers. It requires
-Python >= 3.10. The models and scores of 4.0 are unchanged. Each breaking
-change below says how to migrate; users of 3.x can follow
-[Migrating from 3.x](README.md#migrating-from-3x).
+easyVmaf 5.0 is the first release published on PyPI (`pipx install easyvmaf`)
+and on the GitHub Container Registry (Docker). From this version easyVmaf
+follows Semantic Versioning: see [Versioning](README.md#versioning) for what
+the contract covers. It requires Python >= 3.10. The models and scores of 4.0
+are unchanged. Each breaking change below says how to migrate; users of 3.x
+can follow [Migrating from 3.x](README.md#migrating-from-3x).
 
 ### Breaking changes
 
-- **`--end-sync` is now `--shortest`.** The flag never synchronized anything: it
-  sets libvmaf `shortest=1`, so the calculation stops when the shorter input ends.
-  The new name matches libvmaf and FFmpeg's `-shortest`. No alias is kept:
-  `--end-sync` exits with code 2: `error: --end-sync was removed, use --shortest`.
+- **`--end-sync` is now `--shortest`.** The flag never synchronized anything:
+  it stops the calculation when the shorter input ends (libvmaf `shortest=1`,
+  like FFmpeg's `-shortest`). `--end-sync` exits with code 2:
+  `error: --end-sync was removed, use --shortest`.
 - **`--reverse` is now `--sync-reverse`**, and it requires `--sync-window`.
   `--reverse` exits with code 2: `error: --reverse was removed, use --sync-reverse`.
 - **The manual offset moved to `--sync-offset`.** In 4.0, `--sync-start` without
@@ -22,20 +22,17 @@ change below says how to migrate; users of 3.x can follow
   `--sync-start` and `--sync-reverse` only configure the sync search and require
   `--sync-window`; without it they exit with code 2 and name the equivalent,
   e.g. `--sync-start 1.5 --sync-reverse` → `use --sync-offset -1.5`.
-- **`--json` is removed.** Every run writes its schema 2 result to a summary
-  file next to the libvmaf log (`<log>_summary.json`; see New). `--json` exits
-  with code 2 and says so.
-- **`--gpu` also decodes on the GPU, and accepts every model.** It now uses
-  the GPU for each part it can do without changing a score (see New): NVDEC
-  decoding of the inputs it decodes exactly, and `libvmaf_cuda` when the models
-  allow it. The v0.6 scores of 4.x `--gpu` are unchanged;
-  `--gpu --disable-hw-decode` is the 4.x command, exactly. `--gpu` with a VMAF
-  v1 model (the default) or `--bitdepth 10` exited with code 2 in 4.x; it now
-  computes VMAF on the CPU with `libvmaf`, still decodes on the GPU, and the
-  summary says `"cuda": false`.
-- **Python 3.8 and 3.9 are no longer supported.** Both are end of life upstream.
-- **The Python API is renamed after the CLI flags.** The CLI is a client of the
-  API, so the API now uses the flag names (`--sync-offset` is `sync_offset=`):
+- **`--json` is removed.** Every run writes its result to a summary file next
+  to the libvmaf log instead (see New). `--json` exits with code 2 and says so.
+- **`--gpu` accepts every model, and also decodes on the GPU.** In 4.x it
+  exited with code 2 with a VMAF v1 model (the default) or `--bitdepth 10`;
+  now it computes those on the CPU with `libvmaf`, and the summary says
+  `"cuda": false`. The inputs are decoded on the GPU where possible (see New).
+  The v0.6 scores of 4.x `--gpu` are unchanged, and
+  `--gpu --disable-hw-decode` runs exactly the 4.x command.
+- **Python 3.8 and 3.9 are no longer supported.** Both are end of life.
+- **The Python API is renamed after the CLI flags** (`--sync-offset` is
+  `sync_offset=`):
 
   | 4.x | 5.0 |
   |---|---|
@@ -54,131 +51,76 @@ change below says how to migrate; users of 3.x can follow
     works), and `window` has no default (`syncOffset()` defaulted to 3 s).
   - `compute()` has no `autoSync`: call `sync()` first.
   - `setOffset()` is gone: pass `sync_offset=` to the constructor, or call
-    `sync()`. `compute()` rebuilds every filter chain and applies the offset.
-  - `FFprobe`, `FFmpegQos` and `inputFFmpeg` are no longer exported. The
-    submodules (`easyvmaf.vmaf`, `easyvmaf.ffmpeg`, ...) are internal. The class
-    no longer shadows the `easyvmaf.vmaf` module.
-  - New exports: `SyncResult`, `ModelRun`, `FFmpegExecutionError` and
-    `check_ffmpeg`.
-- **docker-compose requires `VIDEO_DIR`.** It defaulted to `./video_samples`,
-  which is removed from the repository; with a default, Docker would silently
-  create an empty root-owned directory and easyvmaf would fail on missing inputs.
+    `sync()`.
+  - `FFprobe`, `FFmpegQos` and `inputFFmpeg` are no longer exported, and the
+    submodules (`easyvmaf.vmaf`, `easyvmaf.ffmpeg`, ...) are internal.
+  - New exports: `SyncResult`, `ModelRun`, `FFmpegExecutionError`,
+    `check_ffmpeg`, `validate_range_config` and `UnsupportedRangeError`.
+- **The CUDA image needs an NVIDIA driver >= 570** on the host (545 before):
+  it is built on CUDA 12.8.2 instead of 12.3.2.
+- **docker-compose requires `VIDEO_DIR`**, the host directory with the videos.
+  Its default, `./video_samples`, is no longer in the repository.
 
 ### New
 
-- Published on PyPI, with complete package metadata (SPDX license, project URLs,
-  classifiers). The version has a single source, `easyvmaf.__version__`.
+- Published on PyPI: `pipx install easyvmaf` or `pip install easyvmaf`. See
+  [Installation](README.md#installation).
+- Docker images on the GitHub Container Registry, `linux/amd64` only (on Apple
+  Silicon they run emulated): `ghcr.io/gdavila/easyvmaf:5.0.0` (also `5.0`,
+  `5`, `latest`) and `ghcr.io/gdavila/easyvmaf:5.0.0-cuda` (also `5.0-cuda`,
+  `5-cuda`, `latest-cuda`, `cuda`). See [Docker](README.md#docker).
 - `--sync-offset S`: signed manual offset. Positive trims the reference,
   negative the distorted video, with the same sign as the reported offset, so
   the offset printed by `--sync-only` can be passed as is. It cannot be combined
   with `--sync-window`.
-- Frame ranges: `--start-frame N` and `--frame-count N` (`start_frame=`,
-  `frame_count=` in the API) measure exactly frames `N..N+count-1` of the full
-  calculation, with the same frame numbers and scores, without cutting or
-  re-encoding the inputs. Consecutive ranges join into the full calculation, so a
-  long video can be split and its ranges computed in parallel, on one machine or
-  on several. Each range writes `<distorted>_vmaf_f<first>-<last>.<ext>`, and
-  the summary adds `vmaf.range` (`start_frame`, `frame_count`, `frames_scored`).
-  With `--cambi-heatmap`, a range writes its heatmaps to
-  `<distorted>_cambi_heatmap_f<first>-<last>/`; concatenating the files of
-  consecutive ranges gives the full calculation's heatmaps byte for byte (with
-  more than one thread, see the README Known bugs). MP4,
-  MOV, Matroska and WebM inputs only; also with `--gpu`, not yet with `--subsample`. See
-  [Frame ranges](README.md#frame-ranges).
-- Summary file: every successful input writes its schema 2 result next to the
-  libvmaf log (`<distorted>_vmaf_summary.json`,
-  `<distorted>_vmaf_f<first>-<last>_summary.json` for a range,
-  `<distorted>_sync_summary.json` with `--sync-only`). The schema 2 field names
-  are those of the 4.0 `--json` record.
-- `easyvmaf` exports `validate_range_config` and `UnsupportedRangeError`.
-- `--gpu` decodes the inputs on an NVIDIA GPU (NVDEC) **without changing any
-  score**, and computes VMAF with `libvmaf_cuda` where the models allow it
-  (v0.6 at 8 bits), otherwise with `libvmaf` on the CPU, with a log line that
-  says why. Only steps that give the same frames as the CPU run on the GPU:
-  H.264 8-bit, HEVC 8/10-bit and VP9 8-bit 4:2:0 decoding, and with
-  `libvmaf_cuda` an input already at the display resolution, progressive and
-  in `yuv420p` stays on the GPU up to `libvmaf_cuda`. Any other hardware
-  decoded input is downloaded right after decoding and scaled, deinterlaced
-  and converted on the CPU as before. An input the GPU cannot decode (MPEG-2,
-  AV1, ProRes, FFV1, H.264 High 10, ...), or any input when FFmpeg has no
-  NVDEC, is decoded on the CPU with a warning. Works with frame ranges; the
-  sync search stays on the CPU. Two opt-outs, which exit with code 2 without
-  `--gpu`: `--disable-hw-decode` (CPU decoding) and `--disable-vmaf-cuda`
-  (`libvmaf` on the CPU); `Vmaf(..., gpu=False, disable_hw_decode=False,
-  disable_vmaf_cuda=False)` in the API. easyvmaf exits with code 1 when VMAF
-  would run on `libvmaf_cuda` and FFmpeg lacks it. See
-  [GPU](README.md#gpu).
-- The summary adds `vmaf.cuda` (`VmafResult.cuda`): `true` when VMAF was
-  computed with `libvmaf_cuda`; and, only with hardware decoding,
-  `vmaf.hw_decode` (`VmafResult.hw_decode`): `{api, distorted, reference}`,
-  `"hw"` or `"sw"` per input. The fields are additive: `schema_version`
-  stays 2.
-- The CUDA image sets `NVIDIA_DRIVER_CAPABILITIES=compute,utility,video`, so
-  NVDEC works in the container without `-e`.
-- The CUDA image can be redistributed. Its FFmpeg was configured with
-  `--enable-nonfree --enable-cuda-nvcc --enable-libnpp`, which FFmpeg marks
-  as unredistributable; it now compiles the CUDA filters with clang
-  (`--enable-cuda-llvm`) and leaves out libnpp, which easyVmaf never used.
-  `libvmaf_cuda`, NVDEC, `scale_cuda` and `yadif_cuda` are unchanged, and so
-  are the frames and the scores. Both images label their licenses (easyVmaf
-  MIT, FFmpeg LGPL-3.0-or-later, libvmaf BSD-2-Clause-Patent, dav1d
-  BSD-2-Clause) and their source repository.
-- Both images carry the license texts of what they build from source in
-  `/usr/local/share/licenses` (FFmpeg, libvmaf; in the CUDA image also dav1d
-  and nv-codec-headers), which they lacked, and `ffmpeg/SOURCE` says where
-  FFmpeg's source code is: the archive built, its sha256 and the commit of its
-  tag, as the LGPL requires. The release smoke test checks them.
-- The CUDA image is 0.6 GB instead of 7.4 GB. It copied the whole
-  `/usr/local` of the build stage, the CUDA development toolkit included
-  (nvcc, NPP, ...), into the `runtime` CUDA base, which adds 1.7 GB of CUDA
-  libraries. It now copies only `lib`, `bin` and `share` (FFmpeg, libvmaf,
-  dav1d, the VMAF models) into the `base` CUDA image; FFmpeg and libvmaf link
-  no CUDA library, they load the driver's at runtime.
-- The CUDA image is built on CUDA 12.8.2 instead of 12.3.2 and needs an
-  NVIDIA driver >= 570 on the host (545 before): libvmaf's CUDA code now
-  embeds PTX ISA 8.7. The CUDA 12.3 license lets the CUDA driver libraries
-  of the `nvidia/cuda` base image (`cuda-compat`) be redistributed only on
-  Docker Hub or NVIDIA GPU Cloud, not on the GitHub Container Registry; the
-  license of CUDA 12.4 and later has no such condition, and the 12.8.2 base
-  ships none of those libraries. NVIDIA also deletes `nvidia/cuda` tags six
-  months after the last driver branch they support ends: 12.3.2's (R535)
-  ended in June 2026, while 12.8.2 is supported with R580 until June 2028.
-  The frames of `scale_cuda` and `yadif_cuda` and the scores are unchanged.
-- Docker images on the GitHub Container Registry. From this release on, each
-  release publishes the CPU and the CUDA image, `linux/amd64` only:
-  `ghcr.io/gdavila/easyvmaf:5.0.0` (also `5.0`, `5`, `latest`) and
-  `ghcr.io/gdavila/easyvmaf:5.0.0-cuda` (also `5.0-cuda`, `5-cuda`,
-  `latest-cuda`, `cuda`). They are published after PyPI accepts the same
-  version, from the commit whose tests passed, once each image passes a smoke
-  test; the CUDA image is never published if its FFmpeg is nonfree. On Apple
-  Silicon they run emulated. Building them locally still works. See
-  [Docker](README.md#docker).
+- Frame ranges: `--start-frame N` and `--frame-count N` measure exactly frames
+  `N..N+count-1` of the full calculation, with the same frame numbers and
+  scores, without cutting or re-encoding the inputs. Consecutive ranges join
+  into the full calculation, so a long video can be split and its ranges
+  computed in parallel, on one machine or on several. Each range writes
+  `<distorted>_vmaf_f<first>-<last>.<ext>` (and its CAMBI heatmaps to
+  `<distorted>_cambi_heatmap_f<first>-<last>/`), and the summary adds
+  `vmaf.range`. MP4, MOV, Matroska and WebM inputs only; not yet with
+  `--subsample`. See [Frame ranges](README.md#frame-ranges).
+- Summary file: every successful input writes its result as JSON (schema 2,
+  the fields of the 4.0 `--json` record) next to the libvmaf log:
+  `<distorted>_vmaf_summary.json`,
+  `<distorted>_vmaf_f<first>-<last>_summary.json` for a range, or
+  `<distorted>_sync_summary.json` with `--sync-only`. See
+  [Summary file](README.md#summary-file).
+- GPU decoding: `--gpu` decodes the inputs with NVDEC, with the same scores as
+  decoding on the CPU: H.264 8-bit, HEVC 8/10-bit and VP9 8-bit 4:2:0. Other
+  inputs (MPEG-2, AV1, ProRes, FFV1, H.264 High 10, ...), or every input when
+  FFmpeg has no NVDEC, are decoded on the CPU with a warning. Scaling,
+  deinterlacing and bit depth conversion stay on the CPU. Two opt-outs, valid
+  only with `--gpu`: `--disable-hw-decode` (decode on the CPU) and
+  `--disable-vmaf-cuda` (compute VMAF on the CPU). Works with frame ranges.
+  See [GPU](README.md#gpu).
+- The summary adds `vmaf.cuda`, `true` when VMAF was computed on the GPU
+  (`libvmaf_cuda`), and, with GPU decoding, `vmaf.hw_decode`, which says per
+  input whether it was decoded on the GPU (`"hw"`) or the CPU (`"sw"`).
+  `schema_version` stays 2.
+- The CUDA image:
+  - is 0.6 GB instead of 7.4 GB;
+  - can be redistributed: its FFmpeg is LGPL, without nonfree components. The
+    frames and scores are unchanged;
+  - enables NVDEC in the container without `-e NVIDIA_DRIVER_CAPABILITIES`.
+- Both images carry the license texts of FFmpeg, libvmaf and, in the CUDA
+  image, dav1d and nv-codec-headers in `/usr/local/share/licenses`, and
+  `ffmpeg/SOURCE` there says where FFmpeg's source code is.
 
 ### Fixed
 
-- The sync search no longer writes `stats_file_psnr.log` to the working
-  directory. Every sync worker wrote it to the same file, so each run left it
-  behind, parallel workers overwrote each other, and a run from a directory that
-  is not writable failed. Nothing read it.
-- The CUDA image installs easyvmaf. Ubuntu 22.04's pip 22.0.2 installed the
-  package as `UNKNOWN-0.0.0`, and the image only worked because it imported
-  easyvmaf from its working directory; pip is now upgraded first, so the
-  `easyvmaf` command exists in the image.
-- The CUDA image builds again. It cloned the NVIDIA codec headers from their
-  master branch, which no longer builds FFmpeg 8.1, and downloaded dav1d from
-  a URL that now answers `wget` with an HTML page. The headers are pinned to
-  13.0.19.1, the first release with the CUDA functions libvmaf 3.2.1 uses, and
-  dav1d comes from its release tarball.
+- The sync search no longer leaves `stats_file_psnr.log` in the working
+  directory, and no longer fails when that directory is not writable.
+- `--cambi-heatmap` no longer mixes the heatmaps of two runs at different
+  encoding sizes (another `--enc-size`, or VMAF v1 vs `--vmaf-version 0.6`) in
+  `<distorted>_cambi_heatmap/`.
 - When FFmpeg cannot run, is older than 8.1 or its libvmaf cannot compute VMAF
-  v1, the error says how to install a suitable FFmpeg on the platform (Homebrew
-  on macOS, the BtbN static build on Linux) and links the README instead of
-  recommending a Docker image that is not published.
-- `--cambi-heatmap` no longer mixes the heatmaps of two runs. libvmaf
-  overwrites only the files named after the current encoding size, so running
-  it again on the same distorted video at another encoding size (another
-  `--enc-size`, or VMAF v1 vs `--vmaf-version 0.6`) left the files of both
-  runs in `<distorted>_cambi_heatmap/`. Every run now deletes the directory's
-  `cambi_heatmap_scale_*.gray` files first.
+  v1, the error says how to install a suitable FFmpeg (Homebrew on macOS, the
+  BtbN static build on Linux) and links the README.
+- The CUDA image builds again, and its `easyvmaf` command exists: the package
+  was installed as `UNKNOWN-0.0.0`.
 
 ## 4.0.0
 
