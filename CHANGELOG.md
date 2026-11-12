@@ -11,6 +11,15 @@
   logs are unchanged; memory use (RSS) grows by 3 to 12 %. A `GLIBC_TUNABLES`
   you set yourself is kept as is, and opts out. See
   [Execution](README.md#execution).
+- **`--jobs N` computes VMAF in N FFmpeg processes at once** (`jobs=` in the
+  Python API), for when one process does not fill the machine, as at 4K: on
+  an AWS c7a.16xlarge at 4K 4:4:4, one process reaches about 20 fps and 8
+  processes about 92 fps together. easyVmaf probes and syncs once, splits the
+  frames into contiguous frame ranges, and joins them into the log, summary
+  and CAMBI heatmaps of a single process, with the same frames and scores.
+  Each job is a full FFmpeg process (about 6.6 GB at 4K 4:4:4). MP4, MOV,
+  Matroska and WebM inputs only; not with `--subsample`, `--sync-only` or,
+  for now, `--gpu`. See [Parallel jobs](README.md#parallel-jobs).
 
 ## 5.0.0 (2026-10-09)
 

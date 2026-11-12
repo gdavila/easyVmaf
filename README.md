@@ -59,6 +59,7 @@ written for an earlier version of easyVmaf.
   - [High frame rate](#high-frame-rate)
 - [Interlaced sources](#interlaced-sources)
 - [Frame ranges](#frame-ranges)
+- [Parallel jobs](#parallel-jobs)
 - [Examples](#examples)
   - [Basic VMAF (no sync)](#basic-vmaf-no-sync)
   - [Model selection](#model-selection)
@@ -333,7 +334,8 @@ final results (`<distorted>_vmaf_summary.json`).
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--threads N` | `0` | Parallel single-threaded sync workers and libvmaf threads (0 = CPU count). |
+| `--threads N` | `0` | Parallel single-threaded sync workers and libvmaf threads (0 = CPU count). With `--jobs`, libvmaf threads per job (0 = CPU count / jobs). |
+| `--jobs N` | `1` | FFmpeg processes that compute VMAF at the same time, each on a range of contiguous frames, joined into one log identical to a single process. For when one process does not fill the CPUs, e.g. at 4K. See [Parallel jobs](#parallel-jobs). |
 | `--subsample N` | `1` | Frame subsampling factor to speed up the computation. |
 | `--gpu` | off | Use the NVIDIA GPU where it can: decode on the GPU (NVDEC) each input it decodes exactly, never changing a score, and compute VMAF with `libvmaf_cuda` when the models allow it (`--vmaf-version 0.6`, 8 bits), otherwise on the CPU. Requires a CUDA build of FFmpeg (such as the CUDA [Docker](#docker) image). See [GPU](#gpu). |
 | `--disable-hw-decode` | off | With `--gpu`: decode every input on the CPU. |
@@ -381,6 +383,8 @@ replaced with defaults.
 - `--start-frame` accepts integers of at least 0 and `--frame-count` integers of
   at least 1. A frame range cannot be combined with `--sync-only`, and, for now,
   not with `--subsample`.
+- `--jobs` accepts integers of at least 1. Above 1 it cannot be combined with
+  `--sync-only` or `--subsample`, and, for now, not with `--gpu`.
 - Removed flags are rejected with the name of their replacement, e.g.
   `error: -sw was removed, use --sync-window` or
   `error: --reverse was removed, use --sync-reverse`.
@@ -587,6 +591,55 @@ With `--gpu`, ranges join into the full GPU calculation in the same way:
 `libvmaf_cuda` gives identical values run after run, and the seek, the sync
 trims and the range trim select the same frames on the CPU and, for an input
 that stays on the GPU after hardware decoding, on the GPU.
+
+To split a calculation into ranges on one machine, `--jobs` does all of this
+for you: see [Parallel jobs](#parallel-jobs).
+
+## Parallel jobs
+
+One FFmpeg process does not always use the whole machine: part of the work on
+each frame runs on a single thread (copying the pictures to libvmaf, PSNR). At
+4K 4:4:4, on a 64-core AWS c7a.16xlarge, one process reaches about 20 fps on
+about 15 cores, and 8 processes on different ranges reach about 92 fps
+together. `--jobs N` runs N such processes for you and gives the result of one:
+
+```bash
+easyvmaf -d distorted.mp4 -r reference.mp4 --display 4k --jobs 8
+easyvmaf -d distorted.mp4 -r reference.mp4 --sync-window 3 --jobs 8   # sync once, then 8 jobs
+```
+
+easyVmaf probes the inputs and runs the sync search once, splits the frames to
+measure into N contiguous [frame ranges](#frame-ranges), computes them at the
+same time, and joins their logs and CAMBI heatmaps. The log, the summary file
+and the heatmaps have the names and contents of a single process: the same
+frames, frame numbers and scores. Only two values in the log differ: libvmaf's
+processing speed (`fps`), and the pooled metrics, which are recomputed from the
+logged per-frame values (as for a range) and may differ from libvmaf's in the
+6th decimal. With `--start-frame`/`--frame-count`, that range is split into
+jobs, and the result is the range's. The jobs' own files
+(`<distorted>_vmaf_f<first>-<last>_part.*`) are deleted once joined, or when a
+job fails: a failed job stops the others, and the run fails without writing a
+log.
+
+- **When to use it:** when one process leaves CPUs idle, as at 4K or with 4:4:4
+  inputs. When one process already fills the machine (e.g. HD on a few cores),
+  `--jobs` only adds the cost of starting each job.
+- **Threads:** each job gets `--threads` libvmaf threads, by default the CPU
+  count divided by the number of jobs, and FFmpeg decoding and filter threads
+  for its share of the CPUs.
+- **Memory:** each job is a full FFmpeg process. At 4K 4:4:4 each one uses
+  about 6.6 GB, so 8 jobs need about 53 GB.
+- **Inputs:** only MP4, MOV, Matroska and WebM, as for a frame range (exit
+  code 1 otherwise). Remux other containers first, e.g.
+  `ffmpeg -i in.ts -map 0:v:0 -c copy out.mkv`. Without a sync offset, both
+  videos must start at the same timestamp.
+- **Not with** `--subsample` or `--sync-only`, and not with `--gpu` for now:
+  parallel jobs on the GPU have not been validated to give the scores of one
+  process yet.
+- **Progress:** `--progress` shows nothing with more than one job (a warning
+  says so). Each FFmpeg process prints its own statistics line.
+- A video too short to give each job at least 5 frames runs in fewer jobs, or
+  in one process.
 
 ## Examples
 
@@ -943,8 +996,8 @@ result.frames_scored  # 9000, or fewer for the last range
 paths are keyword-only: `display`, `vmaf_versions`, `views`, `hfr`, `bitdepth`,
 `enc_size`, `enc_bitdepth`, `model_options`, `output_format`, `loglevel`,
 `subsample`, `threads`, `progress`, `shortest`, `fps`, `cambi_heatmap`, `gpu`,
-`sync_offset`, `start_frame`, `frame_count`, `disable_hw_decode` and
-`disable_vmaf_cuda`. `result.cuda` and `result.hw_decode` are the summary's
+`sync_offset`, `start_frame`, `frame_count`, `disable_hw_decode`,
+`disable_vmaf_cuda` and `jobs`. `result.cuda` and `result.hw_decode` are the summary's
 `vmaf.cuda` and `vmaf.hw_decode` (`None` without hardware decoding).
 
 The public API is what the `easyvmaf` package exports: `Vmaf`, `VmafResult`,

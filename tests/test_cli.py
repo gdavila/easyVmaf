@@ -101,6 +101,11 @@ def batch(tmp_path, monkeypatch, ffmpeg_ok):
     # Not supported with a range yet: each would score other frames than the full calculation.
     (["--frame-count", "100", "--subsample", "2"], 2, "--subsample"),
     (["--start-frame", "100", "--sync-only", "--sync-window", "1"], 2, "--sync-only"),
+    (["--jobs", "0"], 2, "--jobs"),
+    # Jobs are frame ranges: what a range does not support, or not validated yet.
+    (["--jobs", "2", "--subsample", "2"], 2, "--subsample"),
+    (["--jobs", "2", "--gpu"], 2, "--gpu"),
+    (["--jobs", "2", "--sync-only", "--sync-window", "1"], 2, "--sync-only"),
     # The opt-outs of --gpu do nothing without it.
     (["--disable-hw-decode"], 2, "requires --gpu"),
     (["--disable-vmaf-cuda"], 2, "requires --gpu"),
@@ -160,7 +165,7 @@ def test_missing_input_fails_on_stderr(batch, monkeypatch, capsys, missing, mess
 DEFAULTS = dict(subsample=1, threads=0, fps=0, display="hd", vmaf_versions=("1",),
                 views=None, hfr="auto", bitdepth="auto", enc_size=None, enc_bitdepth=None,
                 model_options=(), output_format="json", sync_offset=0.0, start_frame=None,
-                frame_count=None)
+                frame_count=None, jobs=1)
 
 
 @pytest.mark.parametrize("options, forwarded", [
@@ -176,9 +181,9 @@ DEFAULTS = dict(subsample=1, threads=0, fps=0, display="hd", vmaf_versions=("1",
     # Option values are case-insensitive, as users type them (XML, 4K, HFR=ON).
     (["--vmaf-version", "1", "0.6", "--output-format", "XML"],
      dict(DEFAULTS, vmaf_versions=("1", "0.6"), output_format="xml")),
-    (["--start-frame", "9000", "--frame-count", "9000"],
-     dict(DEFAULTS, start_frame=9000, frame_count=9000)),
-], ids=["defaults", "all-options-4k", "both-versions-xml", "frame-range"])
+    (["--start-frame", "9000", "--frame-count", "9000", "--jobs", "4"],
+     dict(DEFAULTS, start_frame=9000, frame_count=9000, jobs=4)),
+], ids=["defaults", "all-options-4k", "both-versions-xml", "frame-range-jobs"])
 def test_options_are_forwarded(batch, monkeypatch, options, forwarded):
     distorted = batch.files[0]
     calculation = batch.calc[distorted]

@@ -25,6 +25,7 @@ import csv
 import glob
 import json
 import os
+import shutil
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from statistics import mean
@@ -156,11 +157,7 @@ def trim_log(log_path: str, output_fmt: str, start: int, count: int, first_frame
         kept = frames[start:start + count]
         for frame in kept:
             frame.set('frameNum', str(int(frame.get('frameNum')) + first_frame))
-        for metric in root.findall('pooled_metrics/metric'):
-            name = metric.get('name')
-            pooled = _pool([float(frame.get(name)) for frame in kept])
-            for key, value in pooled.items():
-                metric.set(key, '%.6f' % value)
+        _repool_xml(root, kept)
         tree.write(log_path)
     else:
         with open(log_path) as jsonFile:
@@ -169,11 +166,87 @@ def trim_log(log_path: str, output_fmt: str, start: int, count: int, first_frame
         for frame in kept:
             frame['frameNum'] += first_frame
         log['frames'] = kept
-        log['pooled_metrics'] = {
-            name: {key: round(value, 6) for key, value in
-                   _pool([frame['metrics'][name] for frame in kept]).items()}
-            for name in log.get('pooled_metrics', {})}
+        _repool_json(log)
         with open(log_path, 'w') as jsonFile:
+            json.dump(log, jsonFile, indent=2)
+
+
+def _repool_xml(root, frames):
+    """Recompute the pooled metrics of an xml log from its frames."""
+    for metric in root.findall('pooled_metrics/metric'):
+        name = metric.get('name')
+        pooled = _pool([float(frame.get(name)) for frame in frames])
+        for key, value in pooled.items():
+            metric.set(key, '%.6f' % value)
+
+
+def _repool_json(log):
+    """Recompute the pooled metrics of a json log from its frames."""
+    log['pooled_metrics'] = {
+        name: {key: round(value, 6) for key, value in
+               _pool([frame['metrics'][name] for frame in log['frames']]).items()}
+        for name in log.get('pooled_metrics', {})}
+
+
+def _joined_fps(counts: Sequence[int], speeds: Sequence[Optional[float]]) -> Optional[float]:
+    """libvmaf's fps of joined logs: frames per CPU second (it measures with
+    clock()), i.e. all the frames over the CPU time of every log."""
+    if not all(speeds):
+        return None
+    return sum(counts) / sum(n / fps for n, fps in zip(counts, speeds))
+
+
+def join_logs(log_paths: Sequence[str], output_fmt: str, out_path: str):
+    """
+    Write to out_path the frames of the libvmaf logs of consecutive ranges, in
+    order, with the pooled metrics and the processing speed (fps) recomputed
+    from all of them, in the same format. The rest (version, parameters)
+    comes from the first log.
+
+    Args:
+        log_paths: logs written with log_fmt=output_fmt, in frame order
+        output_fmt: 'json', 'xml' or 'csv'
+        out_path: the joined log; written only once every log was read
+    """
+    if output_fmt == 'csv':
+        header, rows = None, []
+        for path in log_paths:
+            with open(path, mode='r', newline='') as csvFile:
+                part = list(csv.reader(csvFile))
+            header = header or part[0]
+            rows += part[1:]
+        with open(out_path, mode='w', newline='') as csvFile:
+            csv.writer(csvFile, lineterminator='\n').writerows([header] + rows)
+    elif output_fmt == 'xml':
+        trees = [ET.parse(path) for path in log_paths]
+        root = trees[0].getroot()
+        parent = root.find('frames')
+        counts, speeds = [len(parent.findall('frame'))], []
+        for tree in trees[1:]:
+            frames = tree.getroot().findall('frames/frame')
+            counts.append(len(frames))
+            parent.extend(frames)
+        for tree in trees:
+            fyi = tree.getroot().find('fyi')
+            speeds.append(float(fyi.get('fps')) if fyi is not None and fyi.get('fps') else None)
+        _repool_xml(root, parent.findall('frame'))
+        fps = _joined_fps(counts, speeds)
+        if fps is not None:
+            root.find('fyi').set('fps', '%.2f' % fps)
+        trees[0].write(out_path)
+    else:
+        logs = []
+        for path in log_paths:
+            with open(path) as jsonFile:
+                logs.append(json.load(jsonFile))
+        log = logs[0]
+        fps = _joined_fps([len(part['frames']) for part in logs],
+                          [part.get('fps') for part in logs])
+        log['frames'] = [frame for part in logs for frame in part['frames']]
+        _repool_json(log)
+        if fps is not None:
+            log['fps'] = round(fps, 2)
+        with open(out_path, 'w') as jsonFile:
             json.dump(log, jsonFile, indent=2)
 
 
@@ -213,3 +286,25 @@ def trim_heatmaps(path: str, start: int, count: int, frames: int, block: int = 1
                 f.seek(offset - begin)
                 f.write(data)
             f.truncate(end - begin)
+
+
+def join_heatmaps(paths: Sequence[str], out_path: str):
+    """
+    Concatenate, file by file, the CAMBI heatmaps of consecutive ranges, in
+    order, into the heatmaps directory out_path, replacing the ones there.
+
+    Raises:
+        ValueError: if the ranges do not have the same heatmap files
+    """
+    names = [os.path.basename(p) for p in heatmap_files(paths[0])]
+    for path in paths[1:]:
+        if [os.path.basename(p) for p in heatmap_files(path)] != names:
+            raise ValueError(f"CAMBI heatmaps of {path} differ from those of {paths[0]}")
+    os.makedirs(out_path, exist_ok=True)
+    for stale in heatmap_files(out_path):
+        os.remove(stale)
+    for name in names:
+        with open(os.path.join(out_path, name), 'wb') as joined:
+            for path in paths:
+                with open(os.path.join(path, name), 'rb') as part:
+                    shutil.copyfileobj(part, joined, 1 << 24)

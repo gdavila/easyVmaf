@@ -25,7 +25,8 @@ from .ffmpeg import FFprobe
 from .ffmpeg import FFmpegQos
 from .ffmpeg import HW_ACCELS, probe_hw_decode
 from .models import DISPLAY_RESOLUTION, model_names, select_models
-from .results import SyncResult, VmafResult, heatmap_files, read_frames, read_scores, trim_heatmaps, trim_log
+from .results import (SyncResult, VmafResult, heatmap_files, join_heatmaps, join_logs, read_frames,
+                      read_scores, trim_heatmaps, trim_log)
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 import copy
@@ -61,6 +62,10 @@ _RANGE_BOUND_MARGIN = 0.25
 # Containers whose seek lands on the requested frame. MPEG-TS seeks to the
 # next keyframe instead, and raw elementary streams have no timestamps.
 _RANGE_FORMATS = ('mov', 'mp4', 'matroska', 'webm')
+# Fewest frames per job: a shorter range measures more context than frames.
+# It also keeps every range but the last one at least a few frames before the
+# estimated end of the inputs (see _planJobs).
+_JOB_MIN_FRAMES = 2 * RANGE_CONTEXT_FRAMES + 1
 
 # What gpu decodes with: the only hardware decoding implemented.
 _HWACCEL = 'cuda'
@@ -249,6 +254,34 @@ def validate_range_config(start_frame=None, frame_count=None, subsample=1, label
             f"({label('start_frame')}, {label('frame_count')})")
 
 
+def validate_jobs_config(jobs=1, subsample=1, gpu=False, labels=None):
+    """
+    Check the number of parallel jobs and the options it is combined with,
+    without probing any input. Vmaf() runs it in its constructor; the CLI
+    runs it once.
+
+    Raises:
+        UnsupportedRangeError: jobs > 1 splits the calculation into frame ranges
+    """
+    labels = labels or {}
+
+    def label(argument):
+        return labels.get(argument, argument)
+
+    if isinstance(jobs, bool) or not isinstance(jobs, int) or jobs < 1:
+        raise UnsupportedRangeError(f"{label('jobs')} must be an integer of at least 1, not {jobs!r}")
+    if jobs == 1:
+        return
+    if subsample != 1:
+        raise UnsupportedRangeError(
+            f"{label('jobs')} above 1 measures frame ranges in parallel, which do not "
+            f"support {label('subsample')} above 1")
+    if gpu:
+        raise UnsupportedRangeError(
+            f"{label('jobs')} above 1 is not supported with {label('gpu')} yet: parallel "
+            f"jobs on the GPU have not been validated to give the scores of one job")
+
+
 def cpu_vmaf_reason(vmaf_versions=('1',), bitdepth='auto', disable_vmaf_cuda=False):
     """
     Why gpu computes VMAF with libvmaf on the CPU instead of libvmaf_cuda,
@@ -388,7 +421,7 @@ class Vmaf():
         - Frame rate conversion (if needed)
     """
 
-    def __init__(self, distorted, reference, *, display='hd', vmaf_versions=('1',), views=None, hfr='auto', bitdepth='auto', enc_size=None, enc_bitdepth=None, model_options=(), output_format='json', loglevel="info", subsample=1, threads=0, progress=False, shortest=False, fps=0, cambi_heatmap=False, gpu=False, sync_offset=0.0, start_frame=None, frame_count=None, disable_hw_decode=False, disable_vmaf_cuda=False):
+    def __init__(self, distorted, reference, *, display='hd', vmaf_versions=('1',), views=None, hfr='auto', bitdepth='auto', enc_size=None, enc_bitdepth=None, model_options=(), output_format='json', loglevel="info", subsample=1, threads=0, progress=False, shortest=False, fps=0, cambi_heatmap=False, gpu=False, sync_offset=0.0, start_frame=None, frame_count=None, disable_hw_decode=False, disable_vmaf_cuda=False, jobs=1):
         """
         Args (model selection and VMAF v1 parameters):
             display:       'hd' or '4k'; target resolution of the scaling
@@ -418,6 +451,10 @@ class Vmaf():
                            frame numbers and scores.
 
         Args (execution):
+            jobs:          FFmpeg processes that compute VMAF at the same time,
+                           each on a range of contiguous frames; their logs are
+                           joined into the log of one process, with the same
+                           frames and scores (see _computeJobs). 1: one process
             gpu:           use the GPU (CUDA) where it gives the same frames:
                            decode each input with NVDEC when it can be decoded
                            there exactly, keeping every score unchanged (see
@@ -451,14 +488,20 @@ class Vmaf():
             logger.info("VMAF runs on the CPU (libvmaf): %s", cpu_reason)
         self.cambi_heatmap = cambi_heatmap
         validate_range_config(start_frame, frame_count, subsample)
+        validate_jobs_config(jobs, subsample, gpu)
         self.start_frame = start_frame
         self.frame_count = frame_count
+        self.jobs = jobs
+        self._jobPart = False     # True for the range a job of _computeJobs() measures
         self._validateModelConfig(distorted)
         self.loglevel = loglevel
         self.main = video(distorted, self.loglevel)
         self.ref = video(reference, self.loglevel)
-        if self._hasRange():
+        if self._hasRange() or self.jobs > 1:
             self._checkRangeInputs()
+        if progress and self.jobs > 1:
+            logger.warning("No progress is shown with %s parallel jobs", self.jobs)
+            progress = False
         self.subsample = subsample
         self.ffmpegQos = FFmpegQos(
             self.main.videoSrc, self.ref.videoSrc, self.loglevel,
@@ -486,9 +529,13 @@ class Vmaf():
         for stream, role in ((self.main, 'distorted'), (self.ref, 'reference')):
             format_name = stream.formatInfo.get('format_name', '')
             if not set(format_name.split(',')) & set(_RANGE_FORMATS):
+                what = ("A frame range needs" if self._hasRange() else
+                        "Parallel jobs measure frame ranges, which need")
+                hint = ("" if self._hasRange() else
+                        "; remux it first, e.g. ffmpeg -i in.ts -map 0:v:0 -c copy out.mkv")
                 raise UnsupportedRangeError(
-                    f"A frame range needs inputs that seek to an exact frame (MP4, MOV, "
-                    f"Matroska or WebM); the {role} video {stream.videoSrc} is {format_name}")
+                    f"{what} inputs that seek to an exact frame (MP4, MOV, Matroska or "
+                    f"WebM); the {role} video {stream.videoSrc} is {format_name}{hint}")
 
     def _validateModelConfig(self, distorted):
         self.models = validate_model_config(
@@ -509,7 +556,8 @@ class Vmaf():
             return ''
         start = self.start_frame or 0
         last = start + self.frame_count - 1 if self.frame_count is not None else 'end'
-        return f'_f{start}-{last}'
+        # A job's outputs are temporary: never overwrite a range run by the user.
+        return f'_f{start}-{last}' + ('_part' if self._jobPart else '')
 
     def _cambiHeatmapPath(self, distorted):
         return os.path.splitext(distorted)[0] + '_cambi_heatmap' + self._rangeSuffix()
@@ -766,7 +814,7 @@ class Vmaf():
             qos.invertedSrc = True
         # One FFmpeg process per offset already fills the CPUs; internal
         # FFmpeg threads on top of that oversubscribe them.
-        qos._single_thread = True
+        qos._ffmpeg_threads = 1
 
         # The ref slot holds the searched input. Trim it after the same filters
         # as _applyOffset() in the final calculation, so the offset selects the
@@ -1123,9 +1171,16 @@ class Vmaf():
         and trim after it, like _applyOffset(), so the offset they choose
         selects the same frame here; self.ffmpegQos filter chains are left intact.
 
+        With jobs > 1, each job runs this sequence on its own frame range
+        (_computeJobs()).
+
         Returns:
             VmafResult with the mean score of every model
         """
+        if self.jobs > 1:
+            ranges = self._planJobs()
+            if len(ranges) > 1:
+                return self._computeJobs(ranges)
         self.ffmpegQos.clearFilters()
         self.ffmpegQos.main.clearFilters()
         self.ffmpegQos.ref.clearFilters()
@@ -1208,6 +1263,154 @@ class Vmaf():
             frames_scored=frames_scored,
             cuda=self.cuda,
             hw_decode={'api': self.hwaccel.name, **hw_decode} if hw_decode else None,
+        )
+
+
+    def _planJobs(self):
+        """
+        Split the frames to measure, at output_fps, into contiguous
+        (start_frame, frame_count) ranges, one per job. The last one runs to
+        the end (or to the end of the requested range): the total comes from
+        container durations, which are approximate. The estimate is
+        conservative (the shorter input, one frame short) and every range is
+        at least _JOB_MIN_FRAMES long, so no other range reaches the end; a
+        single range when there are too few frames to split.
+        """
+        self.ffmpegQos.clearFilters()
+        self.ffmpegQos.main.clearFilters()
+        self.ffmpegQos.ref.clearFilters()
+        # Also probes the interlacing of both inputs once, before the jobs share them.
+        self.output_fps = self._normalizeChains(self.ffmpegQos)
+        self.ffmpegQos.main.clearFilters()
+        self.ffmpegQos.ref.clearFilters()
+        trims = self._syncTrims()
+        duration = trims[2] if trims else min(self.main.duration, self.ref.duration)
+        start = self.start_frame or 0
+        span = math.floor(duration * self.output_fps) - 1 - start
+        if self.frame_count is not None:
+            span = min(span, self.frame_count)
+        jobs = min(self.jobs, span // _JOB_MIN_FRAMES)
+        if jobs < 2:
+            logger.warning("Too few frames to measure in %s parallel jobs: using one", self.jobs)
+            return [(self.start_frame, self.frame_count)]
+        size = span // jobs
+        ranges = [(start + i * size, size) for i in range(jobs - 1)]
+        last = start + (jobs - 1) * size
+        ranges.append((last, None if self.frame_count is None
+                       else start + self.frame_count - last))
+        return ranges
+
+    def _jobRange(self, start_frame, frame_count, threads, ffmpeg_threads):
+        """
+        A copy of this calculation that measures one range of a job: it shares
+        the probed inputs (read-only once _planJobs() has probed them) and the
+        sync offset, with its own FFmpegQos and temporary output names.
+        """
+        part = copy.copy(self)
+        part.jobs = 1
+        part._jobPart = True
+        part.start_frame, part.frame_count = start_frame, frame_count
+        part.threads = threads
+        part.progress = False
+        part.ffmpegQos = FFmpegQos(self.main.videoSrc, self.ref.videoSrc, self.loglevel,
+                                   gpu_mode=self.cuda)
+        # FFmpeg's default of one decoder and filter thread per CPU, in every
+        # job, oversubscribes the CPUs; threads do not change the frames.
+        part.ffmpegQos._ffmpeg_threads = ffmpeg_threads
+        return part
+
+    def _removeJobOutputs(self):
+        """Delete the temporary log and CAMBI heatmaps of a job's range."""
+        log_path = self._rangeLogPath()
+        if os.path.exists(log_path):
+            os.remove(log_path)
+        if self.cambi_heatmap:
+            heatmaps = self._cambiHeatmapPath(self.main.videoSrc)
+            for path in heatmap_files(heatmaps):
+                os.remove(path)
+            if os.path.isdir(heatmaps) and not os.listdir(heatmaps):
+                os.rmdir(heatmaps)
+
+    @staticmethod
+    def _runJobs(parts):
+        """
+        Compute every range at once, one thread per FFmpeg process. On the
+        first failure (or an interruption) the other processes are stopped
+        and that failure is raised.
+        """
+        with ThreadPoolExecutor(max_workers=len(parts)) as executor:
+            futures = [executor.submit(part.compute) for part in parts]
+            try:
+                for future in as_completed(futures):
+                    future.result()
+            except BaseException:
+                for part in parts:
+                    part.ffmpegQos.cancel()
+                raise
+            return [future.result() for future in futures]
+
+    def _computeJobs(self, ranges):
+        """
+        Compute VMAF in one FFmpeg process per range of _planJobs(), at the
+        same time, and join their logs and CAMBI heatmaps into those of one
+        process: frame ranges give exactly the frames of the full calculation
+        (see _applyRange()), so the frames, the frame numbers and the scores
+        are identical. The probes and the sync offset are shared; each job
+        gets an equal share of the CPUs as FFmpeg threads, and as libvmaf
+        threads with threads=0.
+        The temporary outputs of the jobs are deleted, also on a failure,
+        which leaves no joined log.
+        """
+        share = max(1, (os.cpu_count() or 1) // len(ranges))
+        threads = self.threads or share
+        parts = [self._jobRange(start, count, threads, share) for start, count in ranges]
+        log_path = self._rangeLogPath()
+        heatmap_path = self._cambiHeatmapPath(self.main.videoSrc) if self.cambi_heatmap else None
+        logger.info("Computing VMAF in %s parallel jobs, %s libvmaf threads each: frames %s",
+                    len(parts), threads, ', '.join(
+                        f"{start}-{start + count - 1}" if count is not None else f"{start}-end"
+                        for start, count in ranges))
+        # Only a complete join is written: never leave an earlier log in its place.
+        if os.path.exists(log_path):
+            os.remove(log_path)
+        try:
+            try:
+                results = self._runJobs(parts)
+            except UnsupportedRangeError as e:
+                raise UnsupportedRangeError(
+                    f"jobs={self.jobs} measures frame ranges in parallel, and one failed: {e}"
+                ) from e
+            for (start, count), result in zip(ranges[:-1], results[:-1]):
+                # A short range before the last one would leave a gap in the log.
+                if result.frames_scored != count:
+                    raise UnsupportedRangeError(
+                        f"The job of frames {start}-{start + count - 1} measured "
+                        f"{result.frames_scored} frames instead of {count}")
+            frames = sum(result.frames_scored for result in results)
+            join_logs([result.log_path for result in results], self.output_format, log_path)
+            if heatmap_path:
+                join_heatmaps([result.cambi_heatmap_path for result in results], heatmap_path)
+        finally:
+            for part in parts:
+                part._removeJobOutputs()
+
+        self.pix_fmt = results[0].pix_fmt
+        # The runs of one process: the jobs' runs name their own heatmaps.
+        self.cambi_heatmap_path = heatmap_path
+        self._resolveModels()
+        return VmafResult(
+            scores=read_scores(log_path, self.output_format, model_names(self.models)),
+            models=list(self.models),
+            display=self.display,
+            pix_fmt=self.pix_fmt,
+            hfr=self.hfr_active,
+            log_path=log_path,
+            cambi_heatmap_path=heatmap_path,
+            sync_offset=self.sync_offset,
+            start_frame=(self.start_frame or 0) if self._hasRange() else None,
+            frame_count=self.frame_count,
+            frames_scored=frames if self._hasRange() else None,
+            cuda=self.cuda,
         )
 
 

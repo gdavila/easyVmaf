@@ -35,6 +35,7 @@ easyvmaf -d distorted.mp4 -r reference.mp4                      # VMAF v1 HD (vm
 easyvmaf -d distorted.mp4 -r reference.mp4 --sync-window 2      # with sync window
 easyvmaf -d distorted.mp4 -r reference.mp4 --sync-offset 1.5    # manual sync offset
 easyvmaf -d distorted.mp4 -r reference.mp4 --sync-offset 1.5 --start-frame 9000 --frame-count 9000  # frame range
+easyvmaf -d distorted.mp4 -r reference.mp4 --display 4k --jobs 8  # 8 FFmpeg processes, one log
 easyvmaf -d distorted.mp4 -r reference.mp4 --display 4k         # VMAF v1 4K
 easyvmaf -d distorted.mp4 -r reference.mp4 --vmaf-version 0.6   # v0.6 models, as in 3.x
 easyvmaf -d distorted.mp4 -r reference.mp4 --vmaf-version 1 0.6 # both generations in one pass
@@ -159,6 +160,10 @@ Thin subprocess wrappers around ffmpeg and ffprobe binaries.
     resolved `Sequence[ModelRun]`; `features` is the complete libvmaf `feature=`
     value built by layer 2. Returns the FFmpeg process; raises
     `FFmpegExecutionError` on failure. Sets `self.vmafpath`.
+  - `cancel()`: from another thread, kills the VMAF process of `getVmaf()`
+    (without progress), now or as soon as it starts (`_process`,
+    `_cancelled`); `getVmaf()` then raises `FFmpegExecutionError`. Used by
+    `--jobs` to stop the other jobs when one fails
   - The VMAF process (both `getVmaf()` paths: `subprocess.Popen(env=...)` and,
     with progress, `run_command_with_progress(popen_kwargs={'env': ...})`, in
     `ffmpeg-progress-yield` since 0.7.0) gets its environment from
@@ -227,9 +232,10 @@ VMAF computation orchestration.
   output_format='json', loglevel='info', subsample=1, threads=0, progress=False,
   shortest=False, fps=0, cambi_heatmap=False, gpu=False, sync_offset=0.0,
   start_frame=None, frame_count=None, disable_hw_decode=False,
-  disable_vmaf_cuda=False)`: pixel format, auto-scaling, auto-deinterlace,
+  disable_vmaf_cuda=False, jobs=1)`: pixel format, auto-scaling, auto-deinterlace,
   parallel sync offset search, model resolution, optional frame range, optional
-  GPU (hardware decoding and `libvmaf_cuda`) and final VMAF scoring.
+  GPU (hardware decoding and `libvmaf_cuda`), optional parallel jobs (see
+  Parallel jobs) and final VMAF scoring.
   `sync(window, start=0, reverse=False)` searches the offset, stores it in
   `self.sync_offset` and returns `SyncResult(offset, psnr)`; `compute()` applies
   `sync_offset` and returns a `VmafResult`. `gpu` is the request; `self.cuda`
@@ -247,6 +253,12 @@ VMAF computation orchestration.
   below 1, or a range with `subsample > 1`. With a range,
   the constructor also rejects containers outside `_RANGE_FORMATS` (mp4/mov,
   matroska/webm) via `formatInfo['format_name']`.
+- `validate_jobs_config(jobs, subsample, gpu, labels=None)`: run by the
+  constructor and once by the CLI. Raises `UnsupportedRangeError` for `jobs`
+  that is not an integer of at least 1, and for `jobs > 1` with `subsample > 1`
+  or with `gpu` (not validated on a GPU host yet). With `jobs > 1` the
+  constructor also rejects containers outside `_RANGE_FORMATS`, suggesting a
+  remux, and turns off `progress` with a warning.
 - `validate_model_config(display, vmaf_versions, views, hfr, bitdepth, enc_size,
   enc_bitdepth, model_options, labels=None)`: the single source of model
   option validation. Run by the `Vmaf` constructor and once by the CLI before the
@@ -279,6 +291,11 @@ VMAF computation orchestration.
   `trim_heatmaps(path, start, count, frames)` keeps pictures `start..start+count-1`
   of each, in place, with picture size = file size / `frames` (frames measured),
   and raises `ValueError` when a file does not hold one picture per measured frame.
+  `join_logs(log_paths, output_fmt, out_path)` writes the frames of consecutive
+  range logs, in order, with the pooled metrics recomputed as `trim_log()` does
+  and libvmaf's `fps` (frames per CPU second) recomputed as all the frames over
+  the CPU time of every log; `join_heatmaps(paths, out_path)` concatenates each
+  heatmap file of the ranges, in order, replacing the files in `out_path`.
 
 Reading libvmaf logs is a layer 2 responsibility since 4.0.
 
@@ -289,17 +306,21 @@ CLI entry point only. Argparse, glob pattern expansion for batch processing,
 printing results and writing the JSON summary file.
 - Flags are `--kebab-case`, grouped in `--help` as input, synchronization, frame
   range, models, VMAF v1 parameters, output and execution. Only `-d`/`-r` have short forms.
-  `allow_abbrev=False`. `--gpu`, `--disable-hw-decode` and `--disable-vmaf-cuda`
-  (execution) are passed as `gpu=`, `disable_hw_decode=`, `disable_vmaf_cuda=`.
+  `allow_abbrev=False`. `--gpu`, `--disable-hw-decode`, `--disable-vmaf-cuda`
+  and `--jobs` (execution) are passed as `gpu=`, `disable_hw_decode=`,
+  `disable_vmaf_cuda=`, `jobs=`.
 - `_REMOVED_FLAGS`: removed flag → how to replace it. `MyParser.parse_known_args()`
   checks it **before** parsing (argparse would read `-reverse` as `-r everse`) and
   exits with code 2: `error: -sw was removed, use --sync-window`.
-- `get_args()` calls `validate_model_config(..., labels=_FLAG_LABELS)` and
-  `validate_range_config(..., labels=_FLAG_LABELS)` and turns their `ValueError`
+- `get_args()` calls `validate_model_config(..., labels=_FLAG_LABELS)`,
+  `validate_range_config(..., labels=_FLAG_LABELS)` and
+  `validate_jobs_config(..., labels=_FLAG_LABELS)` and turns their `ValueError`
   into `parser.error()` (exit code 2), before `check_ffmpeg()`. It also rejects
   `--sync-start`/`--sync-reverse` without `--sync-window` (naming the `--sync-offset`
-  equivalent), `--sync-offset` with `--sync-window`, a range with `--sync-only`,
-  and `--disable-hw-decode`/`--disable-vmaf-cuda` without `--gpu`.
+  equivalent), `--sync-offset` with `--sync-window`, a range or `--jobs > 1`
+  with `--sync-only`, and `--disable-hw-decode`/`--disable-vmaf-cuda` without
+  `--gpu`. A container outside `_RANGE_FORMATS` with `--jobs > 1` is found only
+  when probing: exit code 1, as for a range.
 - `_build_result()`: constructs the JSON schema 2 dict from a `VmafResult`
   (`JSON_SCHEMA_VERSION = 2`)
 - `_summary_path()` / `_write_summary()`: every successful input writes its
@@ -335,7 +356,8 @@ Understand this before touching easyvmaf/vmaf.py or easyvmaf/ffmpeg.py.
 |                    |                   | `compute` (r_frame_rate, width, height logs)  |       |
 |                    |                   | `getDuration` (primary: duration, start_time) |       |
 | `formatInfo`       | `getFormatInfo()` | `getDuration` fallback (KeyError path)        | low   |
-|                    |                   | `_checkRangeInputs` (format_name), range only |       |
+|                    |                   | `_checkRangeInputs` (format_name), range or   |       |
+|                    |                   |   `jobs > 1` only                             |       |
 | `framesInfo` /     | `getFramesInfo()` | `_applyDeinterlaceFilters` (final calculation | HIGH  |
 |                    |                   |   and sync workers), via                      |       |
 | `interlaced`       |                   |   `self.interlaced` only                      |       |
@@ -362,7 +384,7 @@ would run its own frames probe.
 ### Sync loop (`sync()`)
 - Runs PSNR at each frame offset in the sync window **in parallel** via `ThreadPoolExecutor`
 - Each worker creates its own `FFmpegQos` instance with `gpu_mode=False` — sync is always CPU-only even when `--gpu` is set
-- Each worker sets the private `FFmpegQos._single_thread` switch: FFmpeg runs single-threaded (`-threads 1` before each `-i`, global `-filter_complex_threads 1`), since the pool already runs one process per CPU. The final VMAF command keeps FFmpeg's default threading
+- Each worker sets the private `FFmpegQos._ffmpeg_threads = 1`: FFmpeg runs single-threaded (`-threads 1` before each `-i`, global `-filter_complex_threads 1`), since the pool already runs one process per CPU. The final VMAF command keeps FFmpeg's default threading (`None`), except in `--jobs` (`cpu_count // jobs`, see Parallel jobs)
 - Workers build their chains with the same `_normalizeChains()` as the final
   calculation (deinterlace or `--fps`, then scale; no pixel format normalization)
   and trim **after** it, like `_applyOffset()`: the offset a worker scores selects the
@@ -504,6 +526,46 @@ identical:
   the full calculation keeps `<distorted>_cambi_heatmap`
 - The interlace decision still reads the first 5 s of each file, so every range
   takes the same decision as the full calculation
+
+### Parallel jobs (`jobs` / `--jobs`)
+Contract: `jobs=N` gives exactly the calculation of one process: the log at
+the same path (`<distorted>_vmaf.<ext>`, or the requested range's) with the same
+frames, `frameNum` and metric values, the same `VmafResult` (so the same
+summary) and the same CAMBI heatmaps (byte for byte with `threads=1`). Only
+libvmaf's `fps` and the pooled metrics (recomputed from the 6-decimal logged
+values, ±1e-6) may differ. Pinned by
+`test_jobs_give_the_calculation_of_one_process`; it relies on the frame range
+contract, so never change one without the other. `jobs=1` is exactly the
+single-process code path (same command, same files).
+- **Plan** (`_planJobs()`, in `compute()`): `_normalizeChains()` on the shared
+  `ffmpegQos` gives `output_fps` and probes the interlacing once; frames =
+  `floor(duration × output_fps) − 1`, duration = the sync trim duration or the
+  shorter input (conservative: container durations are approximate), minus
+  `start_frame`, capped by `frame_count`. Split into `min(jobs, frames //
+  _JOB_MIN_FRAMES)` contiguous ranges (`_JOB_MIN_FRAMES` = 5); the last one has
+  no count (or the rest of the requested count), so an estimation error only
+  changes the last range. Fewer than 2 ranges: one process, with a warning
+- **Jobs** (`_jobRange()`): `copy.copy` of the `Vmaf` sharing the probed `video`
+  objects (read-only once `formatInfo` (constructor) and `interlaced` (plan) are
+  probed) and `sync_offset` (`sync()` runs once, before `compute()`), with its
+  own `FFmpegQos`, `start_frame`/`frame_count`, `progress=False`, `threads`
+  (libvmaf: `threads` or `cpu_count // jobs`), `ffmpegQos._ffmpeg_threads =
+  cpu_count // jobs` (decoder and filter graph threads: FFmpeg's default of one
+  per CPU in every job oversubscribes the CPUs; threads never change the
+  frames) and `_jobPart=True`: `_rangeSuffix()` appends `_part`, so a job never
+  overwrites a range the user ran
+- **Run** (`_runJobs()`): one thread per job calls its `compute()`; the first
+  failure (or an interruption) `cancel()`s every job and is raised; an
+  `UnsupportedRangeError` is re-raised naming `jobs`. A job before the last that
+  scores fewer frames than its count raises `UnsupportedRangeError` (a gap)
+- **Join** (`_computeJobs()`): `join_logs()` into `_rangeLogPath()` of the
+  parent (deleted before the jobs start, so a failure leaves no log),
+  `join_heatmaps()` into `<distorted>_cambi_heatmap` (or the range's); the
+  jobs' logs and heatmap directories are deleted in a `finally`. The parent
+  then runs `_resolveModels()` itself, so `VmafResult.models` names its own
+  heatmap path, not a job's
+- Not with `subsample > 1` (ranges), `gpu` (no GPU host to validate it) or
+  `--sync-only`
 
 ### Measurement pixel format (`_measurementPixFmt`)
 - Chroma subsampling of the reference (`yuvj*`, `nv12`, `nv21` count as 4:2:0 8-bit,

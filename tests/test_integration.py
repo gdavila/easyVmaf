@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 import warnings
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -341,6 +342,51 @@ def test_frame_ranges_join_into_the_full_calculation(gop_clips, distorted, refer
         assert len(joined_heatmaps) == 5 and all(joined_heatmaps.values())
 
 
+@pytest.mark.requires_libvmaf_v1
+@pytest.mark.parametrize("distorted, reference, offset, options, output_fmt", [
+    # Distorted trimmed, v1 models: heatmaps byte for byte with one libvmaf thread.
+    ("aligned.mp4", "late.mp4", -0.3,
+     dict(views=("3h",), enc_size=(1920, 1080), cambi_heatmap=True, threads=1), "xml"),
+    # Reference trimmed, frame rate conversion, and a requested range split into jobs.
+    ("late.mp4", "lead.mp4", 0.3,
+     dict(vmaf_versions=("0.6",), fps=7, start_frame=1, frame_count=15), "csv"),
+], ids=["cambi-heatmaps-v1-xml", "range-frame-rate-conversion-csv"])
+def test_jobs_give_the_calculation_of_one_process(gop_clips, caplog, distorted, reference,
+                                                  offset, options, output_fmt):
+    """--jobs only makes the calculation faster: the same log, scores and heatmaps
+    as one process, and no file of the jobs left next to them. The pooled
+    metrics are recomputed from the logged frames, as for a range: libvmaf
+    pools the unrounded values, so they may differ in the 6th decimal."""
+    def pooled(path):
+        if output_fmt != "xml":
+            return {}
+        return {metric.get("name"): {key: float(value) for key, value in metric.attrib.items()
+                                     if key != "name"}
+                for metric in ET.parse(path).getroot().findall("pooled_metrics/metric")}
+
+    def calculate(jobs):
+        result = Vmaf(getattr(gop_clips, distorted), getattr(gop_clips, reference),
+                      output_format=output_fmt, sync_offset=offset, jobs=jobs,
+                      **dict({"threads": 2}, **options)).compute()
+        heatmaps = ({path.name: path.read_bytes()
+                     for path in sorted(Path(result.cambi_heatmap_path).iterdir())}
+                    if result.cambi_heatmap_path else {})
+        return result, read_frames(result.log_path, output_fmt), heatmaps, pooled(result.log_path)
+
+    *single, single_pooled = calculate(jobs=1)
+    with caplog.at_level("INFO", logger="easyvmaf"):
+        *parallel, parallel_pooled = calculate(jobs=3)
+
+    assert "in 3 parallel jobs" in caplog.text
+    assert parallel == single
+    assert parallel_pooled.keys() == single_pooled.keys()
+    for name, metrics in single_pooled.items():
+        assert parallel_pooled[name] == pytest.approx(metrics, abs=1e-5)
+    assert not list(Path(getattr(gop_clips, distorted)).parent.rglob("*_part*"))
+    if options.get("cambi_heatmap"):
+        assert len(parallel[2]) == 5 and all(parallel[2].values())
+
+
 @pytest.mark.requires_cuda
 @pytest.mark.parametrize("distorted_size", ["1920x1080", "1280x720"],
                          ids=["gpu-resident", "downloaded"])
@@ -384,13 +430,17 @@ def test_frame_range_past_the_end_fails_instead_of_reading_a_stale_log(gop_clips
         calculation.compute()
 
 
-def test_frame_range_rejects_mpegts(gop_clips, encode, tmp_path):
+@pytest.mark.parametrize("options, message", [
+    (dict(start_frame=10, frame_count=10), "mpegts"),
+    (dict(jobs=2), "mpegts; remux it first"),
+], ids=["range", "jobs"])
+def test_frame_range_rejects_mpegts(gop_clips, encode, tmp_path, options, message):
     """MPEG-TS seeks to the next keyframe: a range would silently score other frames."""
     ts = tmp_path / "lead.ts"
     encode("-i", getattr(gop_clips, "lead.mp4"), "-c", "copy", ts)
 
-    with pytest.raises(UnsupportedRangeError, match="mpegts"):
-        Vmaf(str(ts), getattr(gop_clips, "late.mp4"), start_frame=10, frame_count=10)
+    with pytest.raises(UnsupportedRangeError, match=message):
+        Vmaf(str(ts), getattr(gop_clips, "late.mp4"), **options)
 
 
 def test_sync_worker_stops_decoding_after_trim(encode, tmp_path, monkeypatch):

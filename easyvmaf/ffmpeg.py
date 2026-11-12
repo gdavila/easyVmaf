@@ -199,9 +199,13 @@ class FFmpegQos:
         self.invertedSrc = False
         self.vmafpath = None
         self.gpu_mode = gpu_mode
-        # Private: run FFmpeg single-threaded. Set only by sync PSNR workers,
-        # which already run one process per CPU; default keeps FFmpeg's own threading.
-        self._single_thread = False
+        # Private: cap FFmpeg's decoder and filter graph threads. Sync PSNR
+        # workers set 1 (one process per CPU already), --jobs its share of the
+        # CPUs; None keeps FFmpeg's own threading (one thread per CPU).
+        self._ffmpeg_threads = None
+        # The VMAF process of getVmaf(), and whether cancel() stopped it.
+        self._process = None
+        self._cancelled = False
 
     @staticmethod
     def _escape_filter_value(value: str) -> str:
@@ -237,10 +241,10 @@ class FFmpegQos:
 
     def _commitBase(self):
         base = [FFmpegQos._executable, '-y', '-hide_banner', '-stats', '-loglevel', self.loglevel]
-        if self._single_thread:
+        if self._ffmpeg_threads:
             # Global option: -lavfi is a complex filtergraph, so -filter_threads
             # (simple filtergraphs only) would not apply.
-            base += ['-filter_complex_threads', '1']
+            base += ['-filter_complex_threads', str(self._ffmpeg_threads)]
         return base
 
     def _commit(self):
@@ -260,7 +264,7 @@ class FFmpegQos:
         trim. -an/-sn/-dn stop auto-selection of other streams.
         """
         # Decoder threads are an input option: it must precede each -i.
-        decoder = ['-threads', '1'] if self._single_thread else []
+        decoder = ['-threads', str(self._ffmpeg_threads)] if self._ffmpeg_threads else []
         # A seek keeps the timestamps the inputs have without it, so that the
         # filters see the same timeline as a calculation from the beginning.
         timestamps = (['-copyts', '-start_at_zero']
@@ -443,8 +447,14 @@ class FFmpegQos:
                 raise FFmpegExecutionError(self._cmd, returncode, str(error)) from error
 
         else:
+            if self._cancelled:
+                raise FFmpegExecutionError(self._cmd, None, "cancelled")
             process = subprocess.Popen(
                 self._cmd, stdout=subprocess.PIPE, shell=False, env=_vmaf_env())
+            self._process = process
+            # cancel() sets the flag before reading _process: one of the two sees the other.
+            if self._cancelled:
+                process.kill()
             try:
                 process.communicate()
             except (KeyboardInterrupt, SystemExit):
@@ -454,6 +464,15 @@ class FFmpegQos:
                 raise FFmpegExecutionError(self._cmd, process.returncode)
 
         return process
+
+    def cancel(self):
+        """Stop the VMAF process of getVmaf() (without progress) from another
+        thread, now or as soon as it starts; getVmaf() then raises
+        FFmpegExecutionError."""
+        self._cancelled = True
+        process = self._process
+        if process is not None and process.poll() is None:
+            process.kill()
 
     def clearFilters(self):
         self.psnrFilter = []

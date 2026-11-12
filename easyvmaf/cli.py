@@ -34,8 +34,8 @@ from signal import signal, SIGINT
 
 from .ffmpeg import FFmpegExecutionError, check_ffmpeg
 from .models import DISPLAY_RESOLUTION, VMAF_VERSIONS
-from .vmaf import (Vmaf, cpu_vmaf_reason, validate_model_config, validate_range_config,
-                   UnsupportedFramerateError)
+from .vmaf import (Vmaf, cpu_vmaf_reason, validate_jobs_config, validate_model_config,
+                   validate_range_config, UnsupportedFramerateError)
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,8 @@ _FLAG_LABELS = {
     'start_frame': '--start-frame',
     'frame_count': '--frame-count',
     'subsample': '--subsample',
+    'jobs': '--jobs',
+    'gpu': '--gpu',
 }
 
 _JSON_REMOVED = 'the result is always written to a <log>_summary.json file'
@@ -315,7 +317,14 @@ def get_args():
 
     execution = parser.add_argument_group('execution')
     execution.add_argument('--threads', dest='threads', type=int, default=0,
-                           help='Number of parallel sync workers (each runs FFmpeg single-threaded) and libvmaf threads. (default=0, CPU count).')
+                           help='Number of parallel sync workers (each runs FFmpeg single-threaded) and libvmaf threads, per job with --jobs. (default=0, CPU count; with --jobs, CPU count / jobs).')
+    execution.add_argument('--jobs', dest='jobs', type=int, default=1,
+                           help='Number of FFmpeg processes that compute VMAF at the same time, '
+                                'each on a range of contiguous frames. Their logs are joined into '
+                                'one log with the same frames and scores as a single process. '
+                                'Use it when one process does not fill the CPUs (e.g. 4K). '
+                                'MP4, MOV, Matroska and WebM inputs only; not with --subsample or '
+                                '--gpu. (Default: 1).')
     execution.add_argument('--subsample', dest='subsample', type=int, default=1,
                            help="Specifies the subsampling of frames to speed up calculation. (default=1, None).")
     execution.add_argument('--gpu', dest='gpu', action='store_true',
@@ -362,12 +371,15 @@ def get_args():
         parser.error('--threads must be an integer greater than or equal to zero')
     if args.sync_only and (args.start_frame is not None or args.frame_count is not None):
         parser.error('--start-frame and --frame-count measure VMAF; --sync-only does not')
+    if args.sync_only and args.jobs > 1:
+        parser.error('--jobs splits the VMAF calculation; --sync-only does not compute VMAF')
     try:
         validate_model_config(
             args.display, args.vmaf_versions, args.views, args.hfr, args.bitdepth,
             args.enc_size, args.enc_bitdepth, args.model_options, labels=_FLAG_LABELS)
         validate_range_config(args.start_frame, args.frame_count, args.subsample,
                               labels=_FLAG_LABELS)
+        validate_jobs_config(args.jobs, args.subsample, args.gpu, labels=_FLAG_LABELS)
     except ValueError as e:
         parser.error(str(e))
     return args
@@ -498,7 +510,8 @@ def main():
                           sync_offset=offset,
                           start_frame=cmdParser.start_frame, frame_count=cmdParser.frame_count,
                           disable_hw_decode=cmdParser.disable_hw_decode,
-                          disable_vmaf_cuda=cmdParser.disable_vmaf_cuda)
+                          disable_vmaf_cuda=cmdParser.disable_vmaf_cuda,
+                          jobs=cmdParser.jobs)
             if syncWin > 0:
                 offset, psnr = myVmaf.sync(syncWin, ss, reverse)
                 if sync_only:
