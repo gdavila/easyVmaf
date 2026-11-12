@@ -62,7 +62,7 @@ negative the distorted), mutually exclusive with `--sync-window`.
 ## Docker
 
 Published from 5.0.0 on GHCR, `linux/amd64` only (see Releasing):
-`docker pull ghcr.io/gdavila/easyvmaf:5.0.0` (`:5.0.0-cuda`).
+`docker pull ghcr.io/gdavila/easyvmaf:5.1.0` (`:5.1.0-cuda`).
 
 ```bash
 # CPU build
@@ -998,7 +998,7 @@ variants) and a GPU host to validate it.
 ### Docker image versions (pinned)
 | Component  | Version |
 |------------|---------|
-| easyVmaf   | 5.0.0   |
+| easyVmaf   | 5.1.0   |
 | FFmpeg     | 8.1     |
 | libvmaf    | 3.2.1   |
 | dav1d      | 1.4.3   |

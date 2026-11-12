@@ -237,7 +237,7 @@ export PATH="$PWD/ffmpeg-n8.1-latest-linux64-gpl-8.1/bin:$PATH"
 **Docker.** The [Docker](#docker) images bundle easyVmaf, FFmpeg 8.1 and
 libvmaf 3.2.1 (`linux/amd64`). They are published on the GitHub Container
 Registry (GHCR) from the 5.0.0
-release on (`ghcr.io/gdavila/easyvmaf:5.0.0`); before that, clone the repository
+release on (`ghcr.io/gdavila/easyvmaf:5.1.0`); before that, clone the repository
 and build them with `docker build -t easyvmaf .`.
 
 **Other platforms or builds.** See [Building FFmpeg from source](#building-ffmpeg-from-source).
@@ -1018,17 +1018,17 @@ Container Registry, `ghcr.io/gdavila/easyvmaf`, built from this repository's
 
 | Image | Tags | Contents |
 |-------|------|----------|
-| CPU | `5.0.0`, `5.0`, `5`, `latest` | easyVmaf, FFmpeg 8.1, libvmaf 3.2.1 |
-| CUDA | `5.0.0-cuda`, `5.0-cuda`, `5-cuda`, `latest-cuda`, `cuda` | The same, plus `libvmaf_cuda`, NVDEC and the CUDA filters, on the `nvidia/cuda` 12.8 base image (NVIDIA driver >= 570) |
+| CPU | `5.1.0`, `5.1`, `5`, `latest` | easyVmaf, FFmpeg 8.1, libvmaf 3.2.1 |
+| CUDA | `5.1.0-cuda`, `5.1-cuda`, `5-cuda`, `latest-cuda`, `cuda` | The same, plus `libvmaf_cuda`, NVDEC and the CUDA filters, on the `nvidia/cuda` 12.8 base image (NVIDIA driver >= 570) |
 
-A pre-release (`5.1.0rc1`) is tagged only with its full version (`5.1.0rc1`,
-`5.1.0rc1-cuda`). Both images are `linux/amd64` only: on Apple Silicon, Docker
+A pre-release (`5.2.0rc1`) is tagged only with its full version (`5.2.0rc1`,
+`5.2.0rc1-cuda`). Both images are `linux/amd64` only: on Apple Silicon, Docker
 runs them emulated, which is slower; there, install easyVmaf and FFmpeg
 with Homebrew instead (see [Installation](#installation)).
 
 ```bash
-docker pull ghcr.io/gdavila/easyvmaf:5.0.0
-docker pull ghcr.io/gdavila/easyvmaf:5.0.0-cuda
+docker pull ghcr.io/gdavila/easyvmaf:5.1.0
+docker pull ghcr.io/gdavila/easyvmaf:5.1.0-cuda
 ```
 
 ### Running with Docker
@@ -1036,19 +1036,19 @@ docker pull ghcr.io/gdavila/easyvmaf:5.0.0-cuda
 ```bash
 # CPU
 docker run --rm -v /path/to/videos:/videos \
-  ghcr.io/gdavila/easyvmaf:5.0.0 -d /videos/distorted.mp4 -r /videos/reference.mp4
+  ghcr.io/gdavila/easyvmaf:5.1.0 -d /videos/distorted.mp4 -r /videos/reference.mp4
 
 # With sync
 docker run --rm -v /path/to/videos:/videos \
-  ghcr.io/gdavila/easyvmaf:5.0.0 -d /videos/distorted.mp4 -r /videos/reference.mp4 --sync-window 2
+  ghcr.io/gdavila/easyvmaf:5.1.0 -d /videos/distorted.mp4 -r /videos/reference.mp4 --sync-window 2
 
 # GPU (requires NVIDIA Container Toolkit): GPU decoding and libvmaf_cuda (v0.6)
 docker run --rm --gpus all -v /path/to/videos:/videos \
-  ghcr.io/gdavila/easyvmaf:5.0.0-cuda -d /videos/distorted.mp4 -r /videos/reference.mp4 --vmaf-version 0.6 --gpu
+  ghcr.io/gdavila/easyvmaf:5.1.0-cuda -d /videos/distorted.mp4 -r /videos/reference.mp4 --vmaf-version 0.6 --gpu
 
 # GPU decoding, default v1 models on the CPU
 docker run --rm --gpus all -v /path/to/videos:/videos \
-  ghcr.io/gdavila/easyvmaf:5.0.0-cuda -d /videos/distorted.mp4 -r /videos/reference.mp4 --gpu
+  ghcr.io/gdavila/easyvmaf:5.1.0-cuda -d /videos/distorted.mp4 -r /videos/reference.mp4 --gpu
 ```
 
 The CUDA image sets `NVIDIA_DRIVER_CAPABILITIES=compute,utility,video`: NVDEC
@@ -1060,7 +1060,7 @@ rebuild it, or pass `-e NVIDIA_DRIVER_CAPABILITIES=compute,utility,video` to
 ### Building the images
 
 Instead of pulling them, build the images from a clone of the repository, and
-use these names in place of `ghcr.io/gdavila/easyvmaf:5.0.0` and `:5.0.0-cuda`
+use these names in place of `ghcr.io/gdavila/easyvmaf:5.1.0` and `:5.1.0-cuda`
 in the examples above:
 
 ```bash
@@ -1080,7 +1080,7 @@ where its source code is: the archive the image was built from, with its
 sha256 and the commit of its tag:
 
 ```bash
-docker run --rm --entrypoint cat ghcr.io/gdavila/easyvmaf:5.0.0 /usr/local/share/licenses/ffmpeg/SOURCE
+docker run --rm --entrypoint cat ghcr.io/gdavila/easyvmaf:5.1.0 /usr/local/share/licenses/ffmpeg/SOURCE
 ```
 
 ### Build arguments
@@ -1091,7 +1091,7 @@ Both Dockerfiles accept these build-time arguments:
 |-----|---------|-------------|
 | `FFMPEG_version` | `8.1` | FFmpeg release tag (>= 8.1) |
 | `VMAF_version` | `3.2.1` | libvmaf release tag (>= 3.2.1) |
-| `EASYVMAF_VERSION` | `5.0.0` | easyVmaf version label (the published images take it from the release tag) |
+| `EASYVMAF_VERSION` | `5.1.0` | easyVmaf version label (the published images take it from the release tag) |
 | `DAV1D_version` | `1.4.3` | dav1d release (CUDA image only — built from source) |
 | `NVCODEC_version` | `13.0.19.1` | nv-codec-headers release (CUDA image only). 13.0.19.1 is the only release that builds both FFmpeg 8.1 and libvmaf 3.2.1 |
 
