@@ -154,8 +154,7 @@ RUN apt-get update -yqq && \
         python3 python3-pip && \
     apt-get autoremove -y && \
     apt-get clean -y && \
-    python3 -m pip install --upgrade pip && \
-    python3 -m pip install ffmpeg-progress-yield
+    python3 -m pip install --upgrade pip
 
 # Only what was built (FFmpeg, libvmaf, dav1d, VMAF models): /usr/local/cuda
 # of the build stage is the CUDA devel toolkit (6.4 GB, nvcc, NPP, ...), not
@@ -165,7 +164,9 @@ COPY --from=build-cuda /usr/local/bin /usr/local/bin/
 COPY --from=build-cuda /usr/local/share /usr/local/share/
 COPY --from=build-cuda /app/easyvmaf /app/easyvmaf/
 
+# Dependencies from pyproject.toml, in the system site-packages: readable by
+# any user (docker run -u)
 WORKDIR /app/easyvmaf
-RUN python3 -m pip install --no-deps .
+RUN python3 -m pip install --no-cache-dir --root-user-action=ignore .
 
 ENTRYPOINT ["python3", "-u", "-m", "easyvmaf"]

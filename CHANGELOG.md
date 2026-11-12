@@ -21,6 +21,14 @@
   Matroska and WebM inputs only; not with `--subsample`, `--sync-only` or,
   for now, `--gpu`. See [Parallel jobs](README.md#parallel-jobs).
 
+### Fixed
+
+- **The CPU Docker image runs as any user** (`docker run -u "$(id -u):$(id -g)"`),
+  so the logs and summaries it writes belong to you instead of root. In 5.0.0
+  it failed as any user but root with `ModuleNotFoundError: No module named
+  'ffmpeg_progress_yield'`: that dependency was installed in `/root`. See
+  [Running with Docker](README.md#running-with-docker).
+
 ## 5.0.0 (2026-10-09)
 
 easyVmaf 5.0 is the first release published on PyPI (`pipx install easyvmaf`)

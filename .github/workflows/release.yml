@@ -249,6 +249,8 @@ jobs:
         run: |
           docker run --rm easyvmaf:smoke --help > /dev/null
           docker run --rm --entrypoint easyvmaf easyvmaf:smoke --help > /dev/null
+          # Any user can run it (docker run -u): nothing it imports lives in /root
+          docker run --rm -u 1000:1000 easyvmaf:smoke --help > /dev/null
           # The installed package is the tagged version, and its FFmpeg computes
           # a VMAF v1 frame (on the CPU, in both images)
           docker run --rm --entrypoint python3 -e VERSION easyvmaf:smoke -c '

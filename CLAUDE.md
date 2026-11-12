@@ -815,7 +815,9 @@ Docker images (`publish-images`, a matrix `cpu`/`cuda`, `linux/amd64` only):
   both images and never log in or push.
 - Each job builds with `load: true`, smoke-tests that image, then builds again
   with `push: true`: the second build takes every layer from the builder cache.
-  Smoke tests: `easyvmaf --help`, the installed package version equals the
+  Smoke tests: `easyvmaf --help` (also as `-u 1000:1000`: Python
+  dependencies go to the system site-packages, never `pip --user` into
+  `/root`, 0700), the installed package version equals the
   release version, `check_ffmpeg()` `meets_minimum` and `libvmaf_v1`, the
   license files and `ffmpeg/SOURCE` (see Redistribution in Environment); CUDA
   also: `ffmpeg -filters` has `libvmaf_cuda`, `scale_cuda`, `yadif_cuda`,

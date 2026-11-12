@@ -1042,6 +1042,10 @@ docker run --rm -v /path/to/videos:/videos \
 docker run --rm -v /path/to/videos:/videos \
   ghcr.io/gdavila/easyvmaf:5.1.0 -d /videos/distorted.mp4 -r /videos/reference.mp4 --sync-window 2
 
+# As your user, so that the log and summary belong to you instead of root
+docker run --rm -u "$(id -u):$(id -g)" -v /path/to/videos:/videos \
+  ghcr.io/gdavila/easyvmaf:5.1.0 -d /videos/distorted.mp4 -r /videos/reference.mp4
+
 # GPU (requires NVIDIA Container Toolkit): GPU decoding and libvmaf_cuda (v0.6)
 docker run --rm --gpus all -v /path/to/videos:/videos \
   ghcr.io/gdavila/easyvmaf:5.1.0-cuda -d /videos/distorted.mp4 -r /videos/reference.mp4 --vmaf-version 0.6 --gpu

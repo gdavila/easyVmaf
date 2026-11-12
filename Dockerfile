@@ -100,13 +100,14 @@ RUN export TZ='UTC' && \
     apt-get update -yqq && \
     apt-get install -y --no-install-recommends dav1d && \
     apt-get autoremove -y && \
-    apt-get clean -y && \
-    pip3 install --user ffmpeg-progress-yield
+    apt-get clean -y
 
 COPY --from=build /usr/local /usr/local/
 COPY --from=build /app/easyvmaf /app/easyvmaf/
 
+# Dependencies from pyproject.toml, in the system site-packages: readable by
+# any user (docker run -u), unlike pip --user, which installs in /root (0700)
 WORKDIR /app/easyvmaf
-RUN pip3 install --no-deps .
+RUN pip3 install --no-cache-dir --root-user-action=ignore .
 
 ENTRYPOINT ["python3", "-u", "-m", "easyvmaf"]
