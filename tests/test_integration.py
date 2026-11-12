@@ -4,7 +4,6 @@ Each check compares easyVmaf with a plain FFmpeg command or with what a user
 of the CLI observes; they are skipped when no suitable FFmpeg is installed.
 """
 
-import dataclasses
 import json
 import math
 import os
@@ -126,16 +125,19 @@ def test_sync_and_score_match_plain_ffmpeg(ffmpeg_bin, clips, monkeypatch, rever
 
 
 @pytest.mark.requires_libvmaf_v1
-def test_every_catalog_model_scores_in_one_pass(ffmpeg_bin, tmp_path):
-    """A misspelt model id or a broken override syntax would only fail in production."""
+@pytest.mark.parametrize("hfr", [False, True], ids=["standard", "hfr"])
+def test_every_catalog_model_scores_in_one_pass(ffmpeg_bin, tmp_path, hfr):
+    """A misspelt model id or a broken override syntax would only fail in production.
+
+    One pass per HFR choice, as easyVmaf runs them: it never mixes the HFR and
+    standard v1 models in one libvmaf (and newer libvmaf builds reject four v1
+    models that share features)."""
     runs = []
     for spec in CATALOG:
         cambi = (("cambi.enc_width", "320"), ("cambi.enc_height", "180"),
                  ("cambi.enc_bitdepth", "8")) if spec.vmaf_version == "1" else ()
-        runs.append(ModelRun(spec, spec.libvmaf_model, spec.options + cambi))
-        if spec.hfr_model:
-            hfr_spec = dataclasses.replace(spec, name=spec.name + "_hfr")
-            runs.append(ModelRun(hfr_spec, spec.hfr_model, spec.options + cambi))
+        model = spec.hfr_model if hfr and spec.hfr_model else spec.libvmaf_model
+        runs.append(ModelRun(spec, model, spec.options + cambi))
     log = tmp_path / "catalog.json"
     # v1 SpEED rejects small frames; 3d0h_2160 needs about 576x324.
     source = "testsrc2=s=640x360:r=5:d=0.4"
