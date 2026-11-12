@@ -1,5 +1,6 @@
 """Layer 1: capability probe, filter escaping, command shape and process lifecycle."""
 
+import os
 import subprocess
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -132,7 +133,7 @@ def test_interrupted_vmaf_kills_and_reaps_child(monkeypatch, progress):
                             communicate=Mock(side_effect=error),
                             stdout=Mock(), stdin=Mock(), stderr=None)
 
-    def interrupted_progress():
+    def interrupted_progress(popen_kwargs=None):
         yield 0
         raise error
 
@@ -149,6 +150,42 @@ def test_interrupted_vmaf_kills_and_reaps_child(monkeypatch, progress):
     assert child.wait.call_args.kwargs["timeout"] > 0
     child.stdout.close.assert_called_once_with()
     child.stdin.close.assert_called_once_with()
+
+
+@pytest.mark.parametrize("progress", [False, True])
+@pytest.mark.parametrize("user_tunables", [None, "glibc.malloc.arena_max=2", ""],
+                         ids=["default", "user-set", "user-empty"])
+def test_vmaf_process_gets_malloc_tunables_unless_user_set(monkeypatch, progress, user_tunables):
+    # Without them libvmaf maps fresh memory for every large frame on Linux:
+    # about 2x slower at 4K 4:4:4 16 bits. A user's own GLIBC_TUNABLES wins.
+    monkeypatch.setattr(ffmpeg.sys, "platform", "linux")
+    monkeypatch.setenv("EASYVMAF_TEST_INHERITED", "1")
+    if user_tunables is None:
+        monkeypatch.delenv("GLIBC_TUNABLES", raising=False)
+    else:
+        monkeypatch.setenv("GLIBC_TUNABLES", user_tunables)
+    spawned = []
+
+    def popen(cmd, **kwargs):
+        spawned.append(kwargs.get("env"))
+        return SimpleNamespace(returncode=0, communicate=lambda: (b"", None))
+
+    def run_with_progress(popen_kwargs=None):
+        spawned.append((popen_kwargs or {}).get("env"))
+        yield 100
+
+    monkeypatch.setattr(ffmpeg.subprocess, "Popen", popen)
+    monkeypatch.setattr(ffmpeg, "FfmpegProgress", lambda cmd: SimpleNamespace(
+        stderr="", run_command_with_progress=run_with_progress))
+
+    FFmpegQos("dist", "ref").getVmaf(select_models("hd", ("0.6",)), print_progress=progress)
+
+    [env] = spawned
+    env = os.environ if env is None else env
+    expected = ffmpeg._VMAF_GLIBC_TUNABLES if user_tunables is None else user_tunables
+    assert env["GLIBC_TUNABLES"] == expected
+    assert env["EASYVMAF_TEST_INHERITED"] == "1"
+    assert os.environ.get("GLIBC_TUNABLES") == user_tunables  # ours untouched
 
 
 def test_cleanup_timeout_preserves_interruption(monkeypatch, caplog):

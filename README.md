@@ -339,6 +339,15 @@ final results (`<distorted>_vmaf_summary.json`).
 | `--disable-hw-decode` | off | With `--gpu`: decode every input on the CPU. |
 | `--disable-vmaf-cuda` | off | With `--gpu`: compute VMAF on the CPU (`libvmaf`). |
 
+On Linux, easyVmaf starts the FFmpeg process that computes VMAF with
+`GLIBC_TUNABLES=glibc.malloc.mmap_max=0:glibc.malloc.trim_threshold=1073741824`.
+libvmaf allocates two pictures per frame, 50 MB each at 4K 4:4:4 16 bits, and
+glibc otherwise maps fresh memory for each of them: with the tunables the
+calculation is up to about 2x faster on large frames (10.5 → 19.8 fps per
+process at 4K 4:4:4 on an AWS c7a.16xlarge), for 3 to 12 % more memory (RSS).
+Scores are unchanged. To opt out, set your own `GLIBC_TUNABLES` (an empty value
+works): easyVmaf never replaces it. It has no effect outside glibc (macOS, musl).
+
 ### Validation
 
 Invalid arguments are usage errors (exit code 2), reported on stderr before

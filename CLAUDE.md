@@ -159,6 +159,22 @@ Thin subprocess wrappers around ffmpeg and ffprobe binaries.
     resolved `Sequence[ModelRun]`; `features` is the complete libvmaf `feature=`
     value built by layer 2. Returns the FFmpeg process; raises
     `FFmpegExecutionError` on failure. Sets `self.vmafpath`.
+  - The VMAF process (both `getVmaf()` paths: `subprocess.Popen(env=...)` and,
+    with progress, `run_command_with_progress(popen_kwargs={'env': ...})`, in
+    `ffmpeg-progress-yield` since 0.7.0) gets its environment from
+    `_vmaf_env()`: on Linux, a copy of `os.environ` plus
+    `GLIBC_TUNABLES=_VMAF_GLIBC_TUNABLES`
+    (`glibc.malloc.mmap_max=0:glibc.malloc.trim_threshold=1073741824`); `None`
+    (inherit) elsewhere or when the user set `GLIBC_TUNABLES`, even empty,
+    which is never replaced or merged. libvmaf allocates two `VmafPicture` per
+    frame (50 MB each at 4K 4:4:4 16 bits), above glibc's 32 MiB mmap
+    threshold: without the tunables every frame is a fresh mmap and ~21 000
+    page faults on the filter graph's serial thread. Measured on a
+    c7a.16xlarge: 10.5 → 19.8 fps per process, 71 → 92.5 fps with 8 processes,
+    RSS +3 % / +12 %, per-frame logs identical. `os.environ` of the Python
+    process is never modified, and the command is unchanged. Not applied to
+    the PSNR sync workers, `getFirstFrameTimestamps()` (no libvmaf in either),
+    ffprobe or the `check_ffmpeg()` probes (one small frame)
   - `_build_model_string(models)`: per model `version=…`, `name=…`, then
     `options` in order, joined by `\\\\:`; models joined by `|`
   - `getFirstFrameTimestamps()`: runs the current chains until each outputs a
@@ -846,6 +862,10 @@ variants) and a GPU host to validate it.
 - The `invertSrcs()` / `invertedSrc` flag logic in sync handling
 - The names and signatures of the public API (`easyvmaf.__all__`)
 - The `_hwupload_done` guard in `_insertHwupload()` and the reset in `clearFilters()`
+- The `GLIBC_TUNABLES` of the VMAF process (`_vmaf_env()`) and its respect for
+  a user-set `GLIBC_TUNABLES`: never remove or change the tunables without
+  measuring again (~2x at 4K 4:4:4 16 bits on Linux).
+  `test_vmaf_process_gets_malloc_tunables_unless_user_set` pins both
 - The v0.6 FFmpeg command: `test_v06_vmaf_command_is_unchanged` in
   `tests/test_ffmpeg.py` (`GOLDEN_CHAINS`, `GOLDEN_CAMBI`) pins the full command for
   v0.6 HD/4K with and without CAMBI heatmap. Never edit its expected strings to

@@ -30,6 +30,7 @@ import subprocess
 import json
 import logging
 import os
+import sys
 from dataclasses import dataclass
 from fractions import Fraction
 from typing import Mapping, Sequence, Tuple
@@ -59,6 +60,25 @@ HW_ACCELS = {
         download='hwdownload,format={frame_format}',
     ),
 }
+
+
+# Per frame, libvmaf allocates two pictures; at 4K 4:4:4 16 bits each is 50 MB,
+# above glibc's mmap threshold (32 MiB), so every frame mapped and faulted in
+# fresh memory on the filter graph's serial thread. Keeping them on the heap
+# measured 10.5 -> 19.8 fps per process at 4K 4:4:4 with identical logs, for
+# +3-12 % RSS. Do not remove without measuring again.
+_VMAF_GLIBC_TUNABLES = 'glibc.malloc.mmap_max=0:glibc.malloc.trim_threshold=1073741824'
+
+
+def _vmaf_env():
+    """Environment of the FFmpeg process that runs libvmaf, or None to inherit ours.
+
+    Adds the malloc tunables on Linux only: elsewhere there is no glibc to read
+    them. A GLIBC_TUNABLES set by the user, even empty, is theirs and is kept as is.
+    """
+    if not sys.platform.startswith('linux') or 'GLIBC_TUNABLES' in os.environ:
+        return None
+    return {**os.environ, 'GLIBC_TUNABLES': _VMAF_GLIBC_TUNABLES}
 
 
 def _cleanup_interrupted_process(process):
@@ -407,7 +427,8 @@ class FFmpegQos:
             process = FfmpegProgress(self._cmd)
             child = None
             try:
-                for progress in process.run_command_with_progress():
+                for progress in process.run_command_with_progress(
+                        popen_kwargs={'env': _vmaf_env()}):
                     # Retain ownership even when the dependency clears .process.
                     child = getattr(process, 'process', None)
                     logger.info("progress = %s%% - %s", progress,
@@ -423,7 +444,7 @@ class FFmpegQos:
 
         else:
             process = subprocess.Popen(
-                self._cmd, stdout=subprocess.PIPE, shell=False)
+                self._cmd, stdout=subprocess.PIPE, shell=False, env=_vmaf_env())
             try:
                 process.communicate()
             except (KeyboardInterrupt, SystemExit):

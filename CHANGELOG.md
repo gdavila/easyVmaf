@@ -1,5 +1,17 @@
 # Changelog
 
+## 5.1.0 (unreleased)
+
+### New
+
+- **VMAF is up to about 2x faster on Linux with large frames** (4K 4:4:4 16
+  bits: 10.5 → 19.8 fps per process on an AWS c7a.16xlarge). The FFmpeg
+  process that computes VMAF keeps libvmaf's per-frame pictures on the heap
+  (`GLIBC_TUNABLES`) instead of mapping new memory for each frame. Scores and
+  logs are unchanged; memory use (RSS) grows by 3 to 12 %. A `GLIBC_TUNABLES`
+  you set yourself is kept as is, and opts out. See
+  [Execution](README.md#execution).
+
 ## 5.0.0 (2026-10-09)
 
 easyVmaf 5.0 is the first release published on PyPI (`pipx install easyvmaf`)

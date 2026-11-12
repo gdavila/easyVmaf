@@ -362,7 +362,7 @@ def test_ffmpeg_failure_stops_batch_without_reading_stale_results(
     def process_for_command(cmd, **kwargs):
         failed = files[1] in cmd
 
-        def progress_events():
+        def progress_events(popen_kwargs=None):
             yield 0
             if failed:
                 raise RuntimeError("controlled process failure")
