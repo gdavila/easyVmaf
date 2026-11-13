@@ -14,12 +14,15 @@ import pytest
 from easyvmaf import ffmpeg, vmaf
 
 ROOT = Path(__file__).resolve().parents[1]
-CAPABILITIES = dict(meets_minimum=True, libvmaf_v1=True, version_str="9.0", cuda_vmaf=False,
-                    hwaccels=["cuda"])
+CAPABILITIES = dict(meets_minimum=True, libvmaf_v1=True, hdr_vmaf=False, version_str="9.0",
+                    cuda_vmaf=False, hwaccels=["cuda"])
 SCORES = {"vmaf_hd": 91.1234567, "vmaf_hd_neg": 90.0, "vmaf_hd_phone": 95.0}
 STREAM = {"width": 320, "height": 180, "r_frame_rate": "10/1", "duration": "1.2", "start_time": "0",
           "codec_name": "h264", "pix_fmt": "yuv420p"}
 LIBVMAF_V1_PROBE_MODEL = "vmaf_v1.0.16_3d0h"
+HDR_VMAF_PROBE_MODEL = "hdr_vmaf_v1.1.8_3d0h"
+PQ_CHAIN = ("setparams=range=tv:color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc,"
+            "format=yuv420p10le")
 
 
 def pytest_configure(config):
@@ -27,12 +30,17 @@ def pytest_configure(config):
         "markers", "requires_libvmaf_v1: skip unless FFmpeg's libvmaf computes a VMAF v1 frame "
                    "(libvmaf >= 3.2.1 with built-in models)")
     config.addinivalue_line(
+        "markers", "requires_hdr_vmaf: skip unless FFmpeg's libvmaf computes an HDR-VMAF frame "
+                   "from PQ-tagged frames (libvmaf with zimg and the HDR models, FFmpeg passing "
+                   "the frame colorimetry); a failure with EASYVMAF_REQUIRE_HDR=1")
+    config.addinivalue_line(
         "markers", "requires_cuda: skip unless libvmaf_cuda computes a frame on a GPU; "
                    "never a failure: CI has no GPU runner")
 
 
-def probe_libvmaf_model(model):
-    """Score one black 320x240 frame pair with a built-in model.
+def probe_libvmaf_model(model, chain=None):
+    """Score one black 320x240 frame pair with a built-in model, each input
+    through chain (a filter chain) first.
 
     Returns None when the frame is computed, otherwise the reason it was not:
     loading a model is not enough, since a default libvmaf 3.2.0 build loads
@@ -44,9 +52,10 @@ def probe_libvmaf_model(model):
     if not binary or not shutil.which(binary):
         return "FFmpeg unavailable"
     source = "color=black:s=320x240:r=1:d=1"
+    inputs = "[0:v]%s[dis];[1:v]%s[ref];[dis][ref]" % (chain, chain) if chain else "[0:v][1:v]"
     result = subprocess.run([binary, "-hide_banner", "-nostdin", "-v", "error",
                              "-f", "lavfi", "-i", source, "-f", "lavfi", "-i", source,
-                             "-lavfi", "[0:v][1:v]libvmaf=model=version=" + model,
+                             "-lavfi", inputs + "libvmaf=model=version=" + model,
                              "-f", "null", "-"], capture_output=True, text=True, timeout=60)
     if result.returncode == 0:
         return None
@@ -72,6 +81,12 @@ def libvmaf_v1_skip_reason():
 
 
 @functools.lru_cache(maxsize=None)
+def hdr_vmaf_skip_reason():
+    reason = probe_libvmaf_model(HDR_VMAF_PROBE_MODEL, PQ_CHAIN)
+    return reason and "HDR-VMAF probe (%s) failed: %s" % (HDR_VMAF_PROBE_MODEL, reason)
+
+
+@functools.lru_cache(maxsize=None)
 def cuda_skip_reason():
     """Why libvmaf_cuda cannot score one frame pair here, or None."""
     binary = ffmpeg.FFmpegQos._executable
@@ -93,6 +108,13 @@ def pytest_runtest_setup(item):
         reason = libvmaf_v1_skip_reason()
         if reason:
             skip_unusable_ffmpeg(reason)
+    if item.get_closest_marker("requires_hdr_vmaf"):
+        reason = hdr_vmaf_skip_reason()
+        if reason:
+            # Only the HDR image must compute it: BtbN 8.1 and Homebrew skip
+            if os.environ.get("EASYVMAF_REQUIRE_HDR") == "1":
+                pytest.fail(reason, pytrace=False)
+            pytest.skip(reason)
     if item.get_closest_marker("requires_cuda") and cuda_skip_reason():
         pytest.skip(cuda_skip_reason())
 

@@ -1,7 +1,8 @@
 # Runs the test suite. Every integration job sets EASYVMAF_REQUIRE_FFMPEG=1, so
 # a test that needs FFmpeg with libvmaf v1 fails instead of skipping.
 # - unit: every supported Python, without FFmpeg (the integration tests skip)
-# - integration-docker: the Dockerfile image (minimum FFmpeg 8.1, libvmaf 3.2.1)
+# - integration-docker: the Dockerfile image (FFmpeg and libvmaf master commits,
+#   with HDR-VMAF: EASYVMAF_REQUIRE_HDR=1 makes its tests fail instead of skip)
 # - integration-btbn: pip users on Linux x86_64, BtbN FFmpeg 8.1 and the
 #   minimum Python
 # - integration-macos: pip users on macOS, Homebrew FFmpeg
@@ -88,7 +89,7 @@ jobs:
 
       - name: Test
         run: |
-          docker run --rm -e EASYVMAF_REQUIRE_FFMPEG=1 -v "$PWD:/src" -w /src --entrypoint sh easyvmaf:ci \
+          docker run --rm -e EASYVMAF_REQUIRE_FFMPEG=1 -e EASYVMAF_REQUIRE_HDR=1 -v "$PWD:/src" -w /src --entrypoint sh easyvmaf:ci \
             -c 'pip install -q --root-user-action=ignore pytest && python3 -m pytest -q -rs -p no:cacheprovider'
 
   integration-btbn:

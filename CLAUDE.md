@@ -213,14 +213,20 @@ Thin subprocess wrappers around ffmpeg and ffprobe binaries.
   would fall back to software (silently with `-hwaccel` alone): AV1 on Turing,
   H.264 High 10 / 4:2:2, ProRes, FFV1
 - `check_ffmpeg()`: returns `version`, `version_str`, `meets_minimum` (FFmpeg >= 8.1;
-  `n8.1…` tags and `N-…`/`git-…` dev builds accepted), `libvmaf_v1`, `cuda_vmaf`
-  and `hwaccels` (the methods listed by `ffmpeg -hwaccels`: compiled in, not
-  necessarily usable).
+  `n8.1…` tags and `N-…`/`git-…` dev builds accepted), `libvmaf_v1`, `hdr_vmaf`,
+  `cuda_vmaf` and `hwaccels` (the methods listed by `ffmpeg -hwaccels`: compiled
+  in, not necessarily usable).
   `libvmaf_v1` comes from a probe that **computes one frame** with
   `vmaf_v1.0.16_3d0h` on two `color=black:s=320x240` inputs. It never reads the
   libvmaf version: 3.2.1 reports itself as 3.2.0, and a default 3.2.0 build loads
   the v1 models but cannot compute them. The probe must stay >= 320x240: the v1
   SpEED feature rejects frames below about 288x162.
+  `hdr_vmaf` comes from the same probe (`_probe_libvmaf_frame()`) with
+  `hdr_vmaf_v1.1.8_3d0h`, each input through
+  `setparams=range=tv:color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc,format=yuv420p10le`:
+  it computes a frame only with the HDR models, libvmaf built with zimg and an
+  FFmpeg that passes the frame colorimetry (see Environment); no version tells.
+  `check_ffmpeg()` never exits on it
 
 Must NOT contain any VMAF business logic or user-facing print statements.
 
@@ -739,13 +745,17 @@ with hardware decoding (`--gpu` without `--disable-hw-decode`); `distorted` and
 - `tests/test_integration.py` — real FFmpeg runs
 - `tests/conftest.py` — shared stubs (`STREAM`, `CAPABILITIES`), fixtures, and the
   `requires_libvmaf_v1` marker, which skips a test unless FFmpeg's libvmaf
-  computes a v1 frame (`probe_libvmaf_model()`), and the `requires_cuda` marker,
+  computes a v1 frame (`probe_libvmaf_model()`), the `requires_hdr_vmaf` marker,
+  which skips a test unless it computes an HDR-VMAF frame from PQ-tagged frames
+  (`hdr_vmaf_skip_reason()`), and the `requires_cuda` marker,
   which skips a test unless `libvmaf_cuda` scores a frame (`cuda_skip_reason()`)
 
 `EASYVMAF_REQUIRE_FFMPEG=1` turns those skips (FFmpeg/FFprobe unavailable, no
 libvmaf, failed v1 probe) into failures; CI sets it so that an integration job
 cannot pass by skipping. Other skips (Windows-only UNC, ...) are unchanged, and
-so are the `requires_cuda` skips: CI has no GPU runner. The `gpu-*` cases of
+so are the `requires_cuda` skips: CI has no GPU runner.
+`EASYVMAF_REQUIRE_HDR=1` turns the `requires_hdr_vmaf` skips into failures; only
+`integration-docker` sets it (BtbN 8.1 and Homebrew have no HDR-VMAF). The `gpu-*` cases of
 `test_frame_ranges_join_into_the_full_calculation` run only on a GPU host
 (`Dockerfile.cuda` image, Docker section); run them before changing the range
 or the GPU pipeline. `test_hw_decode_never_changes_a_score` (`requires_cuda`)
@@ -757,12 +767,13 @@ CI (`.github/workflows/test.yml`: pushes to master, pull requests, manual runs,
 and `workflow_call`) runs the full suite in four jobs:
 - `unit`: Python 3.10 to 3.14 on Ubuntu, with `FFMPEG`/`FFPROBE` pointing to
   nonexistent paths, so the integration tests skip
-- `integration-docker`: inside the `Dockerfile` image, the minimum FFmpeg 8.1
-  and libvmaf 3.2.1 (the pytest command of the Docker section). The build stage
+- `integration-docker`: inside the `Dockerfile` image, FFmpeg and libvmaf at
+  their pinned master commits, with HDR-VMAF (the pytest command of the Docker
+  section, plus `-e EASYVMAF_REQUIRE_HDR=1`). The build stage
   is cached with the GitHub Actions cache, written only by pushes to master
   (release.yml's CPU image reads it too)
 - `integration-btbn`: pip users on Linux x86_64, BtbN `n8.1-latest` FFmpeg and
-  Python 3.10
+  Python 3.10: the minimum FFmpeg 8.1 (no HDR-VMAF)
 - `integration-macos`: pip users on macOS, Homebrew FFmpeg and Python 3.12
 
 The integration jobs set `EASYVMAF_REQUIRE_FFMPEG=1`.
@@ -818,8 +829,8 @@ Docker images (`publish-images`, a matrix `cpu`/`cuda`, `linux/amd64` only):
   Smoke tests: `easyvmaf --help` (also as `-u 1000:1000`: Python
   dependencies go to the system site-packages, never `pip --user` into
   `/root`, 0700), the installed package version equals the
-  release version, `check_ffmpeg()` `meets_minimum` and `libvmaf_v1`, the
-  license files and `ffmpeg/SOURCE` (see Redistribution in Environment); CUDA
+  release version, `check_ffmpeg()` `meets_minimum`, `libvmaf_v1` and
+  `hdr_vmaf`, the license files (zimg's too) and `ffmpeg/SOURCE` (see Redistribution in Environment); CUDA
   also: `ffmpeg -filters` has `libvmaf_cuda`, `scale_cuda`, `yadif_cuda`,
   `hwupload_cuda`, `ffmpeg -hwaccels` has `cuda`, `ffmpeg -L` is LGPL and has
   no "redistributable" (a nonfree build says "not legally redistributable"),
@@ -970,9 +981,17 @@ variants) and a GPU host to validate it.
 - libvmaf >= 3.2.1 built with `-Dbuilt_in_models=true` (3.2.0 is not enough: its
   default build cannot compute the v1 `speed_chroma` feature). 3.2.1 reports its
   version as 3.2.0; only the frame probe tells them apart
+- HDR-VMAF (`hdr_vmaf_v1.1.8_*`, `check_ffmpeg()['hdr_vmaf']`): no release has
+  it yet. libvmaf master >= `74f930d1` (the built-in HDR models) built with
+  `-Denable_zimg=true` (zimg >= 2.7: libvmaf converts the pictures to the
+  models' PQ/BT.2020/ICtCp from `VmafPicture.color`), and FFmpeg master >=
+  `58584087cf`, whose `vf_libvmaf` passes each frame's range, primaries, trc
+  and matrix (`color_map()`; built only when libvmaf exports
+  `vmaf_picture_convert`: `HAVE_LIBVMAF_PICTURE_CONVERT` in `config.h`, which
+  both Dockerfiles check). A PQ frame without colorimetry is a libvmaf error
 - GPU VMAF (`--gpu`, v0.6 at 8 bits): FFmpeg built with `--enable-libvmaf
-  --enable-ffnvcodec` (no `--enable-nonfree`), libvmaf 3.2.1 built with
-  `-Denable_cuda=true`; nvidia-container-toolkit on host. The CUDA image
+  --enable-ffnvcodec` (no `--enable-nonfree`), libvmaf (3.2.1 or the pinned
+  master) built with `-Denable_cuda=true`; nvidia-container-toolkit on host. The CUDA image
   (CUDA 12.8) needs an NVIDIA driver >= 570: libvmaf embeds PTX ISA 8.7
   (`compute_50`, `compute_120`) besides `sm_75` ... `sm_120` kernels
 - GPU decoding (`--gpu`, any model): FFmpeg with NVDEC (`--enable-ffnvcodec`;
@@ -990,19 +1009,28 @@ variants) and a GPU host to validate it.
 - Redistribution, both images: every component built from source installs its
   license under `/usr/local/share/licenses/<component>/` (FFmpeg
   `COPYING.LGPLv3`, `COPYING.GPLv3`, `LICENSE.md`; libvmaf `LICENSE`; CUDA
-  image also dav1d `COPYING` and the nv-codec-headers notices). FFmpeg's
+  image also dav1d `COPYING` and the nv-codec-headers notices; both images zimg
+  `COPYING`, WTFPL). zimg is built from its release archive at the same
+  `ZIMG_version` in both images, never the distribution package: libvmaf
+  converts the HDR pictures with it, and its float results depend on how it was
+  built, so the two images would give different HDR scores. FFmpeg's
   source code is not in the image: `ffmpeg/SOURCE` points to the exact GitHub
-  archive built, with its sha256 and the tag's commit (read from the archive's
-  pax header), as LGPL-3.0 (GPL-3.0 §6(d)) allows. Keep the FFmpeg download a
-  GitHub tag archive, or the commit cannot be read and the build fails
+  archive built (`archive/<commit>.tar.gz`), with its sha256 and its commit
+  (read from the archive's pax header; the build fails if it is not
+  `FFMPEG_commit`), as LGPL-3.0 (GPL-3.0 §6(d)) allows. Keep the FFmpeg
+  download a GitHub archive, or the commit cannot be read and the build fails.
+  A commit archive has no `.git`, so FFmpeg would report master's `RELEASE`
+  (`8.0.git`, below the minimum): the build runs `make REVISION=git-<12 hex>`, which
+  `check_ffmpeg()` reads as a dev build
 - Dependency: `ffmpeg-progress-yield >= 0.7.0` (pip)
 
 ### Docker image versions (pinned)
 | Component  | Version |
 |------------|---------|
 | easyVmaf   | 5.1.0   |
-| FFmpeg     | 8.1     |
-| libvmaf    | 3.2.1   |
+| FFmpeg     | master `88c46fce27e311c73772d9b83db4047dd83b1294` (2026-11-13; ARG `FFMPEG_commit`) |
+| libvmaf    | master `a6ed0f18285cab504b779bbccb0bbaddc3bf44c2` (2026-11-02; ARG `VMAF_commit`), `-Denable_zimg=true` |
+| zimg       | 3.0.6 (ARG `ZIMG_version`, built from source in both images) |
 | dav1d      | 1.4.3   |
 | nv-codec-headers (CUDA) | 13.0.19.1 |
 | Python     | 3.12 (CPU image), 3.10 (CUDA image: Ubuntu 22.04 `python3`) |

@@ -689,9 +689,40 @@ class inputFFmpeg:
         self.hwFrames = False
 
 
+def _probe_libvmaf_frame(model, chain=None):
+    """True if libvmaf scores one 320x240 black frame with the built-in model,
+    each input through chain (a filter chain) first."""
+    source = 'color=black:s=320x240:r=1:d=1'
+    if chain:
+        graph = (f'[0:v]{chain}[dis];[1:v]{chain}[ref];'
+                 f'[dis][ref]libvmaf=model=version={model}:log_fmt=json:log_path={os.devnull}')
+    else:
+        graph = f'libvmaf=model=version={model}:log_fmt=json:log_path={os.devnull}'
+    probe_cmd = [
+        FFmpegQos._executable,
+        '-hide_banner', '-loglevel', 'error',
+        '-f', 'lavfi', '-i', source,
+        '-f', 'lavfi', '-i', source,
+        '-lavfi', graph,
+        '-f', 'null', '-'
+    ]
+    try:
+        probe = subprocess.run(
+            probe_cmd,
+            capture_output=True,
+            text=True,
+            shell=False
+        )
+    except OSError:
+        # Probe failed entirely — conservative assumption
+        return False
+    return probe.returncode == 0
+
+
 def check_ffmpeg() -> dict:
     """
-    Detect FFmpeg version and probe the built-in VMAF v1 model vmaf_v1.0.16_3d0h.
+    Detect FFmpeg version and probe the built-in VMAF v1 model vmaf_v1.0.16_3d0h
+    and the HDR-VMAF model hdr_vmaf_v1.1.8_3d0h.
 
     Returns a dict with:
         {
@@ -699,6 +730,7 @@ def check_ffmpeg() -> dict:
             'version_str': '8.1',
             'meets_minimum': bool,              # >= 8.1
             'libvmaf_v1': bool,                 # vmaf_v1.0.16_3d0h scored a frame
+            'hdr_vmaf': bool,                   # hdr_vmaf_v1.1.8_3d0h scored a PQ frame
             'cuda_vmaf': bool,                  # compiled filter, not GPU runtime
             'hwaccels': ['cuda', ...],          # ffmpeg -hwaccels: compiled, not usable
         }
@@ -711,6 +743,7 @@ def check_ffmpeg() -> dict:
         'version_str': 'unknown',
         'meets_minimum': False,
         'libvmaf_v1': False,
+        'hdr_vmaf': False,       # HDR-VMAF scored a PQ frame
         'cuda_vmaf': False,      # libvmaf_cuda filter available
         'hwaccels': [],          # hardware decoding methods compiled in
     }
@@ -762,25 +795,17 @@ def check_ffmpeg() -> dict:
     # but a default build cannot extract their features. Its version string
     # cannot tell it apart from 3.2.1, so only this calculation decides.
     # v1's SpEED feature rejects frames below about 288x162, hence 320x240.
-    probe_cmd = [
-        FFmpegQos._executable,
-        '-hide_banner', '-loglevel', 'error',
-        '-f', 'lavfi', '-i', 'color=black:s=320x240:r=1:d=1',
-        '-f', 'lavfi', '-i', 'color=black:s=320x240:r=1:d=1',
-        '-lavfi', f'libvmaf=model=version=vmaf_v1.0.16_3d0h:log_fmt=json:log_path={os.devnull}',
-        '-f', 'null', '-'
-    ]
-    try:
-        probe = subprocess.run(
-            probe_cmd,
-            capture_output=True,
-            text=True,
-            shell=False
-        )
-        result['libvmaf_v1'] = probe.returncode == 0
-    except OSError:
-        # Probe failed entirely — conservative assumption
-        result['libvmaf_v1'] = False
+    result['libvmaf_v1'] = _probe_libvmaf_frame('vmaf_v1.0.16_3d0h')
+
+    # --- HDR-VMAF probe ---
+    # PQ frames need the HDR models (libvmaf master since 74f930d1), libvmaf
+    # built with zimg to convert them, and an FFmpeg that passes each frame's
+    # colorimetry to libvmaf (master since 58584087cf). Missing any of them,
+    # this frame fails; no version string tells.
+    result['hdr_vmaf'] = _probe_libvmaf_frame(
+        'hdr_vmaf_v1.1.8_3d0h',
+        'setparams=range=tv:color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc,'
+        'format=yuv420p10le')
 
     # --- CUDA VMAF probe ---
     # Ask FFmpeg to list compiled-in filters. A CUDA-enabled build will

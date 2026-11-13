@@ -252,20 +252,20 @@ jobs:
           # Any user can run it (docker run -u): nothing it imports lives in /root
           docker run --rm -u 1000:1000 easyvmaf:smoke --help > /dev/null
           # The installed package is the tagged version, and its FFmpeg computes
-          # a VMAF v1 frame (on the CPU, in both images)
+          # a VMAF v1 frame and an HDR-VMAF frame (on the CPU, in both images)
           docker run --rm --entrypoint python3 -e VERSION easyvmaf:smoke -c '
           import os, sys
           from importlib.metadata import version
           from easyvmaf import check_ffmpeg
           caps = check_ffmpeg()
           print(version("easyvmaf"), caps)
-          sys.exit(0 if version("easyvmaf") == os.environ["VERSION"] and caps["meets_minimum"] and caps["libvmaf_v1"] else 1)
+          sys.exit(0 if version("easyvmaf") == os.environ["VERSION"] and caps["meets_minimum"] and caps["libvmaf_v1"] and caps["hdr_vmaf"] else 1)
           '
           # Redistribution: the license texts of what the image builds from
           # source, and where FFmpeg's source code is (archive sha256, commit)
           docker run --rm --entrypoint sh -e FLAVOR easyvmaf:smoke -c '
           cd /usr/local/share/licenses && cat ffmpeg/SOURCE
-          files="ffmpeg/COPYING.LGPLv3 ffmpeg/COPYING.GPLv3 libvmaf/LICENSE"
+          files="ffmpeg/COPYING.LGPLv3 ffmpeg/COPYING.GPLv3 libvmaf/LICENSE zimg/COPYING"
           [ "$FLAVOR" = cuda ] && files="$files dav1d/COPYING nv-codec-headers/NOTICE"
           for f in $files; do [ -s "$f" ] || { echo "::error::The image has no $f"; exit 1; }; done
           grep -Eq "^  sha256 [0-9a-f]{64}$" ffmpeg/SOURCE && grep -Eq "commit [0-9a-f]{40}\.$" ffmpeg/SOURCE \

@@ -55,6 +55,12 @@ def test_check_ffmpeg_accepts_real_build(ffmpeg_bin):
     assert result["libvmaf_v1"] is True
 
 
+@pytest.mark.requires_hdr_vmaf
+def test_check_ffmpeg_detects_hdr_vmaf(ffmpeg_bin):
+    """A build that scores PQ frames with HDR-VMAF must say so, or HDR inputs are refused."""
+    assert ffmpeg.check_ffmpeg()["hdr_vmaf"] is True
+
+
 def write_psnr_stats(binary, target):
     source = "testsrc2=s=16x16:d=0.2:r=10"
     subprocess.run([binary, "-v", "error", "-f", "lavfi", "-i", source, "-f", "lavfi",
