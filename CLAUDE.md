@@ -127,15 +127,18 @@ Supporting entry points:
 ### easyvmaf/models.py — model catalog
 Pure data module: no subprocess, no logging, no import of `ffmpeg.py` or `vmaf.py`.
 - `DISPLAY_RESOLUTION = {'hd': (1920, 1080), '4k': (3840, 2160)}`
-- `VMAF_VERSIONS = ('1', '0.6')`, `VIEW_ALIASES = {'phone': '5h'}`
+- `VMAF_VERSIONS = ('1', '0.6')`, `VIEW_ALIASES = {'phone': '5h'}`,
+  `DYNAMIC_RANGES = ('sdr', 'hdr')`
 - `ModelSpec` (frozen): `name` (score key), `libvmaf_model` (built-in id, passed as
   `version=`), `vmaf_version`, `display`, `view`, `score_range`, `options`,
-  `hfr_model`, `default`
+  `hfr_model`, `default`, `dynamic_range` (`'sdr'`, or `'hdr'` for HDR-VMAF)
 - `ModelRun` (frozen): `spec`, `libvmaf_model` (`spec.libvmaf_model` or
   `spec.hfr_model`), `options` (`spec.options` + layer 2 overrides)
-- `CATALOG`: the 8 `ModelSpec` entries (see VMAF models below)
-- `select_models(display, vmaf_versions=('1',), views=None, hfr=False)`: filters by
-  display, then each version in the order received; v1 `views=None` takes the
+- `CATALOG`: the 12 `ModelSpec` entries (see VMAF models below)
+- `select_models(display, vmaf_versions=('1',), views=None, hfr=False,
+  dynamic_range='sdr')`: filters by display and model family (`dynamic_range`;
+  `'hdr'` with v0.6 raises `ValueError`: no HDR v0.6 model), then each version
+  in the order received; v1 `views=None` takes the
   `default` models, explicit views are case-insensitive, follow catalog order, and
   raise `ValueError` if a view does not exist for the display; v0.6 always returns
   the full set of its display; `hfr=True` switches v1 ids to `hfr_model`. Returns
@@ -192,7 +195,11 @@ Thin subprocess wrappers around ffmpeg and ffprobe binaries.
     seek (hardware decode alone does not add it); without a seek the command is
     unchanged
 - `inputFFmpeg`: per-input filter chains (scale, trim, fps, deinterlace,
-  `setFormatFilter(pix_fmt)`, hwupload_cuda). Frame range helpers:
+  `setFormatFilter(pix_fmt, color_space=None, color_range=None)` (`format=<pix_fmt>`,
+  plus `:color_spaces=…:color_ranges=…` only when given),
+  `setColorParamsFilter(range, primaries, trc, matrix)` (`setparams=range=…:
+  color_primaries=…:color_trc=…:colorspace=…`, cleared by `clearFilters()` like
+  every filter), hwupload_cuda). Frame range helpers:
   `setSeek(seconds)` (input `-ss`, stored in `extraOptions`, cleared by
   `clearFilters()`), `setPreTrimFilter(start)` / `setEndTrimFilter(end)` (trims
   that keep timestamps), `setPtsShiftFilter(pts)` (integer ticks) and
@@ -221,7 +228,8 @@ Thin subprocess wrappers around ffmpeg and ffprobe binaries.
   libvmaf version: 3.2.1 reports itself as 3.2.0, and a default 3.2.0 build loads
   the v1 models but cannot compute them. The probe must stay >= 320x240: the v1
   SpEED feature rejects frames below about 288x162.
-  `hdr_vmaf` comes from the same probe (`_probe_libvmaf_frame()`) with
+  `hdr_vmaf` comes from the same probe (`_probe_libvmaf_frame()`, via
+  `probe_hdr_vmaf()`, which layer 2 also calls) with
   `hdr_vmaf_v1.1.8_3d0h`, each input through
   `setparams=range=tv:color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc,format=yuv420p10le`:
   it computes a frame only with the HDR models, libvmaf built with zimg and an
@@ -235,11 +243,12 @@ VMAF computation orchestration.
 - `video`: parses stream metadata via FFprobe (lazy loading), detects interlacing
 - `Vmaf(distorted, reference, *, display='hd', vmaf_versions=('1',), views=None,
   hfr='auto', bitdepth='auto', enc_size=None, enc_bitdepth=None, model_options=(),
-  output_format='json', loglevel='info', subsample=1, threads=0, progress=False,
+  dynamic_range='auto', reference_color=None, distorted_color=None, output_format='json', loglevel='info', subsample=1, threads=0, progress=False,
   shortest=False, fps=0, cambi_heatmap=False, gpu=False, sync_offset=0.0,
   start_frame=None, frame_count=None, disable_hw_decode=False,
   disable_vmaf_cuda=False, jobs=1)`: pixel format, auto-scaling, auto-deinterlace,
-  parallel sync offset search, model resolution, optional frame range, optional
+  parallel sync offset search, SDR/HDR and colorimetry resolution (see HDR),
+  model resolution, optional frame range, optional
   GPU (hardware decoding and `libvmaf_cuda`), optional parallel jobs (see
   Parallel jobs) and final VMAF scoring.
   `sync(window, start=0, reverse=False)` searches the offset, stores it in
@@ -266,26 +275,38 @@ VMAF computation orchestration.
   constructor also rejects containers outside `_RANGE_FORMATS`, suggesting a
   remux, and turns off `progress` with a warning.
 - `validate_model_config(display, vmaf_versions, views, hfr, bitdepth, enc_size,
-  enc_bitdepth, model_options, labels=None)`: the single source of model
-  option validation. Run by the `Vmaf` constructor and once by the CLI before the
+  enc_bitdepth, model_options, labels=None, dynamic_range='auto',
+  reference_color=None, distorted_color=None)`: the single source of model
+  option validation (the new arguments after `labels`, so positional callers
+  are unchanged). Run by the `Vmaf` constructor and once by the CLI before the
   batch (`labels` maps argument names to flag names in messages). Raises
   `UnsupportedModelConfigError` for: `views`,
   `hfr='on'`, `enc_size`, `enc_bitdepth` or `model_options` without v1; a
-  `model_options` entry not matching `_MODEL_OPTION_RE`. Unknown display, version or
+  `model_options` entry not matching `_MODEL_OPTION_RE`; a `dynamic_range` other
+  than auto/sdr/hdr; `hdr` with v0.6; a color not accepted by `_parseColor()`;
+  a color with `sdr`. Unknown display, version or
   view raise `ValueError` from `select_models()`.
 - The constructor also rejects, with v1 + `cambi_heatmap`, a heatmap path containing
   `:`, `|`, `\` or `'` (`_HEATMAP_PATH_FORBIDDEN`): it cannot be escaped inside a
   `model=` override. It runs `validate_range_config()` first, so the check sees the
   path actually written (with the range suffix).
 - `UnsupportedFramerateError`: raised when no deinterlace filter covers the fps combination
-- `UnsupportedModelConfigError(ValueError)`: options the selected models cannot honour
+- `UnsupportedModelConfigError(ValueError)`: options the selected models cannot
+  honour; also every HDR rejection of the constructor (see HDR), the build
+  without HDR-VMAF included, so the CLI treats it as an input error (exit 1)
+- `_parseColor(value, label)`: the single color parser (CLI and API): `None`,
+  a preset of `_COLOR_PRESETS` (`hdr10`, `bt709`) or `key=value[,…]` with the
+  keys and values of `_COLOR_VALUES`; returns the overrides as a dict
 - `FeatureConfig`: dataclass for building the libvmaf `feature=` parameter string
 - `results.py`: `SyncResult` NamedTuple (`offset`, `psnr`), `VmafResult` dataclass
   (`scores`, `models`, `display`, `pix_fmt`, `hfr`, `log_path`,
   `cambi_heatmap_path`, `sync_offset`, and for a range `start_frame`,
   `frame_count`, `frames_scored`; `cuda`, true when `libvmaf_cuda` computed it;
   `hw_decode`, `None` without hardware decoding, else `{'api': 'cuda',
-  'distorted': 'hw'|'sw', 'reference': 'hw'|'sw'}`) and
+  'distorted': 'hw'|'sw', 'reference': 'hw'|'sw'}`; `dynamic_range`,
+  `'sdr'|'hdr'`; `color`, with HDR `{'reference': {range, primaries, trc,
+  matrix}, 'distorted': {...}}` (each input's colorimetry: detected plus
+  overrides, as tagged by `setparams`), `None` with SDR) and
   `read_scores(log_path, output_fmt, names)`, which averages the per-frame values of
   each model name in a json, xml or csv libvmaf log. It reads only model names:
   feature columns differ between v0.6 and v1. `read_frames(log_path, output_fmt)`
@@ -360,6 +381,9 @@ Understand this before touching easyvmaf/vmaf.py or easyvmaf/ffmpeg.py.
 |                    |                   | `_build_feature_string` (v0.6-only CAMBI:     |       |
 |                    |                   |   width, height of both inputs)               |       |
 |                    |                   | `compute` (r_frame_rate, width, height logs)  |       |
+|                    |                   | `_resolveDynamicRange` (constructor:          |       |
+|                    |                   |   color_range, color_primaries,               |       |
+|                    |                   |   color_transfer, color_space of both inputs) |       |
 |                    |                   | `getDuration` (primary: duration, start_time) |       |
 | `formatInfo`       | `getFormatInfo()` | `getDuration` fallback (KeyError path)        | low   |
 |                    |                   | `_checkRangeInputs` (format_name), range or   |       |
@@ -375,7 +399,8 @@ Understand this before touching easyvmaf/vmaf.py or easyvmaf/ffmpeg.py.
 per input to sample interlacing. This flag must never be changed.
 
 All VMAF v1 parameters (measurement format, CAMBI encoding size and bit depth) come
-from `streamInfo`, which is already fetched: v1 adds no FFprobe call.
+from `streamInfo`, which is already fetched: v1 adds no FFprobe call. The same for
+HDR: the `color_*` fields are in `-show_streams` (absent when unspecified).
 
 **Lazy loading**: `interlaced` and `formatInfo` on the `video` class are lazy
 properties — they trigger FFprobe only on first access and cache the result.
@@ -414,24 +439,69 @@ would run its own frames probe.
    `setHwDecode()` on each input the GPU decodes, and `setHwDownloadFilter(<native
    pix_fmt>)` as its **first** filter unless it stays on the GPU. The download
    gives the software decoder's frames in the native `pix_fmt`, so every later
-   step, step 3's comparison included, is unchanged
-3. `_applyPixelFormat()` — resolve the measurement `pix_fmt` and add
-   `format=<pix_fmt>` as the **first** filter of each chain whose native format
-   differs (after the download, if any; CPU only; when `libvmaf_cuda` computes
-   VMAF (`self.cuda`) `pix_fmt = 'yuv420p'` and no filter is added)
-4. `_normalizeChains()` — `_applyDeinterlaceFilters()` (yadif and/or fps), or the
+   step, step 4's comparison included, is unchanged
+3. `_applyColorParams()` — only with HDR (`self.color`): `setColorParamsFilter()`
+   with each input's resolved colorimetry as the **first** software filter of
+   its chain (after the download, if any). With SDR nothing: the command is the
+   5.1 one
+4. `_applyPixelFormat()` — resolve the measurement `pix_fmt` and add
+   `format=<pix_fmt>` as the **first** filter (after the HDR `setparams`) of each
+   chain whose native format differs (after the download, if any; CPU only; when
+   `libvmaf_cuda` computes VMAF (`self.cuda`) `pix_fmt = 'yuv420p'` and no filter
+   is added). With mixed HDR inputs, the input `_colorConversion()` names gets
+   `format=<pix_fmt>:color_spaces=<matrix>:color_ranges=<range>` even when its
+   pix_fmt is native (see HDR)
+5. `_normalizeChains()` — `_applyDeinterlaceFilters()` (yadif and/or fps), or the
    `--fps` filter on both chains, **then** `_applyScaleFilters()` to
    `DISPLAY_RESOLUTION[display]`; records the effective distorted frame rate in
    `self.output_fps`. Deinterlacing goes before scaling: `scale` treats the picture
    as progressive and would blend the two fields (−22 VMAF on a 720i input)
-5. `_applyOffset()` — apply trim filters for `sync_offset`; with a frame range,
+6. `_applyOffset()` — apply trim filters for `sync_offset`; with a frame range,
    `_applyRange()` instead (see Frame range)
-6. `_resolveModels()` — HFR decision from `output_fps`, `select_models()`, v1 overrides
-7. `ffmpegQos.getVmaf(models, ...)` — if `self.cuda` (passed as layer 1's `gpu=True`), auto-inserts `hwupload_cuda` on both chains as the last CPU→GPU step before `libvmaf_cuda` (on a chain still on the GPU, `scale_cuda=format=yuv420p` instead)
+7. `_resolveModels()` — HFR decision from `output_fps`, `select_models()` (with
+   `dynamic_range`), v1 overrides
+8. `ffmpegQos.getVmaf(models, ...)` — if `self.cuda` (passed as layer 1's `gpu=True`), auto-inserts `hwupload_cuda` on both chains as the last CPU→GPU step before `libvmaf_cuda` (on a chain still on the GPU, `scale_cuda=format=yuv420p` instead)
 
 `sync()` runs before `compute()`, on its own worker chains, and only sets the
-offset of step 5: `_applyOffset()` is private because `compute()` rebuilds every
+offset of step 6: `_applyOffset()` is private because `compute()` rebuilds every
 chain.
+
+### HDR (`dynamic_range`)
+easyVmaf never converts colors: it tags each input with its colorimetry and
+picks the HDR-VMAF models; libvmaf converts the pictures to the models' PQ /
+BT.2020 / ICtCp (zimg) from each frame's colorimetry (see Environment).
+- Resolution in the constructor (`_resolveDynamicRange()`), from `streamInfo`
+  (`color_range`, `color_primaries`, `color_transfer`, `color_space`; missing or
+  `unknown` is unset) with `reference_color` / `distorted_color` on top:
+  `sdr` → SDR, nothing else; `auto` → HDR when either input's trc is
+  `smpte2084`; `hdr` → HDR. Sets `self.dynamic_range` and `self.color` (`None`
+  with SDR)
+- Rejected with `UnsupportedModelConfigError`, in this order: HLG
+  (`arib-std-b67`) on either input with `auto` or `hdr` (libvmaf has no HLG);
+  with HDR, any v0.6 model (suggests `--dynamic-range sdr`); a build where
+  `probe_hdr_vmaf()` fails (`_hdr_vmaf_supported()`, cached per process;
+  suggests `--dynamic-range sdr` or the Docker image; no fallback: the scores
+  would depend on the build); an input missing one of the 4 attributes, or with
+  a value outside `_COLOR_VALUES`, naming the input, the attribute and the flag
+  (`--reference-color trc=smpte2084`). libvmaf's own error names its CLI flags
+  and may blame the wrong input, hence the check before FFmpeg
+- Mixed inputs (one PQ, the other not): `logger.warning`. `vf_libvmaf`
+  negotiates one matrix and range for both inputs and, without help, inserts an
+  `auto_scale` right before libvmaf that re-matrixes one of them (with a
+  distorted SDR input already in the measurement format at the display
+  resolution, the PQ reference becomes bt709). `_colorConversion()` keeps the PQ
+  input's matrix and range (the reference's when both or neither are PQ) and
+  converts the other input to them in its `format=` of step 4; its primaries
+  and trc stay, so the tags match the pixels. Verified with `showinfo` and
+  `-loglevel verbose` in the HDR image: no `auto_scale` before libvmaf
+- HDR models and SDR v1 models cannot share one `libvmaf` (`problem during
+  vmaf_use_features_from_model`): a calculation is one family. Nor can the HD
+  and 4K HDR models (their conversion targets differ); easyVmaf computes one
+  display per calculation
+- The sync, `_measurementPixFmt()`, `_applyRange()` and `--jobs` do not change:
+  the tags are part of the chain, the range anchor probe deep-copies it and
+  each job's `compute()` re-applies them from the shared `self.color`
+- HDR is v1 only, so `cpu_vmaf_reason()` always runs it on the CPU
 
 ### GPU (`--gpu`)
 `--gpu` uses the GPU (CUDA) wherever it gives the CPU's results; each part has
@@ -648,10 +718,17 @@ Duration is used by `_applyOffset()` (via `_syncTrims()`) to compute trim length
 | `vmaf_hd_neg`   | `vmaf_v0.6.1neg`                        | 0.6     | hd      | neg     | [0, 100] | yes     |
 | `vmaf_hd_phone` | `vmaf_v0.6.1` + `enable_transform=true` | 0.6     | hd      | phone   | [0, 100] | yes     |
 | `vmaf_4k`       | `vmaf_4k_v0.6.1`                        | 0.6     | 4k      | default | [0, 100] | yes     |
+| `hdr_vmaf_v1_hd`    | `hdr_vmaf_v1.1.8_3d0h`              | 1 (HDR) | hd      | 3h      | [0, 100] | yes     |
+| `hdr_vmaf_v1_phone` | `hdr_vmaf_v1.1.8_5d0h`              | 1 (HDR) | hd      | 5h      | [0, 100] | yes     |
+| `hdr_vmaf_v1_4k`    | `hdr_vmaf_v1.1.8_1d5h_2160`         | 1 (HDR) | 4k      | 1.5h    | [0, 100] | yes     |
+| `hdr_vmaf_v1_4k_3h` | `hdr_vmaf_v1.1.8_3d0h_2160`         | 1 (HDR) | 4k      | 3h      | [0, 110] | no      |
 
 - Every v1 model has `hfr_model = vmaf_v1.0.16_hfr_<suffix>` (e.g.
-  `vmaf_v1.0.16_hfr_3d0h`); HFR changes the id, never the score name
-- v1 score names always start with `vmaf_v1_`: v1 and v0.6 scores are not comparable
+  `vmaf_v1.0.16_hfr_3d0h`; HDR: `hdr_vmaf_v1.1.8_hfr_<suffix>`); HFR changes the
+  id, never the score name
+- v1 score names always start with `vmaf_v1_`, and HDR-VMAF ones (`dynamic_range
+  'hdr'`, `vmaf_version '1'`) with `hdr_vmaf_v1_`: v1, HDR and v0.6 scores are
+  not comparable. HDR `score_range` comes from each model JSON's `score_clip`
 - Catalog order matters: the v0.6 HD order reproduces the 3.x `model=` string
 - Built-in models only; external model JSONs (`path=`) are not supported
 
@@ -954,7 +1031,7 @@ variants) and a GPU host to validate it.
   `_normalizeChains()` and trim after it; a different order lets the sync offset
   select a different frame or field than the final calculation
 - The v0.6 score names (`vmaf_hd`, `vmaf_hd_neg`, `vmaf_hd_phone`, `vmaf_4k`) and
-  the `vmaf_v1_` prefix of v1 score names
+  the `vmaf_v1_` prefix of v1 score names (`hdr_vmaf_v1_` for HDR-VMAF)
 - JSON schema 2 field names (`schema_version`, `vmaf.scores`, `vmaf.models`, ...);
   a breaking change needs a new `schema_version`
 - Anything in the versioning contract (CLI flags, exit codes, output file

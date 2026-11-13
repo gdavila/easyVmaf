@@ -500,6 +500,7 @@ class inputFFmpeg:
     - setPtsShiftFilter()
     - setFpsFilter()
     - setFormatFilter()
+    - setColorParamsFilter()
     - setHwDownloadFilter()
     - setSeek(), setHwDecode() (input options)
     - clearFilters()
@@ -672,10 +673,25 @@ class inputFFmpeg:
         self._setFilter(fpsFilter)
         self._updateOutputId(outputID)
 
-    def setFormatFilter(self, pix_fmt):
+    def setFormatFilter(self, pix_fmt, color_space=None, color_range=None):
+        """Convert to pix_fmt and, when given, to the color_space matrix
+        (e.g. bt2020nc) and color_range (tv, pc) in the same conversion."""
+        options = pix_fmt
+        if color_space:
+            options += f':color_spaces={color_space}'
+        if color_range:
+            options += f':color_ranges={color_range}'
         inputID, outputID = self._newInOutForFilter()
-        formatFilter = f'[{inputID}]format={pix_fmt}[{outputID}]'
+        formatFilter = f'[{inputID}]format={options}[{outputID}]'
         self._setFilter(formatFilter)
+        self._updateOutputId(outputID)
+
+    def setColorParamsFilter(self, color_range, primaries, trc, matrix):
+        """Tag the frames with this colorimetry (FFmpeg names: tv, bt2020,
+        smpte2084, bt2020nc, ...) without converting them."""
+        inputID, outputID = self._newInOutForFilter()
+        self._setFilter(f'[{inputID}]setparams=range={color_range}:color_primaries={primaries}'
+                        f':color_trc={trc}:colorspace={matrix}[{outputID}]')
         self._updateOutputId(outputID)
 
     def clearFilters(self):
@@ -717,6 +733,16 @@ def _probe_libvmaf_frame(model, chain=None):
         # Probe failed entirely — conservative assumption
         return False
     return probe.returncode == 0
+
+
+def probe_hdr_vmaf() -> bool:
+    """True if libvmaf scores a PQ-tagged frame with hdr_vmaf_v1.1.8_3d0h:
+    the HDR models, libvmaf built with zimg and an FFmpeg that passes the
+    frame colorimetry. check_ffmpeg()['hdr_vmaf']."""
+    return _probe_libvmaf_frame(
+        'hdr_vmaf_v1.1.8_3d0h',
+        'setparams=range=tv:color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc,'
+        'format=yuv420p10le')
 
 
 def check_ffmpeg() -> dict:
@@ -802,10 +828,7 @@ def check_ffmpeg() -> dict:
     # built with zimg to convert them, and an FFmpeg that passes each frame's
     # colorimetry to libvmaf (master since 58584087cf). Missing any of them,
     # this frame fails; no version string tells.
-    result['hdr_vmaf'] = _probe_libvmaf_frame(
-        'hdr_vmaf_v1.1.8_3d0h',
-        'setparams=range=tv:color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc,'
-        'format=yuv420p10le')
+    result['hdr_vmaf'] = probe_hdr_vmaf()
 
     # --- CUDA VMAF probe ---
     # Ask FFmpeg to list compiled-in filters. A CUDA-enabled build will

@@ -59,6 +59,11 @@ class VmafResult:
     # Hardware decoding: {'api': 'cuda', 'distorted': 'hw' | 'sw',
     # 'reference': 'hw' | 'sw'}; None without it.
     hw_decode: Optional[Dict[str, Any]] = None
+    dynamic_range: str = 'sdr'         # 'sdr' | 'hdr': the model family
+    # With HDR, the colorimetry of each input (detected, with the overrides):
+    # {'reference': {'range', 'primaries', 'trc', 'matrix'}, 'distorted': {...}};
+    # None with SDR.
+    color: Optional[Dict[str, Dict[str, str]]] = None
 
 
 def read_scores(log_path: str, output_fmt: str, names: Sequence[str]) -> Dict[str, float]:

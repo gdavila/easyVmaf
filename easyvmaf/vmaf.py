@@ -23,13 +23,14 @@ SOFTWARE.
 """
 from .ffmpeg import FFprobe
 from .ffmpeg import FFmpegQos
-from .ffmpeg import HW_ACCELS, probe_hw_decode
-from .models import DISPLAY_RESOLUTION, model_names, select_models
+from .ffmpeg import HW_ACCELS, probe_hdr_vmaf, probe_hw_decode
+from .models import DISPLAY_RESOLUTION, DYNAMIC_RANGES, model_names, select_models
 from .results import (SyncResult, VmafResult, heatmap_files, join_heatmaps, join_logs, read_frames,
                       read_scores, trim_heatmaps, trim_log)
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 import copy
+import functools
 from typing import Dict, List, Optional, Tuple
 import logging
 import math
@@ -83,6 +84,67 @@ _MODEL_OPTION_RE = re.compile(r'^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*=[A-Za-z0-9_.
 # models, and ':', '\' and "'" are consumed by one parsing level too many.
 _HEATMAP_PATH_FORBIDDEN = (':', '|', '\\', "'")
 
+# Colorimetry (reference_color / distorted_color): the attributes libvmaf
+# converts HDR-VMAF pictures from, as FFmpeg names them, and the values it maps
+# (vf_libvmaf color_map(); smpte170m and bt2020-10/12 are BT.709 transfers).
+_COLOR_VALUES = {
+    'range': ('tv', 'pc'),
+    'primaries': ('bt709', 'bt2020', 'smpte432'),
+    'trc': ('bt709', 'smpte2084', 'smpte170m', 'bt2020-10', 'bt2020-12'),
+    'matrix': ('bt709', 'bt2020nc'),
+}
+_COLOR_PRESETS = {
+    'hdr10': {'range': 'tv', 'primaries': 'bt2020', 'trc': 'smpte2084', 'matrix': 'bt2020nc'},
+    'bt709': {'range': 'tv', 'primaries': 'bt709', 'trc': 'bt709', 'matrix': 'bt709'},
+}
+# ffprobe stream field of each attribute
+_COLOR_STREAM_FIELDS = {'range': 'color_range', 'primaries': 'color_primaries',
+                        'trc': 'color_transfer', 'matrix': 'color_space'}
+_PQ_TRC = 'smpte2084'
+_HLG_TRC = 'arib-std-b67'
+
+
+@functools.lru_cache(maxsize=None)
+def _hdr_vmaf_supported():
+    """check_ffmpeg()['hdr_vmaf'], probed once per process."""
+    return probe_hdr_vmaf()
+
+
+def _parseColor(value, label='color'):
+    """
+    Colorimetry overrides from a preset ('hdr10', 'bt709') or from
+    'key=value[,key=value]' with the keys range, primaries, trc and matrix.
+    None gives no override.
+
+    Returns:
+        {attribute: value}
+
+    Raises:
+        UnsupportedModelConfigError: anything else
+    """
+    if value is None:
+        return {}
+    text = str(value).strip().lower()
+    if text in _COLOR_PRESETS:
+        return dict(_COLOR_PRESETS[text])
+    presets = ', '.join(_COLOR_PRESETS)
+    color = {}
+    for item in text.split(','):
+        key, sep, val = (part.strip() for part in item.partition('='))
+        if not sep or key not in _COLOR_VALUES:
+            raise UnsupportedModelConfigError(
+                f"Invalid {label} '{value}': expected {presets} or key=value[,key=value] "
+                f"with the keys {', '.join(_COLOR_VALUES)}")
+        if val not in _COLOR_VALUES[key]:
+            raise UnsupportedModelConfigError(
+                f"Invalid {label} {key} '{val}': expected one of "
+                f"{', '.join(_COLOR_VALUES[key])}")
+        if key in color:
+            raise UnsupportedModelConfigError(f"Invalid {label} '{value}': {key} given twice")
+        color[key] = val
+    return color
+
+
 _YUV_PIX_FMT_RE = re.compile(r'^yuvj?(420|422|444)p(\d+)?(le|be)?$')
 _SEMIPLANAR_PIX_FMTS = {
     'nv12': ('420', 8), 'nv21': ('420', 8),
@@ -135,19 +197,22 @@ def _parseSize(size) -> Tuple[int, int]:
 
 def validate_model_config(display='hd', vmaf_versions=('1',), views=None, hfr='auto',
                           bitdepth='auto', enc_size=None, enc_bitdepth=None,
-                          model_options=(), labels=None):
+                          model_options=(), labels=None, dynamic_range='auto',
+                          reference_color=None, distorted_color=None):
     """
     Check that the requested models can be computed with these options,
     without probing any input. Vmaf() runs it in its constructor; a caller that
     processes a batch can run it once before the first input.
 
     Args:
-        display ... model_options: as in Vmaf()
+        display ... model_options, dynamic_range, reference_color,
+            distorted_color: as in Vmaf()
         labels: names shown in error messages for each argument, e.g.
             {'views': '--view'}; default: the argument names
 
     Returns:
-        The selected ModelRun list, without overrides
+        The selected ModelRun list, without overrides (SDR unless
+        dynamic_range is 'hdr': 'auto' decides once the inputs are probed)
 
     Raises:
         UnsupportedModelConfigError: options the selected models cannot honour
@@ -161,8 +226,24 @@ def validate_model_config(display='hd', vmaf_versions=('1',), views=None, hfr='a
     vmaf_versions = tuple(str(v) for v in vmaf_versions)
     hfr, bitdepth = str(hfr).lower(), str(bitdepth).lower()
     has_v1 = '1' in vmaf_versions
+    dynamic_range = str(dynamic_range).lower()
+    if dynamic_range not in ('auto',) + DYNAMIC_RANGES:
+        raise UnsupportedModelConfigError(
+            f"{label('dynamic_range')} must be 'auto', 'sdr' or 'hdr', not '{dynamic_range}'")
+    if dynamic_range == 'hdr' and '0.6' in vmaf_versions:
+        raise UnsupportedModelConfigError(
+            f"{label('dynamic_range')} hdr: VMAF 0.6 has no HDR models, remove 0.6 "
+            f"from {label('vmaf_versions')}")
+    for argument, value in (('reference_color', reference_color),
+                            ('distorted_color', distorted_color)):
+        _parseColor(value, label(argument))
+        if value is not None and dynamic_range == 'sdr':
+            raise UnsupportedModelConfigError(
+                f"{label(argument)}: only for the HDR models, not with "
+                f"{label('dynamic_range')} sdr")
     # select_models() rejects unknown displays, versions and views with ValueError.
-    models = select_models(display, vmaf_versions, views)
+    models = select_models(display, vmaf_versions, views,
+                           dynamic_range='hdr' if dynamic_range == 'hdr' else 'sdr')
     if hfr not in ('auto', 'on', 'off'):
         raise UnsupportedModelConfigError(
             f"{label('hfr')} must be 'auto', 'on' or 'off', not '{hfr}'")
@@ -421,7 +502,7 @@ class Vmaf():
         - Frame rate conversion (if needed)
     """
 
-    def __init__(self, distorted, reference, *, display='hd', vmaf_versions=('1',), views=None, hfr='auto', bitdepth='auto', enc_size=None, enc_bitdepth=None, model_options=(), output_format='json', loglevel="info", subsample=1, threads=0, progress=False, shortest=False, fps=0, cambi_heatmap=False, gpu=False, sync_offset=0.0, start_frame=None, frame_count=None, disable_hw_decode=False, disable_vmaf_cuda=False, jobs=1):
+    def __init__(self, distorted, reference, *, display='hd', vmaf_versions=('1',), views=None, hfr='auto', bitdepth='auto', enc_size=None, enc_bitdepth=None, model_options=(), dynamic_range='auto', reference_color=None, distorted_color=None, output_format='json', loglevel="info", subsample=1, threads=0, progress=False, shortest=False, fps=0, cambi_heatmap=False, gpu=False, sync_offset=0.0, start_frame=None, frame_count=None, disable_hw_decode=False, disable_vmaf_cuda=False, jobs=1):
         """
         Args (model selection and VMAF v1 parameters):
             display:       'hd' or '4k'; target resolution of the scaling
@@ -436,6 +517,17 @@ class Vmaf():
             enc_bitdepth:  encoding bit depth for CAMBI; default: from the
                            distorted pix_fmt
             model_options: 'feature.option=value' overrides for the v1 models
+
+        Args (HDR):
+            dynamic_range: 'auto' (the HDR-VMAF models when either input is
+                           PQ, color_transfer smpte2084), 'sdr' (the SDR
+                           models, whatever the inputs) or 'hdr'
+            reference_color, distorted_color: colorimetry of each input over
+                           what ffprobe reports: 'hdr10', 'bt709' or
+                           'key=value[,key=value]' with the keys range (tv,
+                           pc), primaries (bt709, bt2020, smpte432), trc
+                           (bt709, smpte2084, smpte170m, bt2020-10, bt2020-12)
+                           and matrix (bt709, bt2020nc)
 
         Args (synchronization):
             sync_offset:   offset in seconds between the inputs: positive trims
@@ -466,7 +558,9 @@ class Vmaf():
 
         Raises:
             UnsupportedModelConfigError: options that the selected models
-                cannot honour (see validate_model_config)
+                cannot honour (see validate_model_config); with HDR, an HLG
+                input, an input without a supported colorimetry, VMAF 0.6
+                models or an FFmpeg build without HDR-VMAF
             UnsupportedRangeError: a range with unsupported options or inputs
             ValueError: unknown display, version or view
         """
@@ -480,6 +574,8 @@ class Vmaf():
         self.enc_size = _parseSize(enc_size) if enc_size is not None else None
         self.enc_bitdepth = int(enc_bitdepth) if enc_bitdepth is not None else None
         self.model_options = tuple(model_options)
+        self._dynamicRangeRequest = str(dynamic_range).lower()
+        self._colorOverrides = {'reference': reference_color, 'distorted': distorted_color}
         self.gpu = gpu
         cpu_reason = cpu_vmaf_reason(vmaf_versions, bitdepth, disable_vmaf_cuda)
         # True when libvmaf_cuda computes VMAF
@@ -497,6 +593,7 @@ class Vmaf():
         self.loglevel = loglevel
         self.main = video(distorted, self.loglevel)
         self.ref = video(reference, self.loglevel)
+        self._resolveDynamicRange()
         if self._hasRange() or self.jobs > 1:
             self._checkRangeInputs()
         if progress and self.jobs > 1:
@@ -540,7 +637,10 @@ class Vmaf():
     def _validateModelConfig(self, distorted):
         self.models = validate_model_config(
             self.display, self.vmaf_versions, self.views, self.hfr, self.bitdepth,
-            self.enc_size, self.enc_bitdepth, self.model_options)
+            self.enc_size, self.enc_bitdepth, self.model_options,
+            dynamic_range=self._dynamicRangeRequest,
+            reference_color=self._colorOverrides['reference'],
+            distorted_color=self._colorOverrides['distorted'])
         if self.cambi_heatmap and self._hasV1():
             path = self._cambiHeatmapPath(distorted)
             if any(c in path for c in _HEATMAP_PATH_FORBIDDEN):
@@ -548,6 +648,98 @@ class Vmaf():
                     f"CAMBI heatmap path '{path}' cannot contain any of "
                     f"{' '.join(_HEATMAP_PATH_FORBIDDEN)} with VMAF v1 models; "
                     f"rename or move the distorted file")
+
+    def _resolveDynamicRange(self):
+        """
+        Decide SDR or HDR and the colorimetry of each input: what ffprobe
+        reports (streamInfo, no extra probe) with the overrides on top.
+        'auto' is HDR when either input is PQ. Sets self.dynamic_range and
+        self.color ({'reference': {...}, 'distorted': {...}} with HDR, None
+        with SDR).
+
+        Raises:
+            UnsupportedModelConfigError: with auto or hdr, an HLG input; with
+                HDR, VMAF 0.6 models, a build without HDR-VMAF, or an input
+                without a supported value for every attribute
+        """
+        self.dynamic_range, self.color = 'sdr', None
+        if self._dynamicRangeRequest == 'sdr':
+            return
+        streams = {'reference': self.ref, 'distorted': self.main}
+        color = {}
+        for role, stream in streams.items():
+            detected = {key: stream.streamInfo.get(field)
+                        for key, field in _COLOR_STREAM_FIELDS.items()}
+            color[role] = {key: value for key, value in detected.items()
+                           if value and value != 'unknown'}
+            color[role].update(_parseColor(self._colorOverrides[role]))
+        for role, stream in streams.items():
+            if color[role].get('trc') == _HLG_TRC:
+                raise UnsupportedModelConfigError(
+                    f"The {role} video {stream.videoSrc} is HLG ({_HLG_TRC}): HDR-VMAF only "
+                    f"measures PQ ({_PQ_TRC}). Use --dynamic-range sdr to score it with the "
+                    f"SDR models")
+        pq = [role for role in streams if color[role].get('trc') == _PQ_TRC]
+        if self._dynamicRangeRequest == 'auto' and not pq:
+            return
+        if '0.6' in self.vmaf_versions:
+            raise UnsupportedModelConfigError(
+                f"The {' and '.join(pq)} video{'s are' if len(pq) > 1 else ' is'} HDR "
+                f"(PQ) and VMAF 0.6 has no HDR models: compute VMAF version 1 only, or "
+                f"use --dynamic-range sdr to score with the SDR models")
+        if not _hdr_vmaf_supported():
+            raise UnsupportedModelConfigError(
+                "This FFmpeg build cannot compute the HDR-VMAF models (check_ffmpeg() "
+                "hdr_vmaf is false: they need libvmaf with the HDR models and zimg, and an "
+                "FFmpeg that passes the frame colorimetry; see the easyVmaf Docker image). "
+                "Use --dynamic-range sdr to score with the SDR models")
+        for role, stream in streams.items():
+            flag = f"--{role}-color"
+            for key, values in _COLOR_VALUES.items():
+                value = color[role].get(key)
+                if value is None:
+                    raise UnsupportedModelConfigError(
+                        f"The {role} video {stream.videoSrc} does not report its color {key}, "
+                        f"which the HDR-VMAF models need: set it, e.g. "
+                        f"{flag} {key}={_COLOR_PRESETS['hdr10'][key]}")
+                if value not in values:
+                    raise UnsupportedModelConfigError(
+                        f"The {role} video {stream.videoSrc} has color {key} {value}, which "
+                        f"the HDR-VMAF models do not support ({', '.join(values)}); "
+                        f"override it with {flag} {key}=<value>")
+        if len(pq) == 1:
+            other = 'distorted' if pq[0] == 'reference' else 'reference'
+            logger.warning("Mixed inputs: the %s video is PQ and the %s video is not; "
+                           "HDR-VMAF converts the %s video to PQ", pq[0], other, other)
+        self.dynamic_range = 'hdr'
+        self.color = {role: {key: color[role][key] for key in _COLOR_VALUES} for role in streams}
+
+    def _colorConversion(self, role):
+        """
+        With HDR, (matrix, range) the role's input is converted to before
+        libvmaf, or None. vf_libvmaf negotiates one matrix and range for both
+        inputs and would re-matrix one of them: the PQ input (the reference,
+        if both are) keeps its own, and the other input is converted to them.
+        """
+        if self.color is None:
+            return None
+        kept = 'distorted' if (self.color['distorted']['trc'] == _PQ_TRC
+                               and self.color['reference']['trc'] != _PQ_TRC) else 'reference'
+        target = (self.color[kept]['matrix'], self.color[kept]['range'])
+        if role == kept or (self.color[role]['matrix'], self.color[role]['range']) == target:
+            return None
+        return target
+
+    def _applyColorParams(self):
+        """With HDR, tag each input with its resolved colorimetry, as the
+        first software filter of its chain: libvmaf converts the pictures to
+        the HDR-VMAF models' PQ from the colorimetry of each frame."""
+        if self.color is None:
+            return
+        for role, chain in (('distorted', self.ffmpegQos.main), ('reference', self.ffmpegQos.ref)):
+            color = self.color[role]
+            chain.setColorParamsFilter(color['range'], color['primaries'], color['trc'],
+                                       color['matrix'])
 
     def _rangeSuffix(self):
         """'_f<start>-<last>' ('-end' without a count) for a range, '' otherwise:
@@ -617,7 +809,8 @@ class Vmaf():
     def _applyPixelFormat(self):
         """
         Convert each input whose native pixel format differs from the
-        measurement format, as the first filter of its chain: otherwise FFmpeg
+        measurement format, as the first filter of its chain (after the HDR
+        colorimetry tags): otherwise FFmpeg
         picks the format and may degrade the reference (e.g. 4:2:2 to 4:2:0, or
         10 to 8 bits), or deinterlace at 8 bits before converting.
         The libvmaf_cuda path keeps its own format=yuv420p before hwupload_cuda.
@@ -627,10 +820,12 @@ class Vmaf():
             return
         self.pix_fmt = self._measurementPixFmt()
         # The shared ffmpegQos always keeps main=distorted, ref=reference.
-        for stream, chain in ((self.main, self.ffmpegQos.main),
-                              (self.ref, self.ffmpegQos.ref)):
-            if stream.streamInfo.get('pix_fmt') != self.pix_fmt:
-                chain.setFormatFilter(self.pix_fmt)
+        for stream, chain, role in ((self.main, self.ffmpegQos.main, 'distorted'),
+                                    (self.ref, self.ffmpegQos.ref, 'reference')):
+            # With mixed HDR inputs, the same conversion changes the matrix and range.
+            conversion = self._colorConversion(role)
+            if stream.streamInfo.get('pix_fmt') != self.pix_fmt or conversion:
+                chain.setFormatFilter(self.pix_fmt, *(conversion or ()))
 
     def _canHwDecode(self, stream, role):
         """
@@ -1076,7 +1271,8 @@ class Vmaf():
         if self.hfr_active and self.output_fps > HFR_MAX_CALIBRATED_FPS:
             logger.warning("%s fps is above the ~50/60 fps the HFR VMAF v1 models are "
                            "calibrated for", round(self.output_fps, 5))
-        runs = select_models(self.display, self.vmaf_versions, self.views, hfr=hfr)
+        runs = select_models(self.display, self.vmaf_versions, self.views, hfr=hfr,
+                             dynamic_range=self.dynamic_range)
 
         # In the final calculation main is always the distorted stream.
         if self.enc_size is not None:
@@ -1153,20 +1349,24 @@ class Vmaf():
             2. _applyHwDecode()     — with gpu: hardware decode, and
                                       the download as the first filter of each
                                       input that cannot stay on the GPU
-            3. _applyPixelFormat()  — format=<measurement pix_fmt> as the first
-                                      filter of each chain that needs it (CPU only)
-            4. _normalizeChains()   — deinterlace or convert the frame rate
+            3. _applyColorParams()  — with HDR: setparams with the colorimetry
+                                      of each input, its first software filter
+            4. _applyPixelFormat()  — format=<measurement pix_fmt> as the first
+                                      filter of each chain that needs it (CPU
+                                      only); with mixed HDR inputs, also the
+                                      matrix and range of the PQ input
+            5. _normalizeChains()   — deinterlace or convert the frame rate
                                       (--fps), then scale to the display
                                       resolution; records output_fps
-            5. _applyOffset()       — apply trim filters for temporal sync,
+            6. _applyOffset()       — apply trim filters for temporal sync,
                or _applyRange()     — with a frame range: seek, sync trims
                                       anchored to the full calculation, range
-            6. _resolveModels()     — HFR choice from output_fps, v1 overrides
-            7. ffmpegQos.getVmaf()  — with cuda, inserts hwupload_cuda last (on
+            7. _resolveModels()     — HFR choice from output_fps, v1 overrides
+            8. ffmpegQos.getVmaf()  — with cuda, inserts hwupload_cuda last (on
                                       frames still on the GPU, the yuv420p
                                       conversion there)
 
-        Note: sync(), called before compute(), sets the offset of step 5. Its
+        Note: sync(), called before compute(), sets the offset of step 6. Its
         workers build their own FFmpegQos with the same _normalizeChains()
         and trim after it, like _applyOffset(), so the offset they choose
         selects the same frame here; self.ffmpegQos filter chains are left intact.
@@ -1186,6 +1386,7 @@ class Vmaf():
         self.ffmpegQos.ref.clearFilters()
 
         hw_decode = self._applyHwDecode()
+        self._applyColorParams()
         self._applyPixelFormat()
 
         if self.fps:
@@ -1222,6 +1423,10 @@ class Vmaf():
         logger.info("Models:     %s", ', '.join(
             f'{run.spec.name} ({run.libvmaf_model})' for run in self.models))
         logger.info("pix_fmt:    %s", self.pix_fmt)
+        if self.color:
+            logger.info("HDR color:  distorted %s, reference %s", *(
+                '/'.join(self.color[role][key] for key in _COLOR_VALUES)
+                for role in ('distorted', 'reference')))
         if hw_decode:
             logger.info("Decoding:   %s (distorted %s, reference %s)", self.hwaccel.name,
                         hw_decode['distorted'], hw_decode['reference'])
@@ -1263,8 +1468,16 @@ class Vmaf():
             frames_scored=frames_scored,
             cuda=self.cuda,
             hw_decode={'api': self.hwaccel.name, **hw_decode} if hw_decode else None,
+            dynamic_range=self.dynamic_range,
+            color=self._resultColor(),
         )
 
+
+    def _resultColor(self):
+        """A copy of self.color for VmafResult, reference first."""
+        if self.color is None:
+            return None
+        return {role: dict(self.color[role]) for role in ('reference', 'distorted')}
 
     def _planJobs(self):
         """
@@ -1411,6 +1624,8 @@ class Vmaf():
             frame_count=self.frame_count,
             frames_scored=frames if self._hasRange() else None,
             cuda=self.cuda,
+            dynamic_range=self.dynamic_range,
+            color=self._resultColor(),
         )
 
 

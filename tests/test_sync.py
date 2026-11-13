@@ -252,6 +252,98 @@ def test_gpu_computes_vmaf_v1_on_the_cpu(final_vmaf, monkeypatch):
     assert "cuda" not in calculation.ffmpegQos.vmafFilter[0]
 
 
+PQ = dict(color_range="tv", color_primaries="bt2020", color_transfer="smpte2084",
+          color_space="bt2020nc")
+BT709 = dict(color_range="tv", color_primaries="bt709", color_transfer="bt709",
+             color_space="bt709")
+HDR10 = {"range": "tv", "primaries": "bt2020", "trc": "smpte2084", "matrix": "bt2020nc"}
+SDR709 = {"range": "tv", "primaries": "bt709", "trc": "bt709", "matrix": "bt709"}
+
+
+@pytest.fixture
+def hdr_build(monkeypatch):
+    """FFmpeg computes HDR-VMAF, without probing it."""
+    monkeypatch.setattr(vmaf, "_hdr_vmaf_supported", lambda: True)
+
+
+def filter_steps(chain):
+    """[(filter name, options)] of a chain."""
+    return [re.match(r"\[[^]]+\](\w+)=?([^[]*)", f).groups() for f in chain.filtersList]
+
+
+@pytest.mark.parametrize("distorted, reference, options, color, converted, mixed", [
+    # The PQ input keeps its matrix; the other is converted to it, not the reverse.
+    (dict(stream(), **BT709), dict(stream(), **PQ), {},
+     dict(reference=HDR10, distorted=SDR709), "distorted", True),
+    (dict(stream(), **PQ), dict(stream(), **BT709), {},
+     dict(reference=SDR709, distorted=HDR10), "reference", True),
+    (dict(stream(), **PQ), dict(stream(), **PQ), {},
+     dict(reference=HDR10, distorted=HDR10), None, False),
+    # An untagged PQ master: the override completes what ffprobe does not report.
+    (dict(stream(), **PQ), dict(stream(), color_range="tv"), dict(reference_color="hdr10"),
+     dict(reference=HDR10, distorted=HDR10), None, False),
+    (dict(stream(), **BT709), dict(stream(), **BT709), {}, None, None, False),
+], ids=["pq-reference", "pq-distorted", "pq-both", "override", "sdr"])
+def test_dynamic_range_follows_the_pq_input(final_vmaf, hdr_build, caplog, distorted,
+                                            reference, options, color, converted, mixed):
+    """PQ content scored with the SDR models, or the PQ input re-matrixed by libvmaf's
+    format negotiation; SDR inputs must keep the 5.1 command."""
+    calculation, result = final_vmaf(distorted, reference, **options)
+
+    hdr = color is not None
+    assert result.dynamic_range == ("hdr" if hdr else "sdr")
+    assert result.color == color
+    assert [run.spec.name for run in result.models] == (
+        ["hdr_vmaf_v1_hd", "hdr_vmaf_v1_phone"] if hdr else ["vmaf_v1_hd", "vmaf_v1_phone"])
+    qos = calculation.ffmpegQos
+    for role, chain in (("distorted", qos.main), ("reference", qos.ref)):
+        steps = filter_steps(chain)
+        if not hdr:
+            assert "setparams" not in [name for name, _ in steps]
+            continue
+        tags = color[role]
+        assert steps[0] == ("setparams", "range={range}:color_primaries={primaries}"
+                                         ":color_trc={trc}:colorspace={matrix}".format(**tags))
+        assert steps[1] == ("format", "yuv420p10le" + (
+            ":color_spaces=bt2020nc:color_ranges=tv" if role == converted else ""))
+    assert any("Mixed inputs" in r.getMessage() for r in caplog.records
+               if r.levelno == logging.WARNING) is mixed
+
+
+@pytest.mark.parametrize("distorted, reference, options, supported, message", [
+    (dict(stream(), **PQ), dict(stream(), **dict(PQ, color_transfer="arib-std-b67")), {}, True,
+     r"reference video ref.mp4 is HLG"),
+    (dict(stream(), **PQ), dict(stream(), color_range="tv"), {}, True,
+     r"reference video ref.mp4 does not report its color primaries.*"
+     r"--reference-color primaries=bt2020"),
+    (dict(stream(), **PQ), dict(stream(), **PQ), dict(vmaf_versions=("1", "0.6")), True,
+     r"VMAF 0.6 has no HDR models.*--dynamic-range sdr"),
+    (dict(stream(), **PQ), dict(stream(), **PQ), {}, False,
+     r"cannot compute the HDR-VMAF models.*--dynamic-range sdr"),
+], ids=["hlg", "missing-tag", "vmaf-0.6", "build-without-hdr"])
+def test_hdr_inputs_that_cannot_be_scored_are_rejected(final_vmaf, monkeypatch, distorted,
+                                                       reference, options, supported, message):
+    """libvmaf fails with its own CLI flags and may blame the wrong input, or a PQ
+    input gets meaningless scores: easyVmaf must refuse first and say how to fix it."""
+    monkeypatch.setattr(vmaf, "_hdr_vmaf_supported", lambda: supported)
+
+    with pytest.raises(vmaf.UnsupportedModelConfigError, match=message):
+        final_vmaf(distorted, reference, **options)
+
+
+def test_hdr_tags_come_first_after_the_hardware_download(final_vmaf, hdr_build, monkeypatch):
+    """setparams before the download would tag device frames, and after the format
+    conversion FFmpeg would convert from the wrong matrix."""
+    monkeypatch.setattr(vmaf, "probe_hw_decode", lambda path, hwaccel: True)
+
+    calculation, result = final_vmaf(dict(stream(), **PQ), dict(stream(), **PQ), gpu=True)
+
+    assert result.hw_decode == {"api": "cuda", "distorted": "hw", "reference": "hw"}
+    for chain in (calculation.ffmpegQos.main, calculation.ffmpegQos.ref):
+        assert [name for name, _ in filter_steps(chain)][:3] == [
+            "hwdownload", "setparams", "format"]
+
+
 V1_FRAMES = [
     {"cambi_hrs_1080_cmxv_17_vlt_0.06_encw_1280": 0.32, "speed_chroma_uv_mxv_45": 1.66,
      "integer_adm3_csf_2": 0.97, "integer_motion3_mmxv_18": 4.7, "psnr_y": 35.2,

@@ -20,7 +20,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from conftest import ROOT, run_cli, strict_loads
+from conftest import PQ_CHAIN, ROOT, run_cli, strict_loads
 from easyvmaf import UnsupportedRangeError, Vmaf, ffmpeg
 from easyvmaf.ffmpeg import FFmpegQos
 from easyvmaf.models import CATALOG, ModelRun
@@ -131,34 +131,42 @@ def test_sync_and_score_match_plain_ffmpeg(ffmpeg_bin, clips, monkeypatch, rever
 
 
 @pytest.mark.requires_libvmaf_v1
+@pytest.mark.parametrize("dynamic_range", [
+    "sdr", pytest.param("hdr", marks=pytest.mark.requires_hdr_vmaf)])
 @pytest.mark.parametrize("hfr", [False, True], ids=["standard", "hfr"])
-def test_every_catalog_model_scores_in_one_pass(ffmpeg_bin, tmp_path, hfr):
+def test_every_catalog_model_scores_in_one_pass(ffmpeg_bin, tmp_path, hfr, dynamic_range):
     """A misspelt model id or a broken override syntax would only fail in production.
 
-    One pass per HFR choice, as easyVmaf runs them: it never mixes the HFR and
-    standard v1 models in one libvmaf (and newer libvmaf builds reject four v1
-    models that share features)."""
-    runs = []
-    for spec in CATALOG:
-        cambi = (("cambi.enc_width", "320"), ("cambi.enc_height", "180"),
-                 ("cambi.enc_bitdepth", "8")) if spec.vmaf_version == "1" else ()
-        model = spec.hfr_model if hfr and spec.hfr_model else spec.libvmaf_model
-        runs.append(ModelRun(spec, model, spec.options + cambi))
-    log = tmp_path / "catalog.json"
+    One pass per display, HFR choice and model family, as easyVmaf runs them: it
+    never mixes the HFR and standard v1 models in one libvmaf (and newer libvmaf
+    builds reject four v1 models that share features), nor HDR and SDR ones, and
+    the HD and 4K HDR models cannot share one libvmaf."""
     # v1 SpEED rejects small frames; 3d0h_2160 needs about 576x324.
     source = "testsrc2=s=640x360:r=5:d=0.4"
-    subprocess.run([ffmpeg_bin, "-v", "error", "-f", "lavfi", "-i", source, "-f", "lavfi",
-                    "-i", source + ",gblur=sigma=1", "-lavfi",
-                    "[0:v][1:v]libvmaf=log_fmt=json:log_path={}:model={}".format(
-                        FFmpegQos._escape_filter_value(str(log)),
-                        FFmpegQos._build_model_string(runs)),
-                    "-f", "null", "-"], check=True, capture_output=True, timeout=120)
+    if dynamic_range == "hdr":
+        source += "," + PQ_CHAIN
+    for display in ("hd", "4k"):
+        runs = []
+        for spec in CATALOG:
+            if spec.dynamic_range != dynamic_range or spec.display != display:
+                continue
+            cambi = (("cambi.enc_width", "320"), ("cambi.enc_height", "180"),
+                     ("cambi.enc_bitdepth", "8")) if spec.vmaf_version == "1" else ()
+            model = spec.hfr_model if hfr and spec.hfr_model else spec.libvmaf_model
+            runs.append(ModelRun(spec, model, spec.options + cambi))
+        log = tmp_path / ("catalog_%s.json" % display)
+        subprocess.run([ffmpeg_bin, "-v", "error", "-f", "lavfi", "-i", source, "-f", "lavfi",
+                        "-i", source + ",gblur=sigma=1", "-lavfi",
+                        "[0:v][1:v]libvmaf=log_fmt=json:log_path={}:model={}".format(
+                            FFmpegQos._escape_filter_value(str(log)),
+                            FFmpegQos._build_model_string(runs)),
+                        "-f", "null", "-"], check=True, capture_output=True, timeout=120)
 
-    frames = json.loads(log.read_text())["frames"]
-    assert frames
-    for run in runs:
-        low, high = run.spec.score_range
-        assert all(low <= frame["metrics"][run.spec.name] <= high for frame in frames), run
+        frames = json.loads(log.read_text())["frames"]
+        assert frames
+        for run in runs:
+            low, high = run.spec.score_range
+            assert all(low <= frame["metrics"][run.spec.name] <= high for frame in frames), run
 
 
 @pytest.mark.requires_libvmaf_v1

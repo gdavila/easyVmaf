@@ -54,3 +54,21 @@ def test_unknown_display():
     """An unknown display yields an empty model list instead of an error."""
     with pytest.raises(ValueError):
         select_models('sd')
+
+
+@pytest.mark.parametrize("display, views, hfr, ids", [
+    ('hd', None, False, ['hdr_vmaf_v1.1.8_3d0h', 'hdr_vmaf_v1.1.8_5d0h']),
+    ('4k', None, True, ['hdr_vmaf_v1.1.8_hfr_1d5h_2160']),
+    ('4k', ('3h',), False, ['hdr_vmaf_v1.1.8_3d0h_2160']),
+], ids=["hd", "4k-hfr", "4k-3h"])
+def test_hdr_selection(display, views, hfr, ids):
+    """PQ content scored with SDR models (or both families in one libvmaf, which fails)."""
+    runs = select_models(display, ('1',), views, hfr=hfr, dynamic_range='hdr')
+    assert [run.libvmaf_model for run in runs] == ids
+    assert all(run.spec.name.startswith('hdr_vmaf_v1_') for run in runs)
+
+
+def test_hdr_has_no_vmaf_06():
+    """HDR with v0.6 would silently score PQ content with an SDR model."""
+    with pytest.raises(ValueError):
+        select_models('hd', ('1', '0.6'), dynamic_range='hdr')
