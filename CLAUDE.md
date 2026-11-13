@@ -43,6 +43,8 @@ easyvmaf -d distorted.mp4 -r reference.mp4 --vmaf-version 0.6 --gpu  # NVDEC dec
 easyvmaf -d distorted.mp4 -r reference.mp4 --gpu                # NVDEC decoding, v1 on the CPU, same scores
 easyvmaf -d distorted.mp4 -r reference.mp4 --vmaf-version 0.6 --gpu --disable-hw-decode  # 4.x --gpu
 easyvmaf -d "folder/*.mp4" -r reference.mp4                     # batch
+easyvmaf -d distorted.mp4 -r reference.mov --reference-color hdr10  # HDR (PQ auto-detected), colorimetry override
+easyvmaf -d distorted.mp4 -r reference.mp4 --dynamic-range sdr  # SDR models on any input, as 5.1
 
 # Module invocation (no install)
 python3 -m easyvmaf -d distorted.mp4 -r reference.mp4
@@ -335,11 +337,15 @@ printing results and writing the JSON summary file.
   range, models, VMAF v1 parameters, output and execution. Only `-d`/`-r` have short forms.
   `allow_abbrev=False`. `--gpu`, `--disable-hw-decode`, `--disable-vmaf-cuda`
   and `--jobs` (execution) are passed as `gpu=`, `disable_hw_decode=`,
-  `disable_vmaf_cuda=`, `jobs=`.
+  `disable_vmaf_cuda=`, `jobs=`. `--dynamic-range {auto,sdr,hdr}`,
+  `--reference-color` and `--distorted-color` (models; the color strings are
+  passed as typed, parsed only by `_parseColor()`) are passed as
+  `dynamic_range=`, `reference_color=`, `distorted_color=`.
 - `_REMOVED_FLAGS`: removed flag → how to replace it. `MyParser.parse_known_args()`
   checks it **before** parsing (argparse would read `-reverse` as `-r everse`) and
   exits with code 2: `error: -sw was removed, use --sync-window`.
-- `get_args()` calls `validate_model_config(..., labels=_FLAG_LABELS)`,
+- `get_args()` calls `validate_model_config(..., labels=_FLAG_LABELS,
+  dynamic_range=, reference_color=, distorted_color=)` (by name),
   `validate_range_config(..., labels=_FLAG_LABELS)` and
   `validate_jobs_config(..., labels=_FLAG_LABELS)` and turns their `ValueError`
   into `parser.error()` (exit code 2), before `check_ffmpeg()`. It also rejects
@@ -347,14 +353,21 @@ printing results and writing the JSON summary file.
   equivalent), `--sync-offset` with `--sync-window`, a range or `--jobs > 1`
   with `--sync-only`, and `--disable-hw-decode`/`--disable-vmaf-cuda` without
   `--gpu`. A container outside `_RANGE_FORMATS` with `--jobs > 1` is found only
-  when probing: exit code 1, as for a range.
+  when probing: exit code 1, as for a range. So are the HDR rejections of the
+  constructor (HLG, HDR + v0.6, a build without HDR-VMAF, a missing color
+  attribute): `UnsupportedModelConfigError` → exit 1; a malformed color,
+  `--dynamic-range hdr` with 0.6 or a color with `sdr` are exit 2 here.
+  `check_ffmpeg()['hdr_vmaf']` never exits: only an input that resolves to HDR
+  is rejected.
 - `_build_result()`: constructs the JSON schema 2 dict from a `VmafResult`
-  (`JSON_SCHEMA_VERSION = 2`)
+  (`JSON_SCHEMA_VERSION = 2`); `vmaf.dynamic_range` always, `vmaf.color` only
+  with HDR (additive fields, still schema 2)
 - `_summary_path()` / `_write_summary()`: every successful input writes its
   `_build_result()` dict to the summary file (see Output formats), serialized
   strictly (`allow_nan=False`) before the file is opened; logging goes to stderr
 - `_print_text_result()`: one line per score with value, libvmaf model and range,
-  plus the log and summary paths
+  plus the log and summary paths; a `dynamic range:` line, and with HDR a
+  `color (range/primaries/trc/matrix):` line per run
 - `check_ffmpeg()` called at startup: exits 1 if `meets_minimum` or `libvmaf_v1` is
   false, or if VMAF would run on CUDA (`--gpu` and `cpu_vmaf_reason()` is
   `None`) and `cuda_vmaf` is false. A GPU without NVDEC is no exit: the decode
@@ -761,13 +774,17 @@ Summary file (always written, one per input, schema 2), named after the log:
 writes `<distorted>_sync_summary.json`:
 ```
 { schema_version: 2, distorted, reference, sync: { offset, psnr[, psnr_status] },
-  vmaf: { display, pix_fmt, hfr, cuda, scores: { name: mean }, models: [ { name,
-  libvmaf_model, vmaf_version, view, range } ], output_file[, cambi_heatmap_path]
+  vmaf: { display, pix_fmt, hfr, cuda, dynamic_range, scores: { name: mean },
+  models: [ { name, libvmaf_model, vmaf_version, view, range } ]
+  [, color: { reference: { range, primaries, trc, matrix }, distorted: {...} }]
+  , output_file[, cambi_heatmap_path]
   [, hw_decode: { api, distorted, reference }]
   [, range: { start_frame, frame_count, frames_scored }] } }
 ```
 `--sync-only` summaries have `schema_version` and no `vmaf` block. `vmaf.cuda`
-is true when `libvmaf_cuda` computed the scores. `vmaf.hw_decode` is written only
+is true when `libvmaf_cuda` computed the scores. `vmaf.dynamic_range` is
+`"sdr"` or `"hdr"`; `vmaf.color` (`VmafResult.color`) is written only with
+HDR. `vmaf.hw_decode` is written only
 with hardware decoding (`--gpu` without `--disable-hw-decode`); `distorted` and
 `reference` are `"hw"` or `"sw"`.
 

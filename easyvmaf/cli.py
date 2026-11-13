@@ -56,6 +56,9 @@ _FLAG_LABELS = {
     'subsample': '--subsample',
     'jobs': '--jobs',
     'gpu': '--gpu',
+    'dynamic_range': '--dynamic-range',
+    'reference_color': '--reference-color',
+    'distorted_color': '--distorted-color',
 }
 
 _JSON_REMOVED = 'the result is always written to a <log>_summary.json file'
@@ -144,6 +147,7 @@ def _build_result(distorted, reference, offset, psnr, vmaf_result=None):
             'pix_fmt': vmaf_result.pix_fmt,
             'hfr': vmaf_result.hfr,
             'cuda': vmaf_result.cuda,
+            'dynamic_range': vmaf_result.dynamic_range,
             'scores': {k: round(v, 6) for k, v in vmaf_result.scores.items()},
             'models': [
                 {'name': run.spec.name,
@@ -154,6 +158,8 @@ def _build_result(distorted, reference, offset, psnr, vmaf_result=None):
                 for run in vmaf_result.models
             ],
         }
+        if vmaf_result.color is not None:
+            vmaf_block['color'] = vmaf_result.color
         if vmaf_result.log_path:
             vmaf_block['output_file'] = vmaf_result.log_path
         if vmaf_result.cambi_heatmap_path:
@@ -202,6 +208,10 @@ def _print_text_result(distorted, offset, psnr, vmaf_result, summary_path):
     print("=======================================", flush=True)
     print("offset: ", offset, " | psnr: ", psnr)
     print(f"pix_fmt: {vmaf_result.pix_fmt} | HFR: {'on' if vmaf_result.hfr else 'off'}")
+    print(f"dynamic range: {vmaf_result.dynamic_range}")
+    if vmaf_result.color is not None:
+        print("color (range/primaries/trc/matrix): " + " | ".join(
+            f"{role} {'/'.join(color.values())}" for role, color in vmaf_result.color.items()))
     if vmaf_result.start_frame is not None:
         last = vmaf_result.start_frame + vmaf_result.frames_scored - 1
         print(f"range: frames {vmaf_result.start_frame}-{last} "
@@ -287,6 +297,13 @@ def get_args():
     models.add_argument('--bitdepth', dest='bitdepth', type=str.lower,
                         choices=('auto', '8', '10'), default='auto',
                         help="Measurement bit depth. auto: 10 with VMAF v1 models, otherwise the reference bit depth. (Default: auto).")
+    models.add_argument('--dynamic-range', dest='dynamic_range', type=str.lower,
+                        choices=('auto', 'sdr', 'hdr'), default='auto',
+                        help="Model family. auto: the HDR-VMAF models when either input is PQ (smpte2084), otherwise SDR. hdr forces HDR-VMAF; sdr scores every input with the SDR models. (Default: auto).")
+    models.add_argument('--reference-color', dest='reference_color', metavar='COLOR',
+                        help="HDR only: reference colorimetry, overriding what the file reports: a preset (hdr10, bt709) or key=value[,key=value] with the keys range, primaries, trc and matrix, e.g. trc=smpte2084.")
+    models.add_argument('--distorted-color', dest='distorted_color', metavar='COLOR',
+                        help="HDR only: distorted colorimetry, as --reference-color.")
 
     v1 = parser.add_argument_group('VMAF v1 parameters')
     v1.add_argument('--view', dest='views', nargs='+', type=str.lower,
@@ -376,7 +393,9 @@ def get_args():
     try:
         validate_model_config(
             args.display, args.vmaf_versions, args.views, args.hfr, args.bitdepth,
-            args.enc_size, args.enc_bitdepth, args.model_options, labels=_FLAG_LABELS)
+            args.enc_size, args.enc_bitdepth, args.model_options, labels=_FLAG_LABELS,
+            dynamic_range=args.dynamic_range, reference_color=args.reference_color,
+            distorted_color=args.distorted_color)
         validate_range_config(args.start_frame, args.frame_count, args.subsample,
                               labels=_FLAG_LABELS)
         validate_jobs_config(args.jobs, args.subsample, args.gpu, labels=_FLAG_LABELS)
@@ -506,6 +525,9 @@ def main():
                           vmaf_versions=vmaf_versions, views=views, hfr=cmdParser.hfr,
                           bitdepth=cmdParser.bitdepth, enc_size=cmdParser.enc_size,
                           enc_bitdepth=cmdParser.enc_bitdepth, model_options=model_options,
+                          dynamic_range=cmdParser.dynamic_range,
+                          reference_color=cmdParser.reference_color,
+                          distorted_color=cmdParser.distorted_color,
                           loglevel=loglevel, subsample=n_subsample, output_format=output_format, threads=threads, progress=progress, shortest=shortest, fps=fps, cambi_heatmap=cambi_heatmap, gpu=gpu,
                           sync_offset=offset,
                           start_frame=cmdParser.start_frame, frame_count=cmdParser.frame_count,

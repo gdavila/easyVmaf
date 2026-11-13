@@ -1,5 +1,58 @@
 # Changelog
 
+## 5.2.0 (unreleased)
+
+### Score changes
+
+- **HDR (PQ) inputs are scored with HDR-VMAF.** When either input reports the
+  PQ transfer (`smpte2084`), easyVmaf now computes the HDR-VMAF v1 models and
+  reports `hdr_vmaf_v1_hd` and `hdr_vmaf_v1_phone` (`hdr_vmaf_v1_4k` with
+  `--display 4k`) instead of `vmaf_v1_*`: libvmaf documents the SDR scores of
+  an HDR input as not meaningful. On an FFmpeg build without HDR-VMAF (FFmpeg
+  8.1 with libvmaf 3.2.1, as Homebrew and BtbN ship today), an HDR input now
+  exits with code 1 instead of being scored. `--dynamic-range sdr` reproduces
+  5.1 on any build. SDR inputs are unchanged. See [HDR](README.md#hdr).
+- **The Docker images move to FFmpeg and libvmaf master** (pinned commits; see
+  Docker below), and this changes the SDR scores of inputs that are scaled
+  and carry `chroma_location=left`, the usual chroma location of H.264, HEVC
+  and MPEG-4: FFmpeg master's swscale honors the chroma location when it
+  scales. Example, a 960x540 MPEG-4 encode of a 1280x720 reference:
+  `vmaf_v1_hd` 59.48 → 58.98, `vmaf_v1_phone` 63.69 → 63.75. The VMAF v0.6
+  scores of that clip are identical; only the chroma PSNR of its libvmaf log
+  changes. Inputs at the display resolution, and pip installs with FFmpeg 8.1,
+  are unchanged.
+
+### New
+
+- **HDR-VMAF.** PQ inputs are detected automatically (`--dynamic-range auto`,
+  the default). easyVmaf tags each input's filter chain with its colorimetry
+  and libvmaf converts the pictures to the models' PQ / BT.2020 / ICtCp. An SDR
+  distorted video against a PQ reference (or the reverse) is scored with
+  HDR-VMAF too, with a warning. HLG inputs, and VMAF 0.6 with an HDR input,
+  exit with code 1. Requires libvmaf master (>= `74f930d1`) built with zimg and
+  FFmpeg master (>= `58584087cf`), as in the Docker images;
+  `check_ffmpeg()['hdr_vmaf']` says whether a build can. See
+  [HDR](README.md#hdr).
+- **`--dynamic-range {auto,sdr,hdr}`** (`dynamic_range=` in the Python API):
+  `sdr` scores every input with the SDR models, as 5.1; `hdr` forces HDR-VMAF.
+- **`--reference-color` and `--distorted-color`** (`reference_color=`,
+  `distorted_color=`): the colorimetry of an input whose file does not report
+  it, or reports it wrong: a preset (`hdr10`, `bt709`) or `key=value` pairs
+  with the keys `range`, `primaries`, `trc` and `matrix`.
+- The summary adds `vmaf.dynamic_range` (`"sdr"` or `"hdr"`) and, with HDR,
+  `vmaf.color`, the colorimetry of each input. `schema_version` stays 2.
+  `VmafResult` adds `dynamic_range` and `color`.
+
+### Docker
+
+- Both images build FFmpeg master `88c46fce27e3` (2026-11-13) and libvmaf
+  master `a6ed0f18285c` (2026-11-02), built with zimg 3.0.6 from source, the
+  same in both images. The build arguments are now `FFMPEG_commit`,
+  `VMAF_commit` and `ZIMG_version` (instead of `FFMPEG_version` and
+  `VMAF_version`). `ffmpeg/SOURCE` names the commit archive the image was
+  built from, and `/usr/local/share/licenses/zimg/` holds zimg's license. See
+  [Build arguments](README.md#build-arguments).
+
 ## 5.1.0 (2026-11-12)
 
 ### New

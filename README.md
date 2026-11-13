@@ -39,6 +39,7 @@ written for an earlier version of easyVmaf.
   - [Building FFmpeg from source](#building-ffmpeg-from-source)
   - [Verifying your build](#verifying-your-build)
   - [GPU requirements](#gpu-requirements)
+  - [HDR requirements](#hdr-requirements)
 - [Installation](#installation)
   - [easyVmaf](#easyvmaf-1)
   - [FFmpeg](#ffmpeg)
@@ -53,6 +54,7 @@ written for an earlier version of easyVmaf.
   - [Execution](#execution)
   - [Validation](#validation)
 - [Models](#models-1)
+- [HDR](#hdr)
 - [Automatic VMAF v1 parameters](#automatic-vmaf-v1-parameters)
   - [Pixel format](#pixel-format)
   - [CAMBI encoding resolution](#cambi-encoding-resolution)
@@ -179,6 +181,32 @@ For GPU decoding (`--gpu` with any model, see
 - In Docker, the `video` driver capability
   (`NVIDIA_DRIVER_CAPABILITIES=compute,utility,video`), which the CUDA image sets
 
+### HDR requirements
+
+To score HDR (PQ) videos with the HDR-VMAF models (see [HDR](#hdr)), which no
+release of libvmaf or FFmpeg supports yet:
+
+- libvmaf master from commit `74f930d1` on (the built-in `hdr_vmaf_v1.1.8`
+  models), built with `-Dbuilt_in_models=true -Denable_zimg=true` (zimg >= 2.7):
+  libvmaf converts the pictures to the models' color space with zimg
+- FFmpeg master from commit `58584087cf` on, whose `libvmaf` filter passes the
+  colorimetry of each frame to libvmaf. It is built only when libvmaf exports
+  `vmaf_picture_convert` (`HAVE_LIBVMAF_PICTURE_CONVERT` in FFmpeg's `config.h`)
+
+Both [Docker](#docker) images have them. FFmpeg 8.1 with libvmaf 3.2.1 (Homebrew,
+BtbN) does not: there, an HDR input exits with code 1 unless it is scored with
+the SDR models (`--dynamic-range sdr`). `check_ffmpeg()['hdr_vmaf']` says whether
+a build can, from the same kind of probe as the startup check:
+
+```bash
+pq="setparams=range=tv:color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc,format=yuv420p10le"
+ffmpeg -hide_banner -loglevel error \
+  -f lavfi -i "color=black:s=320x240:r=1:d=1,$pq" \
+  -f lavfi -i "color=black:s=320x240:r=1:d=1,$pq" \
+  -lavfi libvmaf=model=version=hdr_vmaf_v1.1.8_3d0h:log_fmt=json:log_path=/dev/null \
+  -f null -
+```
+
 ## Installation
 
 easyVmaf needs Python >= 3.10 and an FFmpeg build that passes the startup
@@ -234,8 +262,9 @@ tar -xf ffmpeg-n8.1-latest-linux64-gpl-8.1.tar.xz
 export PATH="$PWD/ffmpeg-n8.1-latest-linux64-gpl-8.1/bin:$PATH"
 ```
 
-**Docker.** The [Docker](#docker) images bundle easyVmaf, FFmpeg 8.1 and
-libvmaf 3.2.1 (`linux/amd64`). They are published on the GitHub Container
+**Docker.** The [Docker](#docker) images bundle easyVmaf, FFmpeg and libvmaf
+(`linux/amd64`); from 5.2.0, FFmpeg and libvmaf are pinned master commits, with
+HDR-VMAF (see [Build arguments](#build-arguments)). They are published on the GitHub Container
 Registry (GHCR) from the 5.0.0
 release on (`ghcr.io/gdavila/easyvmaf:5.1.0`); before that, clone the repository
 and build them with `docker build -t easyvmaf .`.
@@ -303,6 +332,9 @@ easyvmaf -d <distorted> -r <reference> [options]
 | `--display {hd,4k}` | `hd` | Target display. Inputs are scaled to 1920x1080 (`hd`) or 3840x2160 (`4k`). |
 | `--vmaf-version {1,0.6} [...]` | `1` | VMAF generations to compute. `--vmaf-version 1 0.6` computes both in one pass. |
 | `--bitdepth {auto,8,10}` | `auto` | Measurement bit depth. `auto`: 10 with any v1 model, otherwise the reference bit depth. See [Pixel format](#pixel-format). |
+| `--dynamic-range {auto,sdr,hdr}` | `auto` | Model family. `auto`: the HDR-VMAF models when either input is PQ (`smpte2084`), otherwise the SDR models. `hdr` forces HDR-VMAF; `sdr` scores every input with the SDR models, as easyVmaf 5.1. See [HDR](#hdr). |
+| `--reference-color COLOR` | from the file | HDR only. Colorimetry of the reference, overriding what the file reports: a preset (`hdr10`, `bt709`) or `key=value[,key=value]` with the keys `range`, `primaries`, `trc` and `matrix`, e.g. `trc=smpte2084`. |
+| `--distorted-color COLOR` | from the file | HDR only. Colorimetry of the distorted video, as `--reference-color`. |
 
 ### VMAF v1 parameters
 
@@ -374,6 +406,14 @@ replaced with defaults.
 - A view that does not exist for the display is an error, e.g. `--view 5h`
   with `--display 4k`.
 - `--disable-hw-decode` and `--disable-vmaf-cuda` require `--gpu`.
+- `--reference-color` and `--distorted-color` accept a preset or known keys
+  and values only (see [HDR](#hdr)), and cannot be combined with
+  `--dynamic-range sdr`. `--dynamic-range hdr` cannot be combined with
+  `--vmaf-version 0.6`.
+- What the inputs report is checked once probed, with exit code 1: with HDR, an
+  HLG input, a VMAF 0.6 model, an FFmpeg build without HDR-VMAF, or an input
+  without a supported value for each color attribute. The message names the
+  flag that fixes it (`--dynamic-range sdr`, `--reference-color trc=smpte2084`).
 - `--model-option` must match `feature.option=value`, with lowercase names and a
   value made of letters, digits, `_`, `.` and `-`. Nothing else can reach the
   FFmpeg filter graph.
@@ -401,10 +441,17 @@ replaced with defaults.
 | `vmaf_hd_neg` | `vmaf_v0.6.1neg` | 0.6 | hd | — | [0, 100] | yes |
 | `vmaf_hd_phone` | `vmaf_v0.6.1` + `enable_transform=true` | 0.6 | hd | — | [0, 100] | yes |
 | `vmaf_4k` | `vmaf_4k_v0.6.1` | 0.6 | 4k | — | [0, 100] | yes |
+| `hdr_vmaf_v1_hd` | `hdr_vmaf_v1.1.8_3d0h` | 1 (HDR) | hd | 3h | [0, 100] | yes |
+| `hdr_vmaf_v1_phone` | `hdr_vmaf_v1.1.8_5d0h` | 1 (HDR) | hd | 5h | [0, 100] | yes |
+| `hdr_vmaf_v1_4k` | `hdr_vmaf_v1.1.8_1d5h_2160` | 1 (HDR) | 4k | 1.5h | [0, 100] | yes |
+| `hdr_vmaf_v1_4k_3h` | `hdr_vmaf_v1.1.8_3d0h_2160` | 1 (HDR) | 4k | 3h | [0, 110] | no (`--view 3h`) |
 
 All models are libvmaf built-in models. Each v1 model also has a high frame rate
-(HFR) variant with `_hfr_` in its id (e.g. `vmaf_v1.0.16_hfr_3d0h`). The HFR variant
-keeps the score name; only `libvmaf_model` changes.
+(HFR) variant with `_hfr_` in its id (e.g. `vmaf_v1.0.16_hfr_3d0h`,
+`hdr_vmaf_v1.1.8_hfr_3d0h`). The HFR variant keeps the score name; only
+`libvmaf_model` changes. The HDR-VMAF models (`hdr_vmaf_v1_*`) replace the
+VMAF v1 models for HDR inputs, with the same views and the same v1 parameters;
+see [HDR](#hdr).
 
 VMAF v1 differs from v0.6 in ways that change the scores:
 
@@ -418,6 +465,61 @@ VMAF v1 differs from v0.6 in ways that change the scores:
 > of 85. That is why every v1 score name starts with `vmaf_v1_` and never reuses
 > `vmaf_hd` or `vmaf_4k`. To recalibrate quality thresholds, compute both
 > generations in one pass with `--vmaf-version 1 0.6`.
+
+## HDR
+
+easyVmaf scores HDR10 (PQ) videos with the HDR-VMAF v1 models
+(`hdr_vmaf_v1.1.8_*`, see [Models](#models-1)). libvmaf documents the SDR models'
+scores of an HDR input as not meaningful.
+
+- **Detection.** With `--dynamic-range auto` (the default), a calculation is HDR
+  when either input reports the PQ transfer (`color_transfer=smpte2084` in
+  ffprobe). Otherwise nothing changes: the SDR models, with the same FFmpeg
+  command as easyVmaf 5.1.
+- **What easyVmaf does.** It never converts colors itself: it tags each input's
+  filter chain with its colorimetry (`setparams`: range, primaries, transfer and
+  matrix) and selects the HDR-VMAF models. libvmaf converts the pictures to the
+  models' PQ / BT.2020 / ICtCp from those tags. The scores are named
+  `hdr_vmaf_v1_hd`, `hdr_vmaf_v1_phone`, `hdr_vmaf_v1_4k` and
+  `hdr_vmaf_v1_4k_3h`: HDR-VMAF and VMAF v1 scores are not comparable. The
+  [summary file](#summary-file) says `"dynamic_range": "hdr"` and lists each
+  input's colorimetry in `vmaf.color`.
+- **Mixed inputs.** An SDR distorted video against a PQ reference (or the
+  reverse) is scored with HDR-VMAF too, with a warning on stderr
+  (`Mixed inputs: ...`): libvmaf converts the SDR input to PQ, as HDR-VMAF
+  expects. easyVmaf converts it to the PQ input's matrix and range first, so
+  that FFmpeg never re-matrixes the PQ input.
+- **Overrides.** Each input needs a known range, primaries, transfer and matrix.
+  When a file does not report one (common with ProRes or raw streams), or
+  reports a wrong one, set it with `--reference-color` or `--distorted-color`:
+  a preset, `hdr10` (`range=tv,primaries=bt2020,trc=smpte2084,matrix=bt2020nc`)
+  or `bt709` (all BT.709, `tv` range), or `key=value` pairs that override only
+  those keys. Accepted values: `range` `tv`, `pc`; `primaries` `bt709`,
+  `bt2020`, `smpte432`; `trc` `bt709`, `smpte2084`, `smpte170m`, `bt2020-10`,
+  `bt2020-12`; `matrix` `bt709`, `bt2020nc`. `--dynamic-range hdr` forces
+  HDR-VMAF on inputs without PQ tags.
+- **Not supported.** HLG (`arib-std-b67`) inputs: libvmaf has no HLG model, so
+  they exit with code 1 unless scored with the SDR models (`--dynamic-range
+  sdr`). VMAF 0.6 has no HDR models: `--vmaf-version 0.6` with an HDR input
+  exits with code 1 too.
+- **Requirements.** See [HDR requirements](#hdr-requirements). On a build
+  without HDR-VMAF, an HDR input exits with code 1 instead of falling back to
+  the SDR models, since the scores would depend on the build;
+  `--dynamic-range sdr` scores it with the SDR models, as easyVmaf 5.1 did.
+
+```bash
+# PQ reference and distorted video: hdr_vmaf_v1_hd and hdr_vmaf_v1_phone
+easyvmaf -d distorted.mp4 -r reference.mp4
+
+# The reference does not report its colorimetry
+easyvmaf -d distorted.mp4 -r reference.mov --reference-color hdr10
+
+# Only the transfer of the distorted video is missing
+easyvmaf -d distorted.mp4 -r reference.mp4 --distorted-color trc=smpte2084
+
+# The SDR models, as in 5.1 (scores of an HDR input not meaningful)
+easyvmaf -d distorted.mp4 -r reference.mp4 --dynamic-range sdr
+```
 
 ## Automatic VMAF v1 parameters
 
@@ -913,6 +1015,7 @@ The path is printed at the end of each result (`Summary file path:`). For
     "pix_fmt": "yuv420p10le",
     "hfr": false,
     "cuda": false,
+    "dynamic_range": "sdr",
     "scores": {"vmaf_v1_hd": 93.256258, "vmaf_v1_phone": 95.393178},
     "models": [
       {"name": "vmaf_v1_hd", "libvmaf_model": "vmaf_v1.0.16_3d0h",
@@ -934,6 +1037,8 @@ The path is printed at the end of each result (`Summary file path:`). For
 | `vmaf.pix_fmt` | Pixel format both inputs were measured in. |
 | `vmaf.hfr` | `true` when the v1 HFR variants were used. |
 | `vmaf.cuda` | `true` when VMAF was computed on the GPU (`libvmaf_cuda`); `false` without `--gpu`, and with `--gpu` when the models need the CPU or with `--disable-vmaf-cuda`. See [GPU](#gpu). |
+| `vmaf.dynamic_range` | `sdr` or `hdr`: the model family that computed the scores. See [HDR](#hdr). |
+| `vmaf.color` | Only with `hdr`: the colorimetry each input was tagged with, `{"reference": {...}, "distorted": {...}}`, each with `range`, `primaries`, `trc` and `matrix` (what the file reports, with the `--*-color` overrides). |
 | `vmaf.scores` | Mean score of each model over all frames, keyed by score name. |
 | `vmaf.models` | One entry per score: libvmaf model id (the `_hfr_` variant when HFR is on), VMAF version, view (`default`, `neg` or `phone` for v0.6) and score range. |
 | `vmaf.output_file` | Per-frame libvmaf log: same directory and base name as the distorted video, plus `_vmaf.{json,xml,csv}` (`_vmaf_f<first>-<last>.{json,xml,csv}` for a frame range). |
@@ -997,8 +1102,10 @@ paths are keyword-only: `display`, `vmaf_versions`, `views`, `hfr`, `bitdepth`,
 `enc_size`, `enc_bitdepth`, `model_options`, `output_format`, `loglevel`,
 `subsample`, `threads`, `progress`, `shortest`, `fps`, `cambi_heatmap`, `gpu`,
 `sync_offset`, `start_frame`, `frame_count`, `disable_hw_decode`,
-`disable_vmaf_cuda` and `jobs`. `result.cuda` and `result.hw_decode` are the summary's
-`vmaf.cuda` and `vmaf.hw_decode` (`None` without hardware decoding).
+`disable_vmaf_cuda`, `jobs`, `dynamic_range`, `reference_color` and
+`distorted_color`. `result.cuda`, `result.hw_decode`, `result.dynamic_range` and
+`result.color` are the summary's `vmaf.cuda`, `vmaf.hw_decode` (`None` without
+hardware decoding), `vmaf.dynamic_range` and `vmaf.color` (`None` with SDR).
 
 The public API is what the `easyvmaf` package exports: `Vmaf`, `VmafResult`,
 `SyncResult`, `validate_model_config`, `validate_range_config`,
@@ -1018,7 +1125,7 @@ Container Registry, `ghcr.io/gdavila/easyvmaf`, built from this repository's
 
 | Image | Tags | Contents |
 |-------|------|----------|
-| CPU | `5.1.0`, `5.1`, `5`, `latest` | easyVmaf, FFmpeg 8.1, libvmaf 3.2.1 |
+| CPU | `5.1.0`, `5.1`, `5`, `latest` | easyVmaf, FFmpeg and libvmaf (5.1.0: FFmpeg 8.1, libvmaf 3.2.1; from 5.2.0: the pinned master commits of [Build arguments](#build-arguments), with HDR-VMAF) |
 | CUDA | `5.1.0-cuda`, `5.1-cuda`, `5-cuda`, `latest-cuda`, `cuda` | The same, plus `libvmaf_cuda`, NVDEC and the CUDA filters, on the `nvidia/cuda` 12.8 base image (NVIDIA driver >= 570) |
 
 A pre-release (`5.2.0rc1`) is tagged only with its full version (`5.2.0rc1`,
@@ -1077,11 +1184,11 @@ compiled with clang (`--enable-cuda-llvm`) instead of nvcc, and libnpp is left
 out, so the image can be redistributed. FFmpeg is LGPL-3.0-or-later in both
 images (`--enable-version3`, no `--enable-gpl`).
 
-The license texts of what each image builds from source (FFmpeg, libvmaf, and
-in the CUDA image dav1d and nv-codec-headers) are in
+The license texts of what each image builds from source (FFmpeg, libvmaf, zimg,
+and in the CUDA image dav1d and nv-codec-headers) are in
 `/usr/local/share/licenses`. FFmpeg is unmodified; `ffmpeg/SOURCE` there says
 where its source code is: the archive the image was built from, with its
-sha256 and the commit of its tag:
+sha256 and its commit:
 
 ```bash
 docker run --rm --entrypoint cat ghcr.io/gdavila/easyvmaf:5.1.0 /usr/local/share/licenses/ffmpeg/SOURCE
@@ -1093,15 +1200,16 @@ Both Dockerfiles accept these build-time arguments:
 
 | ARG | Default | Description |
 |-----|---------|-------------|
-| `FFMPEG_version` | `8.1` | FFmpeg release tag (>= 8.1) |
-| `VMAF_version` | `3.2.1` | libvmaf release tag (>= 3.2.1) |
+| `FFMPEG_commit` | `88c46fce27e311c73772d9b83db4047dd83b1294` | FFmpeg master commit (2026-11-13; >= `58584087cf` for HDR-VMAF), downloaded as a GitHub archive |
+| `VMAF_commit` | `a6ed0f18285cab504b779bbccb0bbaddc3bf44c2` | libvmaf master commit (2026-11-02; >= `74f930d1` for HDR-VMAF) |
+| `ZIMG_version` | `3.0.6` | zimg release, built from source: libvmaf converts the HDR pictures with it, and the same build in both images gives the same HDR scores |
 | `EASYVMAF_VERSION` | `5.1.0` | easyVmaf version label (the published images take it from the release tag) |
 | `DAV1D_version` | `1.4.3` | dav1d release (CUDA image only — built from source) |
-| `NVCODEC_version` | `13.0.19.1` | nv-codec-headers release (CUDA image only). 13.0.19.1 is the only release that builds both FFmpeg 8.1 and libvmaf 3.2.1 |
+| `NVCODEC_version` | `13.0.19.1` | nv-codec-headers release (CUDA image only) |
 
 ```bash
-# Custom versions
-docker build --build-arg FFMPEG_version=8.1 --build-arg VMAF_version=3.2.1 -t easyvmaf .
+# Other commits (the build fails if the archive is not that commit)
+docker build --build-arg FFMPEG_commit=<sha> --build-arg VMAF_commit=<sha> -t easyvmaf .
 ```
 
 ### Docker Compose

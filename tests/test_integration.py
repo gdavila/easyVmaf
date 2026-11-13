@@ -366,7 +366,11 @@ def test_frame_ranges_join_into_the_full_calculation(gop_clips, distorted, refer
     # Reference trimmed, frame rate conversion, and a requested range split into jobs.
     ("late.mp4", "lead.mp4", 0.3,
      dict(vmaf_versions=("0.6",), fps=7, start_frame=1, frame_count=15), "csv"),
-], ids=["cambi-heatmaps-v1-xml", "range-frame-rate-conversion-csv"])
+    # Every job tags its chains with the colorimetry (setparams) for HDR-VMAF.
+    pytest.param("aligned.mp4", "late.mp4", -0.3,
+                 dict(dynamic_range="hdr", reference_color="hdr10", distorted_color="hdr10"),
+                 "json", marks=pytest.mark.requires_hdr_vmaf),
+], ids=["cambi-heatmaps-v1-xml", "range-frame-rate-conversion-csv", "hdr-json"])
 def test_jobs_give_the_calculation_of_one_process(gop_clips, caplog, distorted, reference,
                                                   offset, options, output_fmt):
     """--jobs only makes the calculation faster: the same log, scores and heatmaps
@@ -527,6 +531,36 @@ def test_cli_writes_a_strict_json_summary_per_input(encode, tmp_path, sync_only)
         assert not list(tmp_path.glob("*_vmaf*"))
     else:
         assert Path(records["dist-same.mkv"]["vmaf"]["output_file"]).is_file()
+
+
+SDR_CHAIN = ("setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709,"
+             "format=yuv420p")
+
+
+@pytest.mark.requires_hdr_vmaf
+@pytest.mark.parametrize("distorted_chain", [PQ_CHAIN, SDR_CHAIN], ids=["pq", "mixed"])
+def test_cli_scores_pq_inputs_with_hdr_vmaf(encode, tmp_path, distorted_chain):
+    """A PQ reference is scored with HDR-VMAF, also against an SDR rendition,
+    which the user is warned about; the summary says how each input was read."""
+    reference, distorted = tmp_path / "reference.mkv", tmp_path / "distorted.mkv"
+    source = "testsrc2=s=320x180:r=10:d=1"
+    encode("-f", "lavfi", "-i", source + "," + PQ_CHAIN, "-c:v", "ffv1", reference)
+    encode("-f", "lavfi", "-i", source + ",gblur=sigma=1," + distorted_chain, "-c:v", "ffv1",
+           distorted)
+
+    result = run_cli("-d", str(distorted), "-r", str(reference), cwd=tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert ("Mixed inputs" in result.stderr) == (distorted_chain == SDR_CHAIN)
+    record = strict_loads((tmp_path / "distorted_vmaf_summary.json").read_text())["vmaf"]
+    assert record["dynamic_range"] == "hdr"
+    assert list(record["scores"]) == ["hdr_vmaf_v1_hd", "hdr_vmaf_v1_phone"]
+    assert all(0 <= score <= 100 for score in record["scores"].values())
+    pq = dict(range="tv", primaries="bt2020", trc="smpte2084", matrix="bt2020nc")
+    assert record["color"] == {
+        "reference": pq,
+        "distorted": pq if distorted_chain == PQ_CHAIN else dict(
+            range="tv", primaries="bt709", trc="bt709", matrix="bt709")}
 
 
 def test_cli_without_ffmpeg_fails_on_stderr(tmp_path):

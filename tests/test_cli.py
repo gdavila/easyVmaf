@@ -109,6 +109,12 @@ def batch(tmp_path, monkeypatch, ffmpeg_ok):
     # The opt-outs of --gpu do nothing without it.
     (["--disable-hw-decode"], 2, "requires --gpu"),
     (["--disable-vmaf-cuda"], 2, "requires --gpu"),
+    # HDR flags: rejected before probing any input of the batch.
+    (["--dynamic-range", "hlg"], 2, "--dynamic-range: invalid choice"),
+    (["--reference-color", "trc=hlg"], 2, "Invalid --reference-color trc 'hlg'"),
+    (["--dynamic-range", "hdr", "--vmaf-version", "0.6"], 2, "VMAF 0.6 has no HDR models"),
+    (["--distorted-color", "hdr10", "--dynamic-range", "sdr"], 2,
+     "--distorted-color: only for the HDR models"),
 ], ids=lambda value: " ".join(value) if isinstance(value, list) else None)
 def test_invalid_arguments_fail_on_stderr_before_ffmpeg_check(monkeypatch, capsys,
                                                               arguments, code, message):
@@ -165,7 +171,8 @@ def test_missing_input_fails_on_stderr(batch, monkeypatch, capsys, missing, mess
 DEFAULTS = dict(subsample=1, threads=0, fps=0, display="hd", vmaf_versions=("1",),
                 views=None, hfr="auto", bitdepth="auto", enc_size=None, enc_bitdepth=None,
                 model_options=(), output_format="json", sync_offset=0.0, start_frame=None,
-                frame_count=None, jobs=1)
+                frame_count=None, jobs=1, dynamic_range="auto", reference_color=None,
+                distorted_color=None)
 
 
 @pytest.mark.parametrize("options, forwarded", [
@@ -183,7 +190,11 @@ DEFAULTS = dict(subsample=1, threads=0, fps=0, display="hd", vmaf_versions=("1",
      dict(DEFAULTS, vmaf_versions=("1", "0.6"), output_format="xml")),
     (["--start-frame", "9000", "--frame-count", "9000", "--jobs", "4"],
      dict(DEFAULTS, start_frame=9000, frame_count=9000, jobs=4)),
-], ids=["defaults", "all-options-4k", "both-versions-xml", "frame-range-jobs"])
+    (["--dynamic-range", "HDR", "--reference-color", "hdr10", "--distorted-color",
+      "trc=smpte2084"],
+     dict(DEFAULTS, dynamic_range="hdr", reference_color="hdr10",
+          distorted_color="trc=smpte2084")),
+], ids=["defaults", "all-options-4k", "both-versions-xml", "frame-range-jobs", "hdr-colors"])
 def test_options_are_forwarded(batch, monkeypatch, options, forwarded):
     distorted = batch.files[0]
     calculation = batch.calc[distorted]
@@ -199,22 +210,33 @@ def test_options_are_forwarded(batch, monkeypatch, options, forwarded):
         calculation.sync.assert_not_called()
 
 
-@pytest.mark.parametrize("gpu", [False, True], ids=["default", "gpu"])
+PQ = dict(range="tv", primaries="bt2020", trc="smpte2084", matrix="bt2020nc")
+
+
+@pytest.mark.parametrize("mode", ["default", "gpu", "hdr"])
 def test_summary_reports_v1_by_default(tmp_path, monkeypatch, capsys, ffmpeg_ok, scored,
-                                       gpu):
+                                       mode):
     """JSON schema 2 contract, with VMAF v1 as the default model set; vmaf.hw_decode
-    only with --gpu, whose VMAF v1 runs on the CPU (vmaf.cuda false)."""
+    only with --gpu, whose VMAF v1 runs on the CPU (vmaf.cuda false); PQ inputs
+    are scored with HDR-VMAF and report the colorimetry each input was tagged with."""
     reference, distorted = tmp_path / "ref.mkv", tmp_path / "dist.mkv"
     reference.touch()
     distorted.touch()
     # The GPU decodes the reference only.
     monkeypatch.setattr(vmaf, "probe_hw_decode", lambda path, hwaccel: path == str(reference))
+    if mode == "hdr":
+        monkeypatch.setattr(ffmpeg.FFprobe, "getStreamInfo", lambda self: dict(
+            STREAM, color_range="tv", color_primaries="bt2020", color_transfer="smpte2084",
+            color_space="bt2020nc"))
+        monkeypatch.setattr(vmaf, "_hdr_vmaf_supported", lambda: True)
 
     run(monkeypatch, "-d", str(distorted), "-r", str(reference), "--fps", "10",
-        *(["--gpu"] if gpu else []))
+        *(["--gpu"] if mode == "gpu" else []))
 
     path = tmp_path / "dist_vmaf_summary.json"
-    assert "Summary file path:  %s" % path in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "Summary file path:  %s" % path in out
+    assert "dynamic range: %s" % ("hdr" if mode == "hdr" else "sdr") in out
     expected = {
         "schema_version": 2,
         "distorted": str(distorted),
@@ -225,6 +247,7 @@ def test_summary_reports_v1_by_default(tmp_path, monkeypatch, capsys, ffmpeg_ok,
             "pix_fmt": "yuv420p10le",
             "hfr": False,
             "cuda": False,
+            "dynamic_range": "sdr",
             "scores": {"vmaf_v1_hd": 90.0, "vmaf_v1_phone": 90.0},
             "models": [
                 {"name": "vmaf_v1_hd", "libvmaf_model": "vmaf_v1.0.16_3d0h",
@@ -235,8 +258,20 @@ def test_summary_reports_v1_by_default(tmp_path, monkeypatch, capsys, ffmpeg_ok,
             "output_file": str(tmp_path / "dist_vmaf.json"),
         },
     }
-    if gpu:
+    if mode == "gpu":
         expected["vmaf"]["hw_decode"] = {"api": "cuda", "distorted": "sw", "reference": "hw"}
+    if mode == "hdr":
+        expected["vmaf"].update(
+            dynamic_range="hdr",
+            scores={"hdr_vmaf_v1_hd": 90.0, "hdr_vmaf_v1_phone": 90.0},
+            models=[
+                {"name": "hdr_vmaf_v1_hd", "libvmaf_model": "hdr_vmaf_v1.1.8_3d0h",
+                 "vmaf_version": "1", "view": "3h", "range": [0, 100]},
+                {"name": "hdr_vmaf_v1_phone", "libvmaf_model": "hdr_vmaf_v1.1.8_5d0h",
+                 "vmaf_version": "1", "view": "5h", "range": [0, 100]},
+            ],
+            color={"reference": PQ, "distorted": PQ})
+        assert "color (range/primaries/trc/matrix): reference tv/bt2020/smpte2084/bt2020nc" in out
     assert summary(path) == expected
 
 
