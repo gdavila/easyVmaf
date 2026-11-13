@@ -1,6 +1,6 @@
 # Changelog
 
-## 5.2.0 (unreleased)
+## 5.2.0 (2026-11-13)
 
 ### Score changes
 

@@ -266,7 +266,7 @@ export PATH="$PWD/ffmpeg-n8.1-latest-linux64-gpl-8.1/bin:$PATH"
 (`linux/amd64`); from 5.2.0, FFmpeg and libvmaf are pinned master commits, with
 HDR-VMAF (see [Build arguments](#build-arguments)). They are published on the GitHub Container
 Registry (GHCR) from the 5.0.0
-release on (`ghcr.io/gdavila/easyvmaf:5.1.0`); before that, clone the repository
+release on (`ghcr.io/gdavila/easyvmaf:5.2.0`); before that, clone the repository
 and build them with `docker build -t easyvmaf .`.
 
 **Other platforms or builds.** See [Building FFmpeg from source](#building-ffmpeg-from-source).
@@ -1129,8 +1129,8 @@ Container Registry, `ghcr.io/gdavila/easyvmaf`, built from this repository's
 
 | Image | Tags | Contents |
 |-------|------|----------|
-| CPU | `5.1.0`, `5.1`, `5`, `latest` | easyVmaf, FFmpeg and libvmaf (5.1.0: FFmpeg 8.1, libvmaf 3.2.1; from 5.2.0: the pinned master commits of [Build arguments](#build-arguments), with HDR-VMAF) |
-| CUDA | `5.1.0-cuda`, `5.1-cuda`, `5-cuda`, `latest-cuda`, `cuda` | The same, plus `libvmaf_cuda`, NVDEC and the CUDA filters, on the `nvidia/cuda` 12.8 base image (NVIDIA driver >= 570) |
+| CPU | `5.2.0`, `5.2`, `5`, `latest` | easyVmaf, FFmpeg and libvmaf (from 5.2.0: the pinned master commits of [Build arguments](#build-arguments), with HDR-VMAF; up to 5.1.0: FFmpeg 8.1, libvmaf 3.2.1) |
+| CUDA | `5.2.0-cuda`, `5.2-cuda`, `5-cuda`, `latest-cuda`, `cuda` | The same, plus `libvmaf_cuda`, NVDEC and the CUDA filters, on the `nvidia/cuda` 12.8 base image (NVIDIA driver >= 570) |
 
 A pre-release (`5.2.0rc1`) is tagged only with its full version (`5.2.0rc1`,
 `5.2.0rc1-cuda`). Both images are `linux/amd64` only: on Apple Silicon, Docker
@@ -1138,8 +1138,8 @@ runs them emulated, which is slower; there, install easyVmaf and FFmpeg
 with Homebrew instead (see [Installation](#installation)).
 
 ```bash
-docker pull ghcr.io/gdavila/easyvmaf:5.1.0
-docker pull ghcr.io/gdavila/easyvmaf:5.1.0-cuda
+docker pull ghcr.io/gdavila/easyvmaf:5.2.0
+docker pull ghcr.io/gdavila/easyvmaf:5.2.0-cuda
 ```
 
 ### Running with Docker
@@ -1147,23 +1147,23 @@ docker pull ghcr.io/gdavila/easyvmaf:5.1.0-cuda
 ```bash
 # CPU
 docker run --rm -v /path/to/videos:/videos \
-  ghcr.io/gdavila/easyvmaf:5.1.0 -d /videos/distorted.mp4 -r /videos/reference.mp4
+  ghcr.io/gdavila/easyvmaf:5.2.0 -d /videos/distorted.mp4 -r /videos/reference.mp4
 
 # With sync
 docker run --rm -v /path/to/videos:/videos \
-  ghcr.io/gdavila/easyvmaf:5.1.0 -d /videos/distorted.mp4 -r /videos/reference.mp4 --sync-window 2
+  ghcr.io/gdavila/easyvmaf:5.2.0 -d /videos/distorted.mp4 -r /videos/reference.mp4 --sync-window 2
 
 # As your user, so that the log and summary belong to you instead of root
 docker run --rm -u "$(id -u):$(id -g)" -v /path/to/videos:/videos \
-  ghcr.io/gdavila/easyvmaf:5.1.0 -d /videos/distorted.mp4 -r /videos/reference.mp4
+  ghcr.io/gdavila/easyvmaf:5.2.0 -d /videos/distorted.mp4 -r /videos/reference.mp4
 
 # GPU (requires NVIDIA Container Toolkit): GPU decoding and libvmaf_cuda (v0.6)
 docker run --rm --gpus all -v /path/to/videos:/videos \
-  ghcr.io/gdavila/easyvmaf:5.1.0-cuda -d /videos/distorted.mp4 -r /videos/reference.mp4 --vmaf-version 0.6 --gpu
+  ghcr.io/gdavila/easyvmaf:5.2.0-cuda -d /videos/distorted.mp4 -r /videos/reference.mp4 --vmaf-version 0.6 --gpu
 
 # GPU decoding, default v1 models on the CPU
 docker run --rm --gpus all -v /path/to/videos:/videos \
-  ghcr.io/gdavila/easyvmaf:5.1.0-cuda -d /videos/distorted.mp4 -r /videos/reference.mp4 --gpu
+  ghcr.io/gdavila/easyvmaf:5.2.0-cuda -d /videos/distorted.mp4 -r /videos/reference.mp4 --gpu
 ```
 
 The CUDA image sets `NVIDIA_DRIVER_CAPABILITIES=compute,utility,video`: NVDEC
@@ -1175,7 +1175,7 @@ rebuild it, or pass `-e NVIDIA_DRIVER_CAPABILITIES=compute,utility,video` to
 ### Building the images
 
 Instead of pulling them, build the images from a clone of the repository, and
-use these names in place of `ghcr.io/gdavila/easyvmaf:5.1.0` and `:5.1.0-cuda`
+use these names in place of `ghcr.io/gdavila/easyvmaf:5.2.0` and `:5.2.0-cuda`
 in the examples above:
 
 ```bash
@@ -1195,7 +1195,7 @@ where its source code is: the archive the image was built from, with its
 sha256 and its commit:
 
 ```bash
-docker run --rm --entrypoint cat ghcr.io/gdavila/easyvmaf:5.1.0 /usr/local/share/licenses/ffmpeg/SOURCE
+docker run --rm --entrypoint cat ghcr.io/gdavila/easyvmaf:5.2.0 /usr/local/share/licenses/ffmpeg/SOURCE
 ```
 
 ### Build arguments
@@ -1207,7 +1207,7 @@ Both Dockerfiles accept these build-time arguments:
 | `FFMPEG_commit` | `88c46fce27e311c73772d9b83db4047dd83b1294` | FFmpeg master commit (2026-11-13; >= `58584087cf` for HDR-VMAF), downloaded as a GitHub archive |
 | `VMAF_commit` | `a6ed0f18285cab504b779bbccb0bbaddc3bf44c2` | libvmaf master commit (2026-11-02; >= `74f930d1` for HDR-VMAF) |
 | `ZIMG_version` | `3.0.6` | zimg release, built from source: libvmaf converts the HDR pictures with it, and the same build in both images gives the same HDR scores |
-| `EASYVMAF_VERSION` | `5.1.0` | easyVmaf version label (the published images take it from the release tag) |
+| `EASYVMAF_VERSION` | `5.2.0` | easyVmaf version label (the published images take it from the release tag) |
 | `DAV1D_version` | `1.4.3` | dav1d release (CUDA image only — built from source) |
 | `NVCODEC_version` | `13.0.19.1` | nv-codec-headers release (CUDA image only) |
 

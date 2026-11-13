@@ -23,7 +23,7 @@ from .results import SyncResult, VmafResult
 from .models import ModelRun, ModelSpec, CATALOG, select_models
 from .ffmpeg import FFmpegExecutionError, check_ffmpeg
 
-__version__ = "5.1.0"
+__version__ = "5.2.0"
 __all__ = [
     "Vmaf",
     "VmafResult",
