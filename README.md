@@ -502,6 +502,10 @@ scores of an HDR input as not meaningful.
   they exit with code 1 unless scored with the SDR models (`--dynamic-range
   sdr`). VMAF 0.6 has no HDR models: `--vmaf-version 0.6` with an HDR input
   exits with code 1 too.
+- **Speed.** libvmaf converts every picture to the HDR-VMAF target, so HDR is
+  slower than SDR: on a 64-core machine, a 4K HEVC encode against a ProRes
+  4444 mezzanine ran at 11 fps with HDR-VMAF and 44 fps with the SDR models.
+  [`--jobs`](#parallel-jobs) recovers most of it (8 jobs: 2.6x faster).
 - **Requirements.** See [HDR requirements](#hdr-requirements). On a build
   without HDR-VMAF, an HDR input exits with code 1 instead of falling back to
   the SDR models, since the scores would depend on the build;

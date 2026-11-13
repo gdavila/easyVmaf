@@ -17,10 +17,14 @@
   and carry `chroma_location=left`, the usual chroma location of H.264, HEVC
   and MPEG-4: FFmpeg master's swscale honors the chroma location when it
   scales. Example, a 960x540 MPEG-4 encode of a 1280x720 reference:
-  `vmaf_v1_hd` 59.48 → 58.98, `vmaf_v1_phone` 63.69 → 63.75. The VMAF v0.6
-  scores of that clip are identical; only the chroma PSNR of its libvmaf log
-  changes. Inputs at the display resolution, and pip installs with FFmpeg 8.1,
-  are unchanged.
+  `vmaf_v1_hd` 59.48 → 58.98, `vmaf_v1_phone` 63.69 → 63.75. The same applies,
+  with a smaller effect, when the chroma of such an input is upsampled to
+  follow a 4:4:4 or 4:2:2 reference, even at the display resolution. Example,
+  a 4K HEVC Main10 encode against its ProRes 4444 mezzanine (600 frames,
+  `--dynamic-range sdr`): `vmaf_v1_4k` 81.23 → 81.21. In both cases only the
+  chroma features change: the VMAF v0.6 scores are identical, and only the
+  chroma PSNR of the libvmaf log changes. Inputs that need neither scaling nor
+  chroma upsampling, and pip installs with FFmpeg 8.1, are unchanged.
 
 ### New
 
